@@ -20386,6 +20386,26 @@ assert constraint t0 { x - x == 0.0 }
 }`, {
       'OWND::k1': ['?/?/?/?', '?'],
     }),
+    // a5 W7: a valueless name an asserted relation READS is still not defined by it (only a bare `name == …`
+    // defines), and the check's and the literal engine's sentence now names that assert instead of saying "no
+    // asserted equation" (plan §A.2 W7). The letters do not move: k ?/?/T/T, kf ?/?/F/?, ohm ?/-/T/-, in either
+    // text order.
+    ...reversed('a5-w7-u2a', `package U2A {
+  attribute P : Real = 120.0; attribute V : Real = 12.0; attribute I : Real;
+  assert constraint ohm { P == V * I }
+  constraint k { I == 10.0 }
+  constraint kf { I <= 9.0 }
+}`, `package U2A {
+  constraint kf { I <= 9.0 }
+  constraint k { I == 10.0 }
+  assert constraint ohm { P == V * I }
+  attribute I : Real;
+  attribute V : Real = 12.0; attribute P : Real = 120.0;
+}`, {
+      'U2A::k': ['?/?/T/T', null],
+      'U2A::kf': ['?/?/F/?', null],
+      'U2A::ohm': ['?/-/T/-', null],
+    }),
   };
 
   /**
@@ -21712,6 +21732,8 @@ assert constraint t0 { x - x == 0.0 }
     ['a5-hd6-rv1', 'a5-hd6-rv1-rev'],
     ['a5-hd6-rvq', 'a5-hd6-rvq-rev'],
     ['a5-hd6-spec', 'a5-hd6-spec-rev'],
+    // a5 W7: the asserted relation that reads a name without defining it is named, in either text order.
+    ['a5-w7-u2a', 'a5-w7-u2a-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
@@ -21791,6 +21813,10 @@ assert constraint t0 { x - x == 0.0 }
     ['mask-bind-name', 'G8B::tl', /p\.L has no value: G8B::P2 reads `K` as G8B::P2::K, declared anew without `:>>` beside the G8B::P::K the body of G8B::P names, which KerML does not allow; this tool does not read which of the two it means there/],
     ['mask-assert-name', 'G8A::tl', /L has no value: `K == L` of G8A::P is not read in G8A::p: there `K` names G8A::P2::K, declared anew without `:>>` beside the G8A::P::K G8A::P's body names, which KerML does not allow/],
     ['mask-assert', 'G8C::P2::K in G8C::P2#equations', /each define `K` in G8C::P2, which declares `K` anew without `:>>` beside G8C::P::K the general's body names, which KerML does not allow; this tool does not read which of the two each equation means there: it reports no contradiction/],
+    // a5 W7: the asserted relation that reads a valueless name WITHOUT defining it is named, instead of the old
+    // "has no asserted equation" clause (plan §A.2 W7); the literal engine keeps its "not evaluable at the model's
+    // values: " prefix, the SMT `kf` detail its "witness not confirmed" frame (I16 reads the check and the literal).
+    ['a5-w7-u2a', 'U2A::k', /(?:not evaluable at the model's values: )?Could not evaluate: I has no value anywhere: the asserted `P == V \* I` \(U2A::ohm\) reads it, but this tool reads an asserted equation as a definition only of a name that stands alone on one side \(`I == …`\)/],
   ];
   withZ3('I16: the sentences of the round-3 fences are the ones pinned, whichever way the text is ordered', () => {
     const wrong: string[] = [];

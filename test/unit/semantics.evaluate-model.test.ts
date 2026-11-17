@@ -1064,6 +1064,120 @@ describe('checkConstraints — a target read through the features that specialis
 });
 
 /*
+ * Only an asserted equation whose defined side is a bare name (`I == …`)
+ * defines (`definingEquationFor`, `isAsserted`). One that merely READS the
+ * name does not, and the sentence that explains a valueless name said "has no
+ * asserted equation" beside it — false of the assert the author wrote, and it
+ * hid that assert. The four arms that explain a valueless name now name the
+ * asserted relation that reads it, in its own scope (plan §A.2, W7).
+ */
+describe('W7 — the asserted relation that reads a name without defining it is named', () => {
+  /** The A.2 clause: the asserted relation, its qualified name, and the bare name only a definition of which the tool reads. */
+  const reads = (relation: string, owner: string, name: string) =>
+    `the asserted \`${relation}\` (${owner}) reads it, but this tool reads an asserted equation as a definition only of a name that stands alone on one side (\`${name} == …\`)`;
+
+  it('names the assert that reads a valueless name, on every row of its scope', () => {
+    const m = model(`package U2A {
+      attribute P : Real = 120.0; attribute V : Real = 12.0; attribute I : Real;
+      assert constraint ohm { P == V * I }
+      constraint k { I == 10.0 }
+      constraint kf { I <= 9.0 }
+    }`);
+    const want = `Could not evaluate: I has no value anywhere: ${reads('P == V * I', 'U2A::ohm', 'I')}`;
+    for (const name of ['U2A::k', 'U2A::kf', 'U2A::ohm']) {
+      expect(checkOf(m, name).message, name).toBe(want);
+    }
+  });
+
+  it('keeps "no asserted equation" where no unasserted equation emits the clause (the control)', () => {
+    // `ohm` IS an asserted relation over `I`, but nothing unasserted claims the
+    // definition, so the clause is not emitted and the old sentence stands.
+    const m = model(`package U2ACTL {
+      attribute P : Real = 120.0; attribute V : Real = 12.0; attribute I : Real;
+      assert constraint ohm { P == V * I }
+      constraint kf { I <= 9.0 }
+    }`);
+    expect(checkOf(m, 'U2ACTL::kf').message).toBe(
+      'Could not evaluate: I has no value anywhere and nothing specialises it',
+    );
+  });
+
+  it('names it beside the "here" of a measure read per specialisation, keeping the specialiser suffix', () => {
+    const m = model(`package W7H {
+      attribute m : Real;
+      require constraint condition { m == 0.5 }
+      assert constraint am { 2.0 * m == 1.0 }
+      constraint t { m >= 0.9 }
+    }
+    package W7HL { attribute m :> W7H::m = 0.95; }`);
+    const want =
+      `Could not evaluate: m has no value here: ${reads('2.0 * m == 1.0', 'W7H::am', 'm')}` +
+      '; evaluated per specialisation: W7HL::m';
+    for (const name of ['W7H::condition', 'W7H::am', 'W7H::t']) {
+      expect(checkOf(m, name).message, name).toBe(want);
+    }
+  });
+
+  it('names only the row scope’s own assert: an enclosing scope’s assert is not named', () => {
+    const m = model(`package W7S4C {
+      attribute m : Real;
+      require constraint condition { m == 0.5 }
+      require constraint t { m >= 0.9 }
+    }
+    package W7S4L {
+      attribute m :> W7S4C::m;
+      assert constraint am { 2.0 * m == 1.0 }
+    }`);
+    // W7S4C owns no assert: the top row keeps its old sentence …
+    expect(checkOf(m, 'W7S4C::t').message).toBe(
+      'Could not evaluate: m has no value here and no asserted equation; evaluated per specialisation: W7S4L::m',
+    );
+    // … while the instance row explains the specialiser's own valueless name,
+    // which W7S4L's `am` reads without defining it.
+    const [at] = checkOf(m, 'W7S4C::t').instances!;
+    expect(at.context).toBe('W7S4L');
+    expect(at.message).toBe(
+      'W7S4C::t (m >= 0.9) could not be evaluated for W7S4L: W7S4L::m has no value: ' +
+        reads('2.0 * m == 1.0', 'W7S4L::am', 'm'),
+    );
+  });
+
+  it('names the asserted relation a chain reads through, and leaves the plain scope and the control alone', () => {
+    const m = model(`package W7C2 {
+      part def P {
+        attribute x : Real;
+        constraint cx { x == 1.0 }
+      }
+      part p : P;
+      assert constraint ax { 2.0 * p.x == 6.0 }
+      constraint t { p.x >= 5.0 }
+    }`);
+    const want = `Could not evaluate: p.x has no value: ${reads('2.0 * p.x == 6.0', 'W7C2::ax', 'x')}`;
+    expect(checkOf(m, 'W7C2::ax').message).toBe(want);
+    expect(checkOf(m, 'W7C2::t').message).toBe(want);
+    // P owns no assert: its own row keeps the old clause.
+    expect(checkOf(m, 'W7C2::P::cx').message).toBe(
+      'Could not evaluate: x has no value anywhere, no asserted equation, and nothing specialises it',
+    );
+    // Without the assert, the same rows are unchanged.
+    const ctl = model(`package W7C2CTL {
+      part def P {
+        attribute x : Real;
+        constraint cx { x == 1.0 }
+      }
+      part p : P;
+      constraint t { p.x >= 5.0 }
+    }`);
+    expect(checkOf(ctl, 'W7C2CTL::P::cx').message).toBe(
+      'Could not evaluate: x has no value anywhere, no asserted equation, and nothing specialises it',
+    );
+    expect(checkOf(ctl, 'W7C2CTL::t').message).toBe(
+      'Could not evaluate: p.x has no value: P::x is declared without one, has no asserted equation, and nothing specialises it',
+    );
+  });
+});
+
+/*
  * A requirement on a configuration item reads its subject's features through
  * a dotted chain (`coordination.areaUnderWatchFraction >= 0.9` over `subject
  * coordination : MemberCoordinationSoftware`). When the chain ends at a
