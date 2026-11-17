@@ -172,8 +172,6 @@ An extra reading that rides on a shape. A modifier only ever lowers the weakest 
 - **Limits.**
   - `refuted` only through the point evaluation; `s.a == s.b` ("bus", "car") is `refuted`, basis `point-evaluation`. Pinned by `test/integration/smt-z3.integration.test.ts`: “reads the basis off the trace and not off the verdict word (CC-42b)”.
   - Equal strings and `!=` are `unsupported-construct`.
-- **Open defects.**
-  - `D-bound-detail` (wrong-statement): bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface).
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “marks a row over a String feature `text-as-real`, and no other”
 

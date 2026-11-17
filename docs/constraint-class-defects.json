@@ -59,15 +59,6 @@
       "note": "Dead code gates the replaceable-default branch of the binding route and the defining-equation strings; the live rule abstains, none gives a wrong answer."
     },
     {
-      "id": "D-bound-detail",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
-      "classes": [
-        "text-as-real"
-      ],
-      "kind": "wrong-statement",
-      "note": "bound.detail says \u201cdecided by z3\u201d on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface)."
-    },
-    {
       "id": "D-x-pow-neg",
       "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup).",
       "classes": [

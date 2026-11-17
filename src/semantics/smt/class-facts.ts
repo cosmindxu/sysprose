@@ -484,15 +484,6 @@ export const CLASS_FACTS: ClassFacts = {
     },
     {
       "classes": [
-        "text-as-real"
-      ],
-      "id": "D-bound-detail",
-      "kind": "wrong-statement",
-      "note": "bound.detail says “decided by z3” on rows the numeric surface decided (a String feature read as a Real, s.a == s.b is refuted on the numeric surface).",
-      "todo": "Z3 constraint classes: wording and basis defects the class register records (rollup)."
-    },
-    {
-      "classes": [
         "fence/unsupported-operator"
       ],
       "id": "D-x-pow-neg",
@@ -502,7 +493,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   ],
   "digests": {
-    "defects": "04ab8c063ca8ea4f4c5f9333237a415c25994db9561cecfa8709346c2171e967",
+    "defects": "dfff9a82aa2e86dc90fbb0195ce5cef82cd38de0ca4172efabc72dd0879edf7d",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
     "probes": "4240f9eb0087af76305fefe20223ac6b252437227f3854e66a475885091ba0d9"
   },

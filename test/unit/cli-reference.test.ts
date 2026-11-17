@@ -329,6 +329,13 @@ describe('the generated command reference', () => {
     expect(BOUNDS_EXIT_CODES).toContain('absent solver');
     expect(BOUNDS_EXIT_CODES).toContain('nonlinear');
     expect(BOUNDS_EXIT_CODES).toContain('cannot hold together');
+    // …and the two not-decided shapes the integer-branch and domain work added:
+    // a mixed Integer/Real script νZ's answer is withheld on past the branch
+    // cap, and a feature typed below the integers this lane does not carry.
+    expect(BOUNDS_EXIT_CODES).toContain('the integer-branch cap reached over mixed Integer and Real');
+    expect(BOUNDS_EXIT_CODES).toContain(
+      'a feature typed by a domain below the integers this lane does not carry',
+    );
     // …and the flag whose whole scope is the two undecided codes is not offered
     // here, so it cannot lower a bound whose optimality nobody established.
     expect(BOUNDS_EXIT_CODES).toContain('no --allow-inconclusive here');

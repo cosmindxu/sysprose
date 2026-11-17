@@ -1192,6 +1192,29 @@ describe('L8 — every evidence record validates against its schema', () => {
     for (const record of (await runCase(lit)).records) {
       expect(record.flags, 'no solver ran, so none is named').not.toHaveProperty('solver');
     }
+    // A refuted row's `sat` is a CANDIDATE the numeric re-read has to confirm,
+    // so it is not the solver's answer that decided the verdict: no sentence
+    // credits it. (W1; the judge `detail` is unchanged and still pins `detail`.)
+    const refuted = JSON.parse(read('test/fixtures/verification/smt-two-refutations/meta.json')) as Meta;
+    const refutedReport = await runCase(refuted);
+    expect(refutedReport.violated).toBe(2);
+    for (const record of refutedReport.records) {
+      expect(record.claim).toBe('refuted');
+      expect(record.verdict).toBe('fail');
+      expect(record.bound.detail, 'a candidate counterexample was credited as the decision').not.toContain(
+        'decided by z3',
+      );
+    }
+    // …where a `sat` under `--free` IS the whole answer, and the sentence stays.
+    const admitted = JSON.parse(read('test/fixtures/verification/smt-design-admitted/meta.json')) as Meta;
+    const admittedReport = await runCase(admitted);
+    expect(admittedReport.records.length).toBeGreaterThan(0);
+    for (const record of admittedReport.records) {
+      expect(record.claim).toBe('design-admitted');
+      expect(record.bound.detail, 'the solver decided this row and stopped being named').toContain(
+        'decided by z3',
+      );
+    }
   });
 
   it('never leaves a witness that reads as refuting the claim it supports', async () => {
