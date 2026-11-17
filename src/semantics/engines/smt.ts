@@ -59,8 +59,10 @@
  * and an absent solver is `verification/tool-absent`, never a fallback.
  */
 
-import { type ElementId, type Model } from '@core/index';
+import { refSegments, type ElementId, type Model } from '@core/index';
+import { resolveFullName } from '../bind';
 import { hasStatedValue, readsContradictedDefinition, sharedDefinitions, subsettingUnread } from '../defining-equation';
+import { isFeatureMetaclass } from '../metaclasses';
 import {
   checkConstraints,
   checksByRow,
@@ -365,6 +367,16 @@ export interface FreeResolution {
  * packages — the same resolver a relation body goes through, so a name that
  * works in a constraint works here.
  *
+ * A SPELLING MAY CARRY QUOTE MARKS. The maps above are keyed by unquoted names,
+ * so `QS::P::'K x'` missed every one of them while `QS::P::K x` resolved; each
+ * spelling is tried as written and then in its unquoted segment form
+ * ({@link refSegments}). A dotted path the name walk withholds (`u.k`, where the
+ * walk cannot follow the binding's end and so offers only `u.w`) is resolved the
+ * way a relation body resolves it — {@link resolveFullName} over each user
+ * package — as a last resort, after every map misses; the feature it denotes
+ * enters the result under that feature's own qualified name, so the measure
+ * stands on the same symbol the qualified spelling does.
+ *
  * `rows` is the worklist the run will judge, and it is what rule 3 is answered
  * against: the question is not "is this a feature?" but "would releasing it
  * change any relation this run reads?", and only the worklist knows.
@@ -443,37 +455,99 @@ export function resolveFreeFeatures(
   const unresolved: string[] = [];
   const ambiguous: Array<{ spelling: string; candidates: string[] }> = [];
   const unread: Array<{ spelling: string; qualifiedName: string }> = [];
+  // The user's own packages, in model order: the scopes the last-resort
+  // resolution below walks, over the same elements `scope` was built from.
+  const packages = [...model.all()].filter(
+    (el) => el.attrs.isLibrary !== true && el.attrs.implicit !== true && el.eClass.endsWith('Package'),
+  );
   for (const spelling of spellings) {
-    const exact = byQualifiedName.get(spelling) ?? bySymbol.get(spelling);
-    // Only a BARE name can be ambiguous: a qualified name is exact and a dotted
-    // path is a route, so neither can name two things. A bare name the scope
-    // offers no feature for — it offers a nested one only where exactly one
-    // has the name — is still a name the person typed: counted below.
-    const bare = exact === undefined && !spelling.includes('.') && !spelling.includes('::');
-    const declared = bare ? byDeclaredName.get(spelling) : undefined;
-    const id = exact ?? scope.get(spelling) ?? (declared ? [...declared][0] : undefined);
-    if (id === undefined) {
+    // Each spelling is tried as written FIRST, then in its unquoted segment
+    // form ({@link refSegments}), through the same order, first hit wins. The
+    // raw try is what keeps a name the walk itself offers under its quoted key
+    // (`'a.b'`, for a feature whose name holds a dot) resolving exactly as it
+    // did; the normalised try is what makes a quoted spelling reach the feature
+    // its unquoted twin names (`QS::P::'K x'` and `'K x'`).
+    const normalised = refSegments(spelling).join('::');
+    const forms = normalised !== '' && normalised !== spelling ? [spelling, normalised] : [spelling];
+    let hit: { form: string; id: ElementId; walked: boolean; named: Set<ElementId> } | undefined;
+    for (const form of forms) {
+      const exact = byQualifiedName.get(form) ?? bySymbol.get(form);
+      // Only a BARE name can be ambiguous: a qualified name is exact and a dotted
+      // path is a route, so neither can name two things. A bare name the scope
+      // offers no feature for — it offers a nested one only where exactly one
+      // has the name — is still a name the person typed: counted below.
+      const bare = exact === undefined && !form.includes('.') && !form.includes('::');
+      const declared = bare ? byDeclaredName.get(form) : undefined;
+      const id = exact ?? scope.get(form) ?? (declared ? [...declared][0] : undefined);
+      if (id === undefined) continue;
+      hit = {
+        form,
+        id,
+        walked: exact === undefined && scope.has(form),
+        named: bare ? (declared ?? new Set([id])) : new Set([id]),
+      };
+      break;
+    }
+    // EVERY MAP AND THE NAME WALK MISSED: resolve the spelling the way a
+    // relation body resolves it ({@link resolveFullName}) in each user
+    // package's scope, keeping only the model's OWN features. One is the
+    // feature; more than one is the ambiguity the maps answer above (refused
+    // through the same sentence); none leaves the spelling unresolved, and so
+    // refused exactly as before. This is the dotted path the refusal sentence
+    // invites: the walk withholds `u.k` where it cannot follow the binding's
+    // end, and the resolver reaches the definition's feature the qualified
+    // `RS::U::k` names.
+    //
+    // A copy the reading machinery keeps per instance (`impl-…`, an implicit
+    // projection of a feature into one context) is NOT accepted, and neither is
+    // a library element (the maps above exclude both). Resolving a spelling to
+    // an implicit copy would move a MEASURE that the model's own feature does
+    // not name: measured, `--measure A7::q2::p::extra` and `--measure
+    // N::Q0::p::load` name nothing today and would bound the per-instance copy,
+    // so the fallback would widen what a run claims by more than the spelling
+    // that missed the walk. It keeps refusing them.
+    if (hit === undefined) {
+      const found = new Set<ElementId>();
+      for (const pkg of packages) {
+        const el = resolveFullName(model, spelling, pkg.id, {
+          accept: (e) => e.attrs.implicit !== true && e.attrs.isLibrary !== true && isFeatureMetaclass(e.eClass),
+        });
+        if (el !== undefined) found.add(el.id);
+      }
+      if (found.size === 1) {
+        hit = { form: spelling, id: [...found][0]!, walked: false, named: found };
+      } else if (found.size > 1) {
+        ambiguous.push({ spelling, candidates: [...found].map((e) => model.qualifiedName(e)).sort() });
+        continue;
+      }
+    }
+    if (hit === undefined) {
       unresolved.push(spelling);
       continue;
     }
-    const named = bare ? (declared ?? new Set([id])) : new Set([id]);
-    if (named.size > 1) {
+    if (hit.named.size > 1) {
       ambiguous.push({
         spelling,
-        candidates: [...named].map((e) => model.qualifiedName(e)).sort(),
+        candidates: [...hit.named].map((e) => model.qualifiedName(e)).sort(),
       });
       continue;
     }
-    const qualifiedName = bySymbol.has(spelling)
-      ? spelling
-      : exact === undefined && scope.has(spelling)
-        ? symbolAt(spelling, id)
-        : effectiveQualifiedName(model, id);
+    // The id enters `features` through the rule every hit has always used: a
+    // symbol the worklist keys by an instance (`R::p1::g`) and a walked path
+    // keep the symbol they resolved by; anything else keeps the feature's own
+    // qualified name. A fallback id is not walked, so it takes the feature's
+    // own — a path an instance reads otherwise keeps its instance symbol, and
+    // nothing that already resolved changes meaning.
+    const qualifiedName = bySymbol.has(hit.form)
+      ? hit.form
+      : hit.walked
+        ? symbolAt(hit.form, hit.id)
+        : effectiveQualifiedName(model, hit.id);
     if (rows.length > 0 && !readable.has(qualifiedName)) {
       unread.push({ spelling, qualifiedName });
       continue;
     }
-    features.set(qualifiedName, id);
+    features.set(qualifiedName, hit.id);
     qualifiedNames.add(qualifiedName);
   }
   return { features, qualifiedNames, unresolved, ambiguous, unread };
