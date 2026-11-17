@@ -5093,6 +5093,39 @@ function tooDeep(node: ExprNode, scope: Scope, answer: (name: string) => ScalarA
 }
 
 /**
+ * The first asserted relation `ownerId` owns that reads `name` without
+ * defining it — the assert the A.2 sentence names beside a name with no value
+ * — or `undefined`: no asserted relation of the scope reads the name, or one
+ * defines it (`name == …`, {@link definingEquationFor}). Only a relation the
+ * scope OWNS is named: an assert in an enclosing scope is not a statement about
+ * this one, and naming it would make the sentence a false attribution.
+ */
+function assertedReaderOf(model: Model, ownerId: ElementId, name: string): ElementRecord | undefined {
+  if (definingEquationFor(model, ownerId, name) !== undefined) return undefined;
+  return model
+    .children(ownerId)
+    .find(
+      (c) =>
+        isAsserted(c) &&
+        typeof c.attrs.expression === 'string' &&
+        relationNamesOf(c.attrs.expression).some((n) => n.split('.').includes(name)),
+    );
+}
+
+/**
+ * The A.2 sentence naming the asserted relation `reader` that reads `name`
+ * without defining it — what the row says instead of "no asserted equation"
+ * (`U2A::ohm` beside `I`, `W7C2::ax` beside `x`).
+ */
+function assertedReaderSentence(model: Model, reader: ElementRecord, name: string): string {
+  return (
+    `the asserted \`${String(reader.attrs.expression)}\` (${model.qualifiedName(reader.id)}) reads it, ` +
+    'but this tool reads an asserted equation as a definition only of a name that stands alone ' +
+    `on one side (\`${name} == …\`)`
+  );
+}
+
+/**
  * `coordination.areaUnderWatchFraction has no value:
  * MemberCoordinationSoftware::areaUnderWatchFraction is declared without one
  * and nothing specialises it` — the chain resolved through each feature's
@@ -5114,6 +5147,11 @@ function chainCause(model: Model, el: ElementRecord, chain: string, pass: Scalar
   const cap = pastCapOf(model, feature.id);
   if (cap !== undefined) return `${chain} has no value: ${heldPastCapSentence(shortName(model, feature), cap)}`;
   const checked = !asserted && sites.some((c) => hasUnassertedEquation(model, c, name));
+  // An asserted relation of the scope that reads the chain's name but does
+  // not define it is named, whole, instead of the "no asserted equation"
+  // clause: the assert is right there, and it is not a definition (A.2, W7).
+  const reader = checked && el.ownerId != null ? assertedReaderOf(model, el.ownerId, name) : undefined;
+  if (reader) return `${chain} has no value: ${assertedReaderSentence(model, reader, name)}`;
   const specialisers = [...specialisersOf(model, feature).byContext.values()].flat();
   const clauses = [
     declaredWithout(model, feature),
@@ -5325,6 +5363,10 @@ function readThroughSpecialisers(
     const checked =
       definingEquationFor(model, el.ownerId!, m.name) === undefined &&
       hasUnassertedEquation(model, el.ownerId!, m.name);
+    // An asserted relation of this scope that reads the name but does not
+    // define it is named, whole, in place of the "no asserted equation"
+    // clause: only a bare `name == …` defines (A.2, W7).
+    const reader = checked ? assertedReaderOf(model, el.ownerId!, m.name) : undefined;
     if (walk.byContext.size === 0) {
       // A reading that abstained says why in its own sentence: a `default` an
       // asserted equation sets equal to another `default` gives way with it
@@ -5347,6 +5389,7 @@ function readThroughSpecialisers(
       // one, an agent would set the wrong thing.
       const capped = pastCapCause(model, m.feature, pass);
       if (capped) return capped;
+      if (reader) return `${m.name} has no value anywhere: ${assertedReaderSentence(model, reader, m.name)}`;
       return checked
         ? `${m.name} has no value anywhere, no asserted equation, and nothing specialises it`
         : `${m.name} has no value anywhere and nothing specialises it`;
@@ -5355,6 +5398,9 @@ function readThroughSpecialisers(
     for (const cands of walk.byContext.values()) {
       const pick = chooseSpecialiser(model, cands, walk);
       for (const f of 'ambiguous' in pick ? pick.ambiguous : [pick.feature]) shown.push(shortName(model, f, m.name));
+    }
+    if (reader) {
+      return `${m.name} has no value here: ${assertedReaderSentence(model, reader, m.name)}; evaluated per specialisation: ${shown.join(', ')}`;
     }
     const here = checked ? 'has no value here and no asserted equation' : 'has no value here';
     return `${m.name} ${here}; evaluated per specialisation: ${shown.join(', ')}`;
@@ -5654,10 +5700,18 @@ function readSpecialiser(
   if (value === undefined || value === null) {
     // Only an ASSERTED equation defines (see `isAsserted`), so that is what
     // the message says is missing: "no defining equation", beside a
-    // `require`d `x == …`, read as if the tool had not seen the equation.
+    // `require`d `x == …`, read as if the tool had not seen the equation. An
+    // asserted relation this feature's scope owns that READS the name is
+    // named instead, whole: it is there, and it is not a definition (A.2,
+    // W7).
+    const reader =
+      !hasValue(model, feature) && byEquation === undefined && feature.ownerId != null
+        ? assertedReaderOf(model, feature.ownerId, own ?? measure)
+        : undefined;
     return {
-      reason:
-        hasValue(model, feature) || byEquation !== undefined
+      reason: reader
+        ? `${name} has no value: ${assertedReaderSentence(model, reader, own ?? measure)}`
+        : hasValue(model, feature) || byEquation !== undefined
           ? `${name} has no value that could be evaluated`
           : `${name} has no value and no asserted equation`,
       refused: false,
