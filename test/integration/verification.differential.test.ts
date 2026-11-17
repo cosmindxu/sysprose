@@ -378,7 +378,7 @@ describe('the differential gate — the two engines agree on the relations the g
         expect(c.literal?.claim, `the literal engine disagrees:${bothMessages(c)}`).toBe('refuted');
         // The witness gate is what makes this true rather than hoped for.
         expect(c.smt.detail, `a refutation that was not re-evaluated:${bothMessages(c)}`).toContain(
-          'confirmed by re-evaluation on the numeric surface',
+          'confirmed by re-evaluation on the check',
         );
       }
       if (c.check?.result === 'violated' && c.smt.claim !== 'refuted') {
@@ -538,7 +538,7 @@ describe('the differential gate — the two engines agree on the relations the g
       'refuted',
       'verification/refuted',
     ]);
-    expect(strict!.detail).toContain('confirmed by re-evaluation on the numeric surface');
+    expect(strict!.detail).toContain('confirmed by re-evaluation on the check');
     const literal = await verifyModel(model!, { engine: 'literal', sourceText: text });
     const lit = literal.results.find((r) => r.requirement?.qualifiedName === 'StrictBoundary::StrictUnder');
     expect(lit!.claim, 'the literal engine read the boundary otherwise').toBe('refuted');
@@ -2675,7 +2675,7 @@ describe('“assumptions satisfiable” is earned over the whole antecedent, or 
     // the counterexample has no model point to be confirmed at.
     const r = await verifyOne(text, { engine: 'smt' });
     expect(r.by('x <= 5.0').claim).not.toBe('refuted');
-    expect(r.by('x <= 5.0').detail).toContain('reads this relation as `unknown` there');
+    expect(r.by('x <= 5.0').detail).toContain('the check reads this relation as `unknown` there');
     // Nor is a relation no gate encodes read violated over q's `x`: it is
     // outside the fragment, and that is all it is.
     const refused = `package XS {

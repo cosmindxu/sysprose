@@ -1292,8 +1292,8 @@ export const MATURITY_SENTENCE =
 const BASIS_TEXT: Record<Basis, string> = {
   solver: 'z3 decided the verdict over an encoded, complete context',
   'solver-witness': 'z3 decided it; its counterexample was re-read exactly, every symbol the goal reads being pinned or freed',
-  'solver+numeric': 'z3 decided the entailment; a part the encoding left out was re-read on the numeric surface',
-  'numeric-surface': 'the verdict word was decided on the numeric surface, not by z3’s answer alone; a `bound:` sentence naming z3 does not say otherwise',
+  'solver+numeric': 'z3 decided the entailment; a part the encoding left out was re-read by the check at the model’s values',
+  'numeric-surface': 'the verdict word was decided by the check’s reading at the model’s values, not by z3’s answer alone; a `bound:` sentence naming z3 does not say otherwise',
   'point-evaluation': 'a refused relation was read violated at the model’s values; nothing was encoded for it',
   none: 'no solver verdict',
 };

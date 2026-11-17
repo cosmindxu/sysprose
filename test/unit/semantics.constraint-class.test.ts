@@ -576,9 +576,29 @@ describe('the roll-up folds to the weakest cell', () => {
 
   it('names a basis other than `solver` and states an unclassified statement for what it is', () => {
     const lines = classLines(rollUp(proof({ basis: 'numeric-surface' })));
-    expect(lines.at(-1)).toMatch(/^basis: numeric-surface — the verdict word was decided on the numeric surface/);
+    expect(lines.at(-1)).toMatch(/^basis: numeric-surface — the verdict word was decided by the check’s reading at the model’s values/);
     expect(classLines(unclassified('proof', 'verify'))).toEqual(["classes: unclassified — a gap in the tool's class register"]);
     expect(unclassified('run', 'consistency')).toMatchObject({ status: 'unclassified', weakest: null, shape: [] });
+  });
+
+  it('no user-visible sentence calls the check “the numeric surface”', () => {
+    // W8's done-grep: every sentence that prints the check's reading says `the check`. The
+    // one non-comment occurrence left names the LANE, not the reading (smt/classes.ts:439).
+    const files = [
+      'src/semantics/engines/smt.ts',
+      'src/semantics/engines/literal.ts',
+      'src/semantics/consistency.ts',
+      'src/semantics/smt/classes.ts',
+    ];
+    const hits = files.flatMap((file) =>
+      readFileSync(resolve(process.cwd(), file), 'utf8')
+        .split('\n')
+        .map((text, i) => ({ file, line: i + 1, text }))
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l.text) && l.text.includes('the numeric surface')),
+    );
+    expect(hits).toHaveLength(1);
+    expect([hits[0].file, hits[0].line]).toEqual(['src/semantics/smt/classes.ts', 439]);
+    expect(hits[0].text).toContain('can be decided on the numeric surface alone');
   });
 
   it('turns a throw in the classifier of an engine into an unclassified statement, in the group and its run', () => {

@@ -899,7 +899,7 @@ export function readPremise(row: Obligation, checks: ReadonlyMap<ElementId, Cons
     holds,
     detail:
       check?.message ??
-      'the numeric surface never reached this clause, so nothing is known about it here',
+      'the check never reached this clause, so nothing is known about it here',
   };
 }
 
@@ -1044,7 +1044,7 @@ function judgeOne(
   // `not-evaluable` and nothing forgives it. See {@link OUTSIDE_THE_FRAGMENT}
   // for why the two are told apart by the refusal's reason and not by the mere
   // fact that a gate spoke.
-  const why = check?.message ?? 'the numeric surface never gathered this relation';
+  const why = check?.message ?? 'the check never gathered this relation';
   const unread = row.encodable === true ? unreadOutcome(model, row, check) : undefined;
   if (unread) return { ...base, outcome: 'not-evaluable', detail: unread.detail };
   if (row.encodable !== true) {

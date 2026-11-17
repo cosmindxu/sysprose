@@ -28,7 +28,7 @@
       "forgiven": false,
       "tautology": false,
       "witnessSymbols": [],
-      "detail": "refuted with every feature at its model value: `bus.seats % 2 == 0` is false on the numeric surface — a gate refuses this relation for the solver lane (unsupported-operator: the remainder operator `%` has no encoding in this fragment), so no proof is available for it either way, but a requirement that is false at the values the model states is a violation whichever engine reads it and no flag forgives one",
+      "detail": "refuted with every feature at its model value: `bus.seats % 2 == 0` is false on the check — a gate refuses this relation for the solver lane (unsupported-operator: the remainder operator `%` has no encoding in this fragment), so no proof is available for it either way, but a requirement that is false at the values the model states is a violation whichever engine reads it and no flag forgives one",
       "premises": []
     }
   ]
