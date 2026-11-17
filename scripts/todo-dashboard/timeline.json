@@ -3496,6 +3496,38 @@
   "open_raw": 62,
   "open": 62,
   "open_by": {
+   "FALSE": 4,
+   "WEAKER": 40,
+   "POLISH": 16,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 302,
+  "cum_closed": 238
+ },
+ {
+  "idx": 110,
+  "sha": "cf7ca96",
+  "when": "2026-11-17T07:04:48+01:00",
+  "day": "2026-11-17",
+  "subject": "merge a5-heads2-hd6: HD6 \u2014 read a subsetted feature as its subsetter at [1..1]",
+  "open_raw": 62,
+  "open": 62,
+  "open_by": {
    "FALSE": 0,
    "WEAKER": 42,
    "POLISH": 18,
