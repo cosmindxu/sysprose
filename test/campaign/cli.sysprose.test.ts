@@ -1838,7 +1838,7 @@ describe('L7 — sysprose reporting command', () => {
    * a model this lane cannot reach. The prose-only row beside it is the case
    * that sentence really belongs to.
    */
-  it('contracts tells a usage that inherits its clauses from a requirement with none', async () => {
+  it('contracts tells a usage that inherits its clauses from a requirement with none, and names a refused clause', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'usage.sysml');
     writeFileSync(
@@ -1863,6 +1863,20 @@ describe('L7 — sysprose reporting command', () => {
 }
 `,
     );
+    // W4 (e): a requirement whose only clause was refused is not prose — it wrote one, and no surface read it.
+    const refused = join(dir, 'refused.sysml');
+    writeFileSync(
+      refused,
+      `package E {
+    part def P { attribute L : Real = 1.0; }
+    requirement r {
+        subject s : P;
+        require not constraint c { attribute y := 2.0; s.L > y }
+    }
+    requirement w { subject s : P; doc /* it shall be good */ }
+}
+`,
+    );
     try {
       // A requirement whose only body is an assert is not prose: the row names the assert it carries.
       const a = await run(['contracts', asserted]);
@@ -1882,6 +1896,29 @@ describe('L7 — sysprose reporting command', () => {
       expect(missing.stdout).toContain(
         '1 requirement(s) carry no formal clause — no gate refused them',
       );
+      // The refused-clause file: the load degrades on the clause, so both reports are exit 1 over what parsed, and
+      // both name the clause they did not read beside the prose row that keeps the old sentence.
+      const c = await run(['contracts', refused]);
+      expect(c.code).toBe(1);
+      expect(c.stderr).toContain('did not load cleanly');
+      expect(c.stdout).toContain(
+        'its only clause is not read: the `require not` clause it writes, `require not constraint c { attribute y := 2.0; s.L > y }`, is not read by this tool, so there is nothing to encode',
+      );
+      expect(c.stdout).toContain('no formal clause: prose only, nothing to encode');
+      expect(c.stdout).toContain('2 contract(s) carry no formal clause');
+      const o = await run(['obligations', refused]);
+      expect(o.code).toBe(1);
+      expect(o.stderr).toContain('did not load cleanly');
+      expect(o.stdout).toContain('obligation none          (its clause is not read)');
+      expect(o.stdout).toContain(
+        'not encodable: the requirement writes the `require not` clause `require not constraint c { attribute y := 2.0; s.L > y }`, which this tool does not read, so there is nothing to encode',
+      );
+      expect(o.stdout).toContain('obligation none          (no constraint body)');
+      expect(o.stdout).toContain(
+        'not encodable: the requirement carries prose and no constraint body, so there is nothing to encode',
+      );
+      expect(o.stdout).toContain('open 1 · no formal clause 2 · not encodable 0');
+      expect(o.stdout).toContain('2 requirement(s) carry no formal clause — no gate refused them');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

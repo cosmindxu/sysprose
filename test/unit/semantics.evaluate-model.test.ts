@@ -3855,6 +3855,40 @@ describe('checkConstraints — a bound partner is read only where every instance
     });
   });
 
+  describe('W4: an annotation and a language-only `rep` are kept standing under a negated assert', () => {
+    // `assert not constraint c { @M rep language "en" … s.L > 0.0 }` is read as the plain clause over `not (…)`: the
+    // annotation and the language-only textual representation say nothing a reader judges, so the negation keeps them
+    // standing and only the expression is negated. The pair must read exactly as the plain twin `assert constraint c {
+    // … not (s.L > 0.0) }` on every surface a clause reaches.
+    const neg = `package W4F {
+  metadata def M;
+  part def P { attribute L = 1.0; }
+  requirement r {
+    subject s : P;
+    assert not constraint c {
+      @M
+      rep language "en" /* the load stays put */
+      s.L > 0.0
+    }
+  }
+}`;
+    const twin = neg.replace('assert not constraint c', 'assert constraint c').replace('s.L > 0.0', 'not (s.L > 0.0)');
+    it('files the negated pair as the plain twin does on the check and numeric surfaces, with no error', async () => {
+      for (const text of [neg, twin]) {
+        const { model, report } = await loadModelText(text);
+        expect(report.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+        expect(checkConstraints(model!).map((r) => [model!.qualifiedName(r.id), r.result])).toContainEqual([
+          'W4F::r::c',
+          'violated',
+        ]);
+        expect(checkConstraintsNumeric(model!).map((r) => [model!.qualifiedName(r.id), r.result])).toContainEqual([
+          'W4F::r::c',
+          'violated',
+        ]);
+      }
+    });
+  });
+
   describe('HD5: the typed-inequality hold is scoped to the instance its value is read in', () => {
     // An assert typed by an inequality-only constraint definition holds the feature it constrains as no design freedom
     // for the numeric surface. Before the step the hold was by FEATURE, in every instance that reads the feature: an

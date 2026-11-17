@@ -76,6 +76,7 @@ import {
   bareBoundOf,
   isUserModelElement,
   readRelation,
+  refusedClausesOf,
   withInstances,
   type Contract,
   type ContractRef,
@@ -292,9 +293,21 @@ export interface Obligation {
  * a fact of the model, filed as an axiom row (`axioms`, the worklist so far) the SMT engine asserts and the
  * check judges — reported violated where it is false — and no clause of the requirement (SysML §7.20.1).
  * Saying the requirement "carries prose and no constraint body" there denied the body the check had just
- * judged, so the sentence names it.
+ * judged, so the sentence names it. A clause this tool REFUSED (`require not constraint c { … }`) is the
+ * other denied body: the file states it, the mapper kept it verbatim, and no surface read it — so that
+ * sentence names it too, rather than calling the requirement prose.
  */
 function noFormalClauseDetail(model: Model, requirementId: ElementId, axioms: readonly Obligation[]): string {
+  // A requirement that wrote a clause this tool refused is not prose: the clause is there, unread. Said first, so the
+  // asserted and the prose sentences below stay byte-for-byte for the shapes that have no refused clause.
+  const refused = refusedClausesOf(model, requirementId);
+  if (refused.length > 0) {
+    const clauses = refused.map((c) => `the \`${c.role} not\` clause \`${c.written}\``);
+    if (clauses.length === 1) {
+      return `the requirement writes ${clauses[0]}, which this tool does not read, so there is nothing to encode`;
+    }
+    return `the requirement writes ${clauses.slice(0, -1).join(', ')} and ${clauses.at(-1)}; none is read by this tool, so there is nothing to encode`;
+  }
   const owners = new Set<ElementId>([requirementId, ...generalizationsOf(model, requirementId).map((t) => t.id)]);
   const asserted = axioms.filter(
     (o) =>
