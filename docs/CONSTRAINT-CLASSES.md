@@ -55,21 +55,21 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 
 | Cell | Rows | Models | Encoder tests | Decided golden rows | Agreeing table rows (probes) | Table rows against | Battery cells | Level |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `ground` | 1 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
+| `ground` | 1 | 1 | 1 | 0 | 4 (4) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 486 | 72 | 2 | 6 | 742 (331) | 0 | none | `differential-tested` |
+| `lra` | 486 | 72 | 2 | 6 | 783 (347) | 0 | none | `differential-tested` |
 | `lira` | 15 | 13 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `nra-div/pinned` | 17 | 9 | 1 | 1 | 6 (4) | 0 | none | `tested` |
+| `nra-div/pinned` | 17 | 9 | 1 | 1 | 8 (6) | 0 | none | `tested` |
 | `units` | 100 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
 | `text-as-real` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `stated-value` | 311 | 78 | 1 | 7 | 698 (300) | 0 | none | `differential-tested` |
+| `stated-value` | 311 | 78 | 1 | 7 | 737 (314) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 69 (42) | 0 | none | `differential-tested` |
 | `bind-equality` | 9 | 5 | 1 | 0 | 237 (141) | 0 | none | `experimental` |
-| `asserted-fact` | 28 | 8 | 1 | 0 | 29 (16) | 0 | none | `experimental` |
-| `requirement-clause` | 236 | 61 | 1 | 7 | 423 (256) | 0 | none | `differential-tested` |
+| `asserted-fact` | 28 | 8 | 1 | 0 | 31 (18) | 0 | none | `experimental` |
+| `requirement-clause` | 236 | 61 | 1 | 7 | 458 (272) | 0 | none | `differential-tested` |
 | `per-instance` | 1 | 1 | 1 | 0 | 327 (167) | 0 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
@@ -142,7 +142,7 @@ What z3 is asked: the `set-logic` the relation’s own bytes need. A relation th
 
 - **Encodes.** `(/ a b)` with a symbol-carrying divisor, plus the guard `(distinct b 0.0)` asserted as `side:`.
 - **Logic.** `QF_NRA`.
-- **Level of `nra-div/pinned`.** `tested` (first unmet: 20 four-surface rows agree, have 6).
+- **Level of `nra-div/pinned`.** `tested` (first unmet: 20 four-surface rows agree, have 8).
 - **Limits.**
   - The guard is an encoding assumption: a pinned-zero divisor makes it contradict the axioms. Division in an axiom surfaces as `inconsistent-axioms` at step 0 when the divisor is pinned to zero. Pinned by `test/integration/smt-z3.integration.test.ts`: “does not call a division by a zero value a proof, and says so in the class (CC-46)”.
   - Division in the goal surfaces as `not-evaluable` (the goal is undefined wherever the axioms hold) when the divisor is pinned to zero; with a pinned nonzero divisor it is `proved`. Pinned by `test/integration/smt-z3.integration.test.ts`: “does not call a division by a zero value a proof, and says so in the class (CC-46)”.
