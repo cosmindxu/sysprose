@@ -42,7 +42,7 @@
  * factors are logarithms) is that double's own rational.
  */
 
-import { connective, refText, type ExprNode, type Tri } from './expr';
+import { connective, exprEqual, refText, type ExprNode, type Tri } from './expr';
 import { decimalRational, numeralRational, scaleRational, type Rational } from './smt/encode';
 import { resolveUnit, type FactorTerm } from './units';
 
@@ -579,6 +579,302 @@ function arithmetic(
   if (!Number.isFinite(value)) return UNKNOWN;
   const e = ea !== undefined && eb !== undefined ? g(ea, eb) : undefined;
   return e ? { value, exact: e } : { value };
+}
+
+/* ──────────────────── an identity, not merely an equality ─────────────── */
+
+/**
+ * The most monomials one side may expand to before {@link identicallyEqual}
+ * gives up — the cap the solver lane's polynomial reader keeps
+ * (`MAX_MONOMIALS` of ./solver), so the two readings abandon at the same size
+ * and neither is the one that guessed.
+ */
+const MAX_IDENTITY_MONOMIALS = 64;
+
+/**
+ * The largest whole exponent read as a rational function — `polynomialOf` of
+ * ./solver reads 1–8; an exponent the spec's `^` is total at (a positive whole
+ * one) is the same band here, and a larger one is abandoned rather than
+ * expanded.
+ */
+const MAX_IDENTITY_POWER = 8;
+
+/** One side as a polynomial over atoms: each monomial's atom powers to its nonzero coefficient. */
+type SidePolynomial = Map<string, { atoms: ReadonlyMap<string, number>; c: Rational }>;
+
+/** One side as an exact fraction of two polynomials: what every arithmetic operation on rationals is. */
+interface SideFunction {
+  num: SidePolynomial;
+  den: SidePolynomial;
+}
+
+/**
+ * A name's monomial — or a lowered `[unit]` literal's, which is keyed as the
+ * encoder writes it (`#` and its literal) so `2.0 [m]` is no bare `2.0`, as
+ * `polynomialOf` of ./solver keys it.
+ */
+function identityAtom(atom: string): SidePolynomial {
+  const atoms = new Map([[atom, 1]]);
+  return new Map([[identityKey(atoms), { atoms, c: { num: 1n, den: 1n } }]]);
+}
+
+/** A constant polynomial; the empty map IS the zero polynomial. */
+function identityConstant(c: Rational): SidePolynomial {
+  return c.num === 0n ? new Map() : new Map([['', { atoms: new Map(), c }]]);
+}
+
+function identityOne(): SidePolynomial {
+  return identityConstant({ num: 1n, den: 1n });
+}
+
+function identityKey(atoms: ReadonlyMap<string, number>): string {
+  return JSON.stringify([...atoms].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+function identityNegate(p: SidePolynomial): SidePolynomial {
+  return new Map([...p].map(([k, m]) => [k, { atoms: m.atoms, c: negateRational(m.c) }]));
+}
+
+function identityAdd(a: SidePolynomial, b: SidePolynomial): SidePolynomial | undefined {
+  const out: SidePolynomial = new Map([...a]);
+  for (const [k, m] of b) {
+    const had = out.get(k);
+    const c = had ? addRationals(had.c, m.c) : m.c;
+    if (!c) return undefined;
+    if (c.num === 0n) out.delete(k);
+    else out.set(k, { atoms: m.atoms, c });
+  }
+  return out.size > MAX_IDENTITY_MONOMIALS ? undefined : out;
+}
+
+function identityMultiply(a: SidePolynomial, b: SidePolynomial): SidePolynomial | undefined {
+  let out: SidePolynomial = new Map();
+  for (const x of a.values()) {
+    for (const y of b.values()) {
+      const atoms = new Map([...x.atoms]);
+      for (const [atom, n] of y.atoms) atoms.set(atom, (atoms.get(atom) ?? 0) + n);
+      const c = multiplyRationals(x.c, y.c);
+      if (!c) return undefined;
+      const sum = identityAdd(out, new Map([[identityKey(atoms), { atoms, c }]]));
+      if (!sum) return undefined;
+      out = sum;
+    }
+  }
+  return out;
+}
+
+/** `p ^ n` for a positive whole `n`, by squaring. */
+function identityPower(p: SidePolynomial, n: number): SidePolynomial | undefined {
+  let result: SidePolynomial | undefined = identityOne();
+  let square: SidePolynomial | undefined = p;
+  for (let e = n; e > 0 && result !== undefined && square !== undefined; e >>= 1) {
+    if (e & 1) result = identityMultiply(result, square);
+    if (e > 1 && result !== undefined) square = identityMultiply(square, square);
+  }
+  return result;
+}
+
+/**
+ * One side as a rational function of its names — `undefined` where it is none
+ * (`if`, a call, a comparison, a remainder, a fractional exponent), where a
+ * divisor or a base is not exactly nonzero at this reading ({@link
+ * identicallyEqual}'s `nonzero`), or past a cap.
+ */
+function sideFunction(node: ExprNode, nonzero: (n: ExprNode) => boolean): SideFunction | undefined {
+  switch (node.kind) {
+    case 'num': {
+      if (node.literal !== undefined) {
+        return { num: identityAtom(`#${JSON.stringify(node.literal)}`), den: identityOne() };
+      }
+      const c = writtenRational(node.value, node.text);
+      return c === undefined ? undefined : { num: identityConstant(c), den: identityOne() };
+    }
+    case 'ref':
+      return { num: identityAtom(refText(node)), den: identityOne() };
+    case 'unary': {
+      if (node.op === 'not') return undefined;
+      const r = sideFunction(node.operand, nonzero);
+      return r === undefined ? undefined : { num: node.op === '-' ? identityNegate(r.num) : r.num, den: r.den };
+    }
+    case 'binary': {
+      if (node.op === '/') {
+        // A quotient is defined only where the divisor is exactly nonzero; the
+        // guard is collected here, so `y / z == y / z` beside a free z is NO
+        // identity (the reading is not total there), which is what keeps the
+        // free-divisor controls unknown.
+        if (!nonzero(node.right)) return undefined;
+        const a = sideFunction(node.left, nonzero);
+        const r = sideFunction(node.right, nonzero);
+        const num = a && r && identityMultiply(a.num, r.den);
+        const den = a && r && identityMultiply(a.den, r.num);
+        if (num === undefined || den === undefined || den.size === 0) return undefined;
+        return { num, den };
+      }
+      // A remainder is no rational function; its syntactic twin is read by the
+      // guard list alone (`y % 2.0 == y % 2.0`).
+      if (node.op === '%') return undefined;
+      const a = sideFunction(node.left, nonzero);
+      const r = sideFunction(node.right, nonzero);
+      if (a === undefined || r === undefined) return undefined;
+      switch (node.op) {
+        case '+':
+        case '-': {
+          const ad = identityMultiply(a.num, r.den);
+          const cb = identityMultiply(r.num, a.den);
+          if (ad === undefined || cb === undefined) return undefined;
+          const num = identityAdd(ad, node.op === '-' ? identityNegate(cb) : cb);
+          const den = identityMultiply(a.den, r.den);
+          if (num === undefined || den === undefined || den.size === 0) return undefined;
+          return { num, den };
+        }
+        case '*': {
+          const num = identityMultiply(a.num, r.num);
+          const den = identityMultiply(a.den, r.den);
+          if (num === undefined || den === undefined || den.size === 0) return undefined;
+          return { num, den };
+        }
+        case '^': {
+          const exponent =
+            node.right.kind === 'num' && node.right.literal === undefined && Number.isInteger(node.right.value)
+              ? node.right.value
+              : undefined;
+          // A fractional exponent is no rational function (and `x ^ 0.0` is 1
+          // only where x is not 0, a guard, not a power).
+          if (exponent === undefined || Math.abs(exponent) > MAX_IDENTITY_POWER) return undefined;
+          if (exponent === 0) {
+            return nonzero(node.left) ? { num: identityOne(), den: identityOne() } : undefined;
+          }
+          if (exponent > 0) {
+            const num = identityPower(a.num, exponent);
+            const den = identityPower(a.den, exponent);
+            if (num === undefined || den === undefined || den.size === 0) return undefined;
+            return { num, den };
+          }
+          // A negative power is one over the base's, defined only where the
+          // base is exactly nonzero.
+          if (!nonzero(node.left)) return undefined;
+          const num = identityPower(a.den, -exponent);
+          const den = identityPower(a.num, -exponent);
+          if (num === undefined || den === undefined || den.size === 0) return undefined;
+          return { num, den };
+        }
+        default:
+          return undefined;
+      }
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Is every divisor and the base of every power in `node` exactly nonzero — the
+ * guard list the syntactic fast path keeps, in `isTotal`'s shape (`y - y` is
+ * total; a quotient is total only where its divisor is a nonzero reading)?
+ * `0 ^ k` is 0 for a positive whole k, so such a power needs no base guard;
+ * every other exponent does (0 ^ 0 and 0 ^ -1 have no rational reading, and
+ * neither does 0 ^ 0.5 in this tool's exact arithmetic).
+ */
+function everySideDefined(node: ExprNode, nonzero: (n: ExprNode) => boolean): boolean {
+  switch (node.kind) {
+    case 'unary':
+      return everySideDefined(node.operand, nonzero);
+    case 'binary': {
+      if (!everySideDefined(node.left, nonzero) || !everySideDefined(node.right, nonzero)) return false;
+      if (node.op === '/' || node.op === '%') return nonzero(node.right);
+      if (node.op === '^') {
+        const exponent =
+          node.right.kind === 'num' && node.right.literal === undefined && Number.isInteger(node.right.value)
+            ? node.right.value
+            : undefined;
+        return exponent !== undefined && exponent >= 1 && exponent <= MAX_IDENTITY_POWER ? true : nonzero(node.left);
+      }
+      return true;
+    }
+    case 'if':
+      return (
+        everySideDefined(node.cond, nonzero) && everySideDefined(node.then, nonzero) && everySideDefined(node.else, nonzero)
+      );
+    default:
+      return true;
+  }
+}
+
+/**
+ * Are `a` and `b` ONE expression — equal at every point where every divisor and
+ * every base of a power of one has a value?
+ *
+ * The question a "quotient or power tautology" asks and no comparison of
+ * computed sides can answer: `x - x == 0.0`, `y / 2.0 == y / 2.0`, `2.0 ^ y ==
+ * 2.0 ^ y` hold whatever the names are, so they fix nothing, and read at a
+ * point they were only read where the point gave the names values. It tries
+ * two readings:
+ *
+ *  1. SYNTACTIC: the two sides are the same expression ({@link exprEqual}, so
+ *     `[unit]` literals must be lowered by the caller as `readsIdenticalSides`
+ *     lowers them) and every divisor and every base of a power in it is
+ *     exactly nonzero ({@link everySideDefined}); `y / 2.0 == y / 2.0` and
+ *     `y % 2.0 == y % 2.0`;
+ *  2. ALGEBRAIC: both sides are the same rational function of their names,
+ *     over this module's exact {@link Rational} arithmetic — cross-multiplied,
+ *     the difference is the zero fraction; `x - x == 0.0` and `x * 0.0 == 0.0`
+ *     with no guard, `(x * y) / y == x` only where `y` is exactly nonzero.
+ *     Abandoned (no identity) past {@link MAX_IDENTITY_MONOMIALS} monomials,
+ *     for any form that is no rational function (`if`, a call, a comparison, a
+ *     fractional exponent — the syntactic path still reads an identical one),
+ *     and wherever a collected guard fails.
+ *
+ * `nonzero` is the caller's, and must answer EXACTLY: true only where it knows
+ * the expression has a nonzero rational value — a numeral's own written
+ * decimal ({@link writtenRational}), a name's exact reading from the model or
+ * the solve. A reading it cannot prove keeps the answer false, which is the
+ * abstention every caller wants; a binary64 near-zero is not a proof either
+ * way.
+ *
+ * Pure, and free of the Model: the caller owns the gate that makes it sound
+ * (units-eval must read both sides with no refusal reason and one dimension,
+ * decision 5 — an identity never crosses an offset scale or a dimension
+ * mismatch), and the caller owns the point it is read at.
+ */
+export function identicallyEqual(a: ExprNode, b: ExprNode, nonzero: (n: ExprNode) => boolean): boolean {
+  // (1) One reading of one expression, defined wherever its guards hold.
+  if (exprEqual(a, b) && everySideDefined(a, nonzero)) return true;
+  // (2) One rational function: a/d − c/b is (a·b − c·d) / (d·b), and that is
+  // the zero function exactly where its numerator is the zero polynomial. The
+  // denominators' guards were collected above, so both are nonzero here.
+  const left = sideFunction(a, nonzero);
+  const right = sideFunction(b, nonzero);
+  if (left === undefined || right === undefined) return false;
+  const ad = identityMultiply(left.num, right.den);
+  const cb = identityMultiply(right.num, left.den);
+  if (ad === undefined || cb === undefined) return false;
+  const difference = identityAdd(ad, identityNegate(cb));
+  return difference !== undefined && difference.size === 0;
+}
+
+/**
+ * The `nonzero` reading {@link identicallyEqual} takes, for a caller whose
+ * exact readings are a scope: a numeral is exactly nonzero iff its own written
+ * decimal is ({@link writtenRational} — never binary64's rounding of it), a
+ * name iff the caller's exact reading of it is a nonzero rational, and a
+ * negation of either. Everything else — a sum, a product, a call — is not
+ * proved, which keeps the answer false where the caller cannot know it.
+ */
+export function provenNonzero(node: ExprNode, exact: ExactScope): boolean {
+  switch (node.kind) {
+    case 'num': {
+      const r = writtenRational(node.value, node.text);
+      return r !== undefined && r.num !== 0n;
+    }
+    case 'ref': {
+      const r = exact(refText(node));
+      return r !== undefined && r.num !== 0n;
+    }
+    case 'unary':
+      return node.op !== 'not' && provenNonzero(node.operand, exact);
+    default:
+      return false;
+  }
 }
 
 /* ───────────────────────── a witness, re-read ─────────────────────────── */

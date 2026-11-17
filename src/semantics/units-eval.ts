@@ -90,7 +90,7 @@ import {
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
 import { redefinedClosure } from './inheritance';
-import { connective, DOUBLE_DIGITS, keySegment, readQuotedName, significantDigitsOf, type Tri } from './expr';
+import { connective, DOUBLE_DIGITS, keySegment, readQuotedName, refText, significantDigitsOf, type ExprNode, type Tri } from './expr';
 import {
   addRationals,
   compareRationals,
@@ -3084,6 +3084,194 @@ function constraintScope(model: Model, el: ElementRecord, opts: ConstraintQuanti
 export function quantityOf(model: Model, el: ElementRecord, name: string, opts: ConstraintQuantityOptions = {}): Quantity | undefined {
   const r = constraintScope(model, el, opts)(name);
   return r !== undefined && !isQUnknown(r) && 'q' in r ? r.q : undefined;
+}
+
+/* ─────────────────────── a side's dimension, no values ───────────────────── */
+
+/** What {@link dimensionOfSide} reads: the side's dimension, or why it reads none. */
+export type SideDimension = { dimension: Dimension } | { unknown: true; reason?: QReason; detail?: string };
+
+/**
+ * The DIMENSION one side of a relation reads, WITHOUT reading any value of it
+ * — the unit gate N2 puts before an identity (`identicallyEqual` of ./exact,
+ * plan decision 5): two sides that are one expression are one number only
+ * where the units-eval reader gives both the same dimension and refuses
+ * neither. The verdict reader cannot answer it over a name the model gives no
+ * value (`sk`'s `x - x == 0.0`, where `x` is valueless): a name's dimension is
+ * a fact of its declaration and its derivation, not of the point.
+ *
+ * Read per name:
+ *  - a bound name (`opts.bind`) takes its bound quantity's dimension;
+ *  - else the name's own facet — its `[unit]` or its ISQ kind
+ *    ({@link declaredFacetsOf}), an offset scale (°C/°F) REFUSING (decision 5:
+ *    an offset operand never forms an identity);
+ *  - else the dimension its value expression or its defining asserted
+ *    equation derives ({@link derivedDimensionOf});
+ *  - else, where it denotes a NUMBER — an attribute with no declared type (the
+ *    implicit Real) or one typed by a numeric scalar — the dimensionless
+ *    reading; a String, a Boolean, an enumeration or a part/port usage REFUSES
+ *    as `not-quantity`, because it has no value any completion gives.
+ * A `[unit]` literal lowered by the caller (`literals`, the markers of
+ * ./unit-literals) reads that unit's dimension; a numeral is dimensionless.
+ *
+ * FAIL CLOSED: past the operations below — `if` branches of different kinds,
+ * a dimensional exponent, a comparison or a call on a side — and for a name it
+ * cannot resolve, the answer is `unknown`, and the caller keeps its row
+ * unknown. `+`, `-` and `%` need one dimension, `*` and `/` multiply and
+ * divide, and `^` reads a literal exponent only.
+ */
+export function dimensionOfSide(
+  model: Model,
+  el: ElementRecord,
+  node: ExprNode,
+  opts: ConstraintQuantityOptions = {},
+  literals: ReadonlyMap<string, { dimension: Dimension }> = new Map(),
+): SideDimension {
+  const memo = opts.memo ?? new Map();
+  // The names a scope DENOTES, valued or not: a valueless feature has a
+  // dimension from its declaration and its derivation, and the value scope
+  // ({@link quantityIdsOf}) holds only the names that state one.
+  const idsOf = (contextId: ElementId): ReadonlyMap<string, ElementId> =>
+    passOf(model, memo).definitions.scope(contextId, 'all');
+  const ownerIds = el.ownerId != null ? idsOf(el.ownerId) : undefined;
+  const selfIds = idsOf(el.id);
+  const featureOf = (name: string): ElementId | undefined => ownerIds?.get(name) ?? selfIds.get(name);
+  const dimensionOfFeature = (id: ElementId): SideDimension => {
+    const facets = declaredFacetsOf(model, id);
+    if (facets.unit !== undefined) {
+      if (resolveUnit(facets.unit)?.offsetSI) return { unknown: true, reason: 'offset', detail: facets.unit };
+      const unitDimension = dimensionOf(facets.unit);
+      return unitDimension !== undefined
+        ? { dimension: unitDimension }
+        : { unknown: true, reason: 'unit', detail: facets.unit };
+    }
+    if (facets.kindDimension !== undefined) return { dimension: facets.kindDimension };
+    const derived = derivedDimensionOf(model, id, memo);
+    if (derived !== undefined) return { dimension: derived };
+    // A name with no unit, no ISQ kind and no derivation is DIMENSIONLESS only
+    // where it denotes a NUMBER — an attribute with no declared type (the
+    // implicit Real) or one typed by a numeric scalar. A String, a Boolean, an
+    // enumeration or a part/port usage has no value on any completion of the
+    // model, so an identity over it would publish a satisfied row for an
+    // ill-typed body: the unit gate refuses its dimension and the row stays
+    // unknown (decision 5 and the fail-closed rule).
+    const typeName = declaredTypeName(model, id);
+    if (typeName !== undefined) {
+      return isNonIsqScalar(typeName)
+        ? { dimension: DIMENSIONLESS }
+        : { unknown: true, reason: 'not-quantity', detail: typeName };
+    }
+    const el = model.get(id);
+    return el === undefined || el.eClass !== 'AttributeUsage'
+      ? { unknown: true, reason: 'not-quantity', detail: el?.eClass ?? 'nothing' }
+      : { dimension: DIMENSIONLESS };
+  };
+  const read = (side: ExprNode): SideDimension => {
+    switch (side.kind) {
+      case 'num':
+        // A `num` carrying a `literal` is a `[unit]` marker some caller has
+        // already lowered: the lowering keeps the magnitude and the factor,
+        // not the unit's dimension, so such a numeral is no dimensionless
+        // number. The gate must receive the UNSUBSTITUTED body, where a marker
+        // is a ref read through `literals` above; one that did not fails here.
+        return side.literal !== undefined
+          ? { unknown: true, reason: 'not-quantity' }
+          : { dimension: DIMENSIONLESS };
+      case 'bool':
+      case 'str':
+      case 'null':
+      case 'call':
+      case 'arrow':
+        return { unknown: true, reason: 'not-quantity' };
+      case 'ref': {
+        const name = refText(side);
+        const marker = literals.get(name);
+        if (marker !== undefined) return { dimension: marker.dimension };
+        const bound = opts.bind?.(name);
+        if (bound !== undefined) return { dimension: bound.dimension };
+        const id = featureOf(name);
+        return id === undefined ? { unknown: true, reason: 'unresolved', detail: name } : dimensionOfFeature(id);
+      }
+      case 'unary':
+        return side.op === 'not' ? { unknown: true, reason: 'not-quantity' } : read(side.operand);
+      case 'binary': {
+        if (side.op === 'and' || side.op === 'or' || side.op === 'xor' || side.op === 'implies' || COMPARISONS.has(side.op)) {
+          return { unknown: true, reason: 'not-quantity' };
+        }
+        const l = read(side.left);
+        if (!('dimension' in l)) return l;
+        const r = read(side.right);
+        if (!('dimension' in r)) return r;
+        switch (side.op) {
+          case '+':
+          case '-':
+          case '%':
+            return dimEqual(l.dimension, r.dimension)
+              ? { dimension: l.dimension }
+              : {
+                  unknown: true,
+                  reason: 'dimension-clash',
+                  detail: `${dimToString(l.dimension)} and ${dimToString(r.dimension)} are different physical dimensions`,
+                };
+          case '*':
+            return { dimension: multiplyDim(l.dimension, r.dimension) };
+          case '/':
+            return { dimension: divideDim(l.dimension, r.dimension) };
+          case '^': {
+            if (!dimEqual(r.dimension, DIMENSIONLESS)) {
+              return { unknown: true, reason: 'dimension-fault', detail: `an exponent must be dimensionless, not ${dimToString(r.dimension)}` };
+            }
+            // A DIMENSIONLESS base stays dimensionless whatever the exponent
+            // is — as the evaluator reads it (`combineQ`) — so `2.0 ^ y` reads
+            // its dimension with no value for y. A dimensioned base needs the
+            // exponent's NUMBER, and a literal one at that.
+            if (dimEqual(l.dimension, DIMENSIONLESS)) return { dimension: DIMENSIONLESS };
+            const exponent =
+              side.right.kind === 'num' && side.right.literal === undefined && Number.isFinite(side.right.value)
+                ? side.right.value
+                : undefined;
+            if (exponent === undefined) {
+              return { unknown: true, reason: 'dimension-fault', detail: 'the exponent is not a literal number' };
+            }
+            return { dimension: powDim(l.dimension, exponent) };
+          }
+          default:
+            return { unknown: true, reason: 'not-quantity' };
+        }
+      }
+      default: {
+        // `if C then A else B`: both branches must be the same kind of
+        // quantity; its condition is a Boolean and needs no dimension read.
+        const then = read(side.then);
+        if (!('dimension' in then)) return then;
+        const otherwise = read(side.else);
+        if (!('dimension' in otherwise)) return otherwise;
+        return dimEqual(then.dimension, otherwise.dimension)
+          ? { dimension: then.dimension }
+          : {
+              unknown: true,
+              reason: 'dimension-fault',
+              detail: 'the branches of a conditional are different kinds of quantity, so no one reading of it holds on both',
+            };
+      }
+    }
+  };
+  return read(node);
+}
+
+/** Do both sides of a comparison read one dimension, with no refusal reason on either ({@link dimensionOfSide})? */
+export function sidesAgreeInDimension(
+  model: Model,
+  el: ElementRecord,
+  left: ExprNode,
+  right: ExprNode,
+  opts: ConstraintQuantityOptions = {},
+  literals: ReadonlyMap<string, { dimension: Dimension }> = new Map(),
+): boolean {
+  const l = dimensionOfSide(model, el, left, opts, literals);
+  if (!('dimension' in l)) return false;
+  const r = dimensionOfSide(model, el, right, opts, literals);
+  return 'dimension' in r && dimEqual(l.dimension, r.dimension);
 }
 
 /**
