@@ -111,7 +111,7 @@ import {
   type NameClash,
 } from './defining-equation';
 import { anyHiddenByName, effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf, redefinedClosure } from './inheritance';
-import { compareRationals, evaluateDecided, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
+import { compareRationals, evaluateDecided, identicallyEqual, provenNonzero, statedRational, tieSentence, withinTolerance, type ExactScope, type Rational } from './exact';
 import { evaluate, exprRef, exprRefusal, parseExpr, refText, type EvalResult, type ExprNode } from './expr';
 import { resolveFullName } from './bind';
 import {
@@ -147,6 +147,7 @@ import {
   dimensionClaimDetail,
   dimensionalFacets,
   evaluateConstraintQuantityDetailed,
+  sidesAgreeInDimension,
   quantityOf,
   evaluateQuantity,
   isRefusalReason,
@@ -3725,6 +3726,48 @@ function judgeBound(
     };
   }
 
+  // Scope from the owner (subject context) merged with the constraint itself.
+  const combined = combinedAnswer(model, el, pass, at);
+  const answered = new Map<string, ScalarAnswer | undefined>();
+  const own = (name: string): ScalarAnswer | undefined => {
+    if (!answered.has(name)) answered.set(name, combined(name));
+    return answered.get(name);
+  };
+  // Each number with its exact reading, so a tie is decided by the decimals
+  // written, as the unit-aware path decides it (the tie rule of ./exact):
+  // `mass < 25.0` at 25 kg is violated, `x + 0.2 > 0.3` at 0.1 too.
+  const exact: ExactScope = (name) => {
+    const bound = bindings?.get(name);
+    return bound !== undefined ? bound.exact : own(name)?.exact;
+  };
+
+  // ONE EXPRESSION ON BOTH SIDES: a tautology fixes nothing and holds wherever
+  // both sides have a value, so it is satisfied without a value for the names
+  // it reads — `x - x == 0.0`, `y / 2.0 == y / 2.0`, `2.0 ^ y == 2.0 ^ y`
+  // ({@link identicallyEqual}, N2), each of which the unit-aware reader above
+  // could not judge for want of a value. Read only after the unit gate
+  // (decision 5): both sides of one dimension and no refusal reason on either,
+  // so a dimension clash and an offset (°C) operand stay unknown, and only
+  // where the unit-aware reader decided nothing at all. A divisor or base is
+  // exactly nonzero only where the model's own reading of it is
+  // ({@link provenNonzero}, from the same exact scope the tie rule reads).
+  if (
+    ua.verdict === 'unknown' &&
+    !isRefusalReason(ua.reason) &&
+    node.kind === 'binary' &&
+    (node.op === '==' || node.op === '=') &&
+    sidesAgreeInDimension(model, el, node.left, node.right, uaOpts) &&
+    identicallyEqual(node.left, node.right, (n) => provenNonzero(n, exact))
+  ) {
+    const reads = collectReads(model, el, pass, referencedNames(node), own, at);
+    return {
+      result: 'satisfied',
+      message: `Constraint satisfied${readsClause(model, reads)}`,
+      gap: false,
+      ...(reads ? { reads } : {}),
+    };
+  }
+
   // The bare-literal contract holds for a LITERAL-valued feature: its
   // declared unit is the unit the literal is read in. It does not hold for a
   // DERIVED feature — `endurance = capacity * fraction / power` is 2835.7 s
@@ -3735,13 +3778,6 @@ function judgeBound(
   const refusal = derivedBareLiteralRefusal(model, el, node, pass, bindings);
   if (refusal) return { result: 'unknown', message: refusal, gap: false };
 
-  // Scope from the owner (subject context) merged with the constraint itself.
-  const combined = combinedAnswer(model, el, pass, at);
-  const answered = new Map<string, ScalarAnswer | undefined>();
-  const own = (name: string): ScalarAnswer | undefined => {
-    if (!answered.has(name)) answered.set(name, combined(name));
-    return answered.get(name);
-  };
   // A value a binding carries into the instance whose source carries a unit:
   // read in units with it ({@link carriedVerdict}). What the unit-aware
   // reading still cannot decide, the unit-blind reading below may not either
@@ -3758,13 +3794,6 @@ function judgeBound(
   const scope: Scope = (name) => {
     const bound = bindings?.get(name);
     return bound !== undefined ? bound.value : own(name)?.value;
-  };
-  // Each number with its exact reading, so a tie is decided by the decimals
-  // written, as the unit-aware path decides it (the tie rule of ./exact):
-  // `mass < 25.0` at 25 kg is violated, `x + 0.2 > 0.3` at 0.1 too.
-  const exact: ExactScope = (name) => {
-    const bound = bindings?.get(name);
-    return bound !== undefined ? bound.exact : own(name)?.exact;
   };
   const r = evaluateDecided(node, scope, exact);
   if ('unknown' in r && r.tie) {

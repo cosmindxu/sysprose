@@ -2127,3 +2127,110 @@ describe('checkConstraintsNumeric — two Booleans compared by value (S1)', () =
     expect(await read([...members].reverse())).toEqual(expected);
   });
 });
+
+/*
+ * N2: an equality whose two sides are ONE expression (`x - x == 0.0`, `y /
+ * 2.0 == y / 2.0`, `2.0 ^ y == 2.0 ^ y`) fixes nothing, and gathered as a
+ * design equation it stopped the solve converging: fb's `c2 { x == 2.0 }`
+ * fixed x, and the two tautologies beside it left x unsettled at the value c2
+ * fixed, so every numeric row was "the solve did not converge". They are
+ * dropped from the design equations once the FACTS have fixed what they can —
+ * a divisor or base exactly nonzero from a stated value or an asserted
+ * definition, never from a value the solve produced along a freedom — and
+ * their own rows are read satisfied, whatever the model leaves free.
+ */
+describe('N2 — an identity row is no design equation under a divisor or base exactly nonzero', () => {
+  const rows = async (text: string) => {
+    const { model } = await loadModelText(text, { fileName: 'p.sysml', strict: true });
+    return new Map(checkConstraintsNumeric(model!).map((r) => [model!.qualifiedName(r.id)!, r]));
+  };
+  const result = async (text: string, name: string) => rows(text).then((m) => m.get(name)!.result);
+  const imposed = async (text: string, name: string) => rows(text).then((m) => m.get(name)!.imposed);
+  const identities = `assert constraint c0 { 0.0 / x == 0.0 } assert constraint c1 { x ^ 0.0 == 1.0 }`;
+  const FB = (extra: string) => `package FB { attribute x : ScalarValues::Real; ${identities} ${extra} }`;
+  const NONZERO = 'assert constraint c2 { x == 2.0 } constraint k { x >= 1.0 }';
+
+  it('reads fb’s two tautologies and the fixer satisfied at x = 2, not imposed', async () => {
+    const model = FB(NONZERO);
+    for (const name of ['FB::c0', 'FB::c1', 'FB::c2', 'FB::k']) {
+      expect([name, await result(model, name), await imposed(model, name)]).toEqual([name, 'satisfied', undefined]);
+    }
+  });
+
+  it('reads the same rows satisfied with only one of the two tautologies', async () => {
+    const only: Array<[string, string[]]> = [
+      ['assert constraint c0 { 0.0 / x == 0.0 }', ['FB::c0', 'FB::c2', 'FB::k']],
+      ['assert constraint c1 { x ^ 0.0 == 1.0 }', ['FB::c1', 'FB::c2', 'FB::k']],
+    ];
+    for (const [one, names] of only) {
+      const text = `package FB { attribute x : ScalarValues::Real; ${one} ${NONZERO} }`;
+      for (const name of names) expect([one, name, await result(text, name)]).toEqual([one, name, 'satisfied']);
+    }
+  });
+
+  it('reads fb-stated as before: a stated nonzero already decides', async () => {
+    const text = `package FBS { attribute x : ScalarValues::Real = 2.0; ${identities} constraint k { x >= 1.0 } }`;
+    for (const name of ['FBS::c0', 'FBS::c1', 'FBS::k']) {
+      expect([name, await result(text, name), await imposed(text, name)]).toEqual([name, 'satisfied', undefined]);
+    }
+  });
+
+  it('reads an identity over a literal divisor, a stated one and a remainder satisfied', async () => {
+    const lit = `package N2QL { attribute y : ScalarValues::Real; constraint c0 { y / 2.0 == y / 2.0 } }`;
+    const stated = `package N2QS { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real = 2.0; constraint c0 { y / z == y / z } }`;
+    const rem = `package N2RL { attribute y : ScalarValues::Real; constraint c0 { y % 2.0 == y % 2.0 } }`;
+    expect([await result(lit, 'N2QL::c0'), await imposed(lit, 'N2QL::c0')]).toEqual(['satisfied', undefined]);
+    expect([await result(stated, 'N2QS::c0'), await imposed(stated, 'N2QS::c0')]).toEqual(['satisfied', undefined]);
+    expect([await result(rem, 'N2RL::c0'), await imposed(rem, 'N2RL::c0')]).toEqual(['satisfied', undefined]);
+  });
+
+  it('keeps a free divisor, a zero divisor and a free remainder at their before letters', async () => {
+    const free = `package N2QF { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; constraint c0 { y / z == y / z } }`;
+    const zero = `package N2QZ { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real = 0.0; constraint c0 { y / z == y / z } }`;
+    const remFree = `package N2RF { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; constraint c0 { y % z == y % z } }`;
+    // A free divisor is another point's zero: no exact reading proves it nonzero, so the row stays unknown.
+    expect(await result(free, 'N2QF::c0')).toBe('unknown');
+    expect(await result(zero, 'N2QZ::c0')).toBe('unknown');
+    // A free remainder keeps its existing imposed cell: the solve took it as a design equation.
+    expect([await result(remFree, 'N2RF::c0'), await imposed(remFree, 'N2RF::c0')]).toEqual(['satisfied', true]);
+  });
+
+  it('reads sk’s `x - x == 0.0` satisfied over a valueless x', async () => {
+    const text = `package SK { attribute x : ScalarValues::Real; assert constraint t0 { x - x == 0.0 } }`;
+    expect([await result(text, 'SK::t0'), await imposed(text, 'SK::t0')]).toEqual(['satisfied', undefined]);
+  });
+
+  it('keeps nk1’s identity over a dimension clash and over a valueless length unknown', async () => {
+    const text = `package NK1 {
+      attribute x : ISQ::LengthValue = 2.0 [m];
+      attribute y : ISQ::LengthValue;
+      constraint k { x - x == 0.0 [s] }
+      constraint ky { y - y == 0.0 [s] }
+    }`;
+    expect([await result(text, 'NK1::k'), await result(text, 'NK1::ky')]).toEqual(['unknown', 'unknown']);
+  });
+
+  it('does not prove a divisor nonzero from the solve’s double: `0.1 + 0.2 - 0.3` is exactly zero', async () => {
+    // The binary64 seed of `0.1 + 0.2 - 0.3` is 5.55e-17: a value the solve
+    // did not state, and no proof that the divisor is nonzero (decision 3).
+    // A stated expression has no exact reading, so the identity is not read
+    // and the row stays unknown — on the asserted-fixer form too.
+    const stated = `package N2CAN { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real = 0.1 + 0.2 - 0.3; constraint c0 { y / z == y / z } }`;
+    expect([await result(stated, 'N2CAN::c0'), await imposed(stated, 'N2CAN::c0')]).toEqual(['unknown', undefined]);
+    const asserted = `package N2CANA { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; assert constraint a { z == 0.1 + 0.2 - 0.3 } constraint c0 { y / z == y / z } }`;
+    expect(await result(asserted, 'N2CANA::c0')).toBe('unknown');
+  });
+
+  it('does not read an ill-typed body as an identity: a String, a Boolean and a part have no dimension', async () => {
+    // The unit gate refuses a name that denotes no number, so the identity test
+    // never runs over arithmetic no completion gives a value.
+    const bodies = [
+      `package P { attribute s : ScalarValues::String; constraint c0 { s - s == 0.0 } }`,
+      `package P { attribute b : ScalarValues::Boolean; constraint c0 { b / 2.0 == b / 2.0 } }`,
+      `package P { part def D; part p : D; constraint c0 { p - p == 0.0 } }`,
+    ];
+    for (const text of bodies) {
+      expect([await result(text, 'P::c0'), await imposed(text, 'P::c0')]).toEqual(['unknown', undefined]);
+    }
+  });
+});

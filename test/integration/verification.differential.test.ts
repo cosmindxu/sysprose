@@ -14881,7 +14881,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // after. Asserted, TAUTA's `y * 2.0 == 2.0 * y` gave y the solve's starting value, at which c1 read violated in
     // both orders (`?/?/F/?`, a false F), and TAUTI's `y - y == 0.0` in a part definition did the same through the
     // instance's solve. Neither is gathered nor holds what it reads now: c1 is imposed and k judged at its point, in
-    // either order, and the tautology's own row is judged there.
+    // either order, and the tautology's own row is judged there. N2 reads that row T on the CHECK too (and on the
+    // literal engine, which wraps it): `y == y` and `y * 2.0 == 2.0 * y` are one expression, and `y - y == 0.0` one
+    // rational function, so a surface may read them without a value for y.
     ...reversed(
       'order-taut-eq',
       `package TAUT {
@@ -14892,7 +14894,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`,
       `package TAUT { constraint k { y <= 1.0 } constraint c1 { y == 0.5 } constraint c0 { y == y } attribute y : ScalarValues::Real; }`,
       {
-        'TAUT::c0': ['?/?/T/T', 'T'],
+        'TAUT::c0': ['T/T/T/T', 'T'],
         'TAUT::c1': ['?/?/t/?', '?'],
         'TAUT::k': ['?/?/T/?', null],
       },
@@ -14908,7 +14910,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package TAUTA { constraint k { y <= 1.0 } constraint c1 { y == 0.5 } assert constraint c0 { y * 2.0 == 2.0 * y }
         attribute y : ScalarValues::Real; }`,
       {
-        'TAUTA::c0': ['?/-/T/-', 'T'],
+        'TAUTA::c0': ['T/-/T/-', 'T'],
         'TAUTA::c1': ['?/?/t/?', '?'],
         'TAUTA::k': ['?/?/T/?', null],
       },
@@ -14924,7 +14926,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       `package TAUTI { constraint k { p.y <= 0.1 } constraint c1 { p.y == 0.5 } part p : P;
         part def P { assert constraint c0 { y - y == 0.0 } attribute y : ScalarValues::Real; } }`,
       {
-        'TAUTI::P::c0': ['?/-/?/-', 'T'],
+        'TAUTI::P::c0': ['T/-/T/-', 'T'],
         'TAUTI::c1': ['?/?/t/?', '?'],
         'TAUTI::k': ['?/?/F/?', null],
       },
@@ -20098,6 +20100,134 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
       'H5BE::t1': ['?/?/?/?', null],
       'H5BE::t2': ['?/?/?/?', null],
     }),
+    // N2: an equality whose two sides are ONE expression fixes nothing, and read as a design equation it stopped the
+    // solve converging. fb: `c2` fixes x = 2, and the quotient and the power tautology beside it left x unsettled at
+    // that value, so every numeric row read "the solve did not converge". The identity rows are dropped from the
+    // design equations once the facts fixed what they can — an asserted fixer proves x nonzero — and their own rows,
+    // and the inequality beside them, read satisfied at the point (the check already read them T).
+    'a5-n2-fb': probe(`package FB {
+attribute x : ScalarValues::Real;
+assert constraint c0 { 0.0 / x == 0.0 }
+assert constraint c1 { x ^ 0.0 == 1.0 }
+assert constraint c2 { x == 2.0 }
+constraint k { x >= 1.0 }
+}`, {
+      'FB::c0': ['T/-/T/-', 'T'],
+      'FB::c1': ['T/-/T/-', 'T'],
+      'FB::c2': ['T/-/T/-', 'T'],
+      'FB::k': ['T/T/T/T', 'T'],
+    }),
+    'a5-n2-fb-rev': probe(`package FB {
+constraint k { x >= 1.0 }
+assert constraint c2 { x == 2.0 }
+assert constraint c1 { x ^ 0.0 == 1.0 }
+assert constraint c0 { 0.0 / x == 0.0 }
+attribute x : ScalarValues::Real;
+}`, {
+      'FB::c0': ['T/-/T/-', 'T'],
+      'FB::c1': ['T/-/T/-', 'T'],
+      'FB::c2': ['T/-/T/-', 'T'],
+      'FB::k': ['T/T/T/T', 'T'],
+    }),
+    // The check's move: `x - x == 0.0` is satisfied over a valueless x on the check and the numeric surface alike.
+    'a5-n2-sk': probe(`package SK {
+attribute x : ScalarValues::Real;
+assert constraint t0 { x - x == 0.0 }
+}`, {
+      'SK::t0': ['T/-/T/-', 'T'],
+    }),
+    // A literal divisor, a stated one and a remainder decide; the free divisor, the zero divisor and the free
+    // remainder (its imposed numeric `t`) keep their before letters as controls. Both member orders of the literal
+    // divisor probe.
+    'a5-n2-q-lit': probe(`package N2QL {
+  attribute y : ScalarValues::Real;
+  constraint c0 { y / 2.0 == y / 2.0 }
+  constraint k { y >= 0.0 }
+}`, {
+      'N2QL::c0': ['T/T/T/T', 'T'],
+      'N2QL::k': ['?/?/?/?', '?'],
+    }),
+    'a5-n2-q-lit-rev': probe(`package N2QL {
+  attribute y : ScalarValues::Real;
+  constraint k { y >= 0.0 }
+  constraint c0 { y / 2.0 == y / 2.0 }
+}`, {
+      'N2QL::c0': ['T/T/T/T', 'T'],
+      'N2QL::k': ['?/?/?/?', '?'],
+    }),
+    'a5-n2-q-stated': probe(`package N2QS {
+  attribute y : ScalarValues::Real;
+  attribute z : ScalarValues::Real = 2.0;
+  constraint c0 { y / z == y / z }
+  constraint k { y >= 0.0 }
+}`, {
+      'N2QS::c0': ['T/T/T/T', 'T'],
+      'N2QS::k': ['?/?/?/?', '?'],
+    }),
+    'a5-n2-q-free': probe(`package N2QF {
+  attribute y : ScalarValues::Real;
+  attribute z : ScalarValues::Real;
+  constraint c0 { y / z == y / z }
+  constraint k { y >= 0.0 }
+}`, {
+      'N2QF::c0': ['?/?/?/T', 'T'],
+      'N2QF::k': ['?/?/?/?', '?'],
+    }),
+    'a5-n2-q-zero': probe(`package N2QZ {
+  attribute y : ScalarValues::Real;
+  attribute z : ScalarValues::Real = 0.0;
+  constraint c0 { y / z == y / z }
+  constraint k { y >= 0.0 }
+}`, {
+      'N2QZ::c0': ['?/?/?/?', '?'],
+      'N2QZ::k': ['?/?/?/?', '?'],
+    }),
+    'a5-n2-p-lit': probe(`package N2PL {
+  attribute y : ScalarValues::Real;
+  constraint c0 { 2.0 ^ y == 2.0 ^ y }
+  constraint k { y >= 0.0 }
+}`, {
+      'N2PL::c0': ['T/T/T/U', 'T'],
+      'N2PL::k': ['?/?/?/?', '?'],
+    }),
+    'a5-n2-p-free': probe(`package N2PF {
+  attribute y : ScalarValues::Real;
+  attribute z : ScalarValues::Real;
+  constraint c0 { y ^ z == y ^ z }
+  constraint k { y >= 0.0 }
+}`, {
+      'N2PF::c0': ['?/U/?/U', '?'],
+      'N2PF::k': ['?/?/?/?', '?'],
+    }),
+    'a5-n2-rem-lit': probe(`package N2RL {
+  attribute y : ScalarValues::Real;
+  constraint c0 { y % 2.0 == y % 2.0 }
+  constraint k { y >= 0.0 }
+}`, {
+      'N2RL::c0': ['T/T/T/U', 'T'],
+      'N2RL::k': ['?/?/?/?', '?'],
+    }),
+    // The unit gate's controls: an offset operand (°C arithmetic) and nk1's dimension clash and valueless length
+    // identity never form one. `kz` decides on SMT alone and is pinned at that letter.
+    'a5-n2-celsius': probe(`package N2C {
+  attribute t : ISQ::TemperatureValue = 20.0 ['°C'];
+  constraint c0 { t - t == 0.0 }
+  constraint k { t >= 0.0 }
+}`, {
+      'N2C::c0': ['?/U/?/U', '?'],
+      'N2C::k': ['T/T/T/T', 'T'],
+    }),
+    'a5-n2-nk1': probe(`package NK1 {
+  attribute x : ISQ::LengthValue = 2.0 [m];
+  attribute y : ISQ::LengthValue;
+  constraint k { x - x == 0.0 [s] }
+  constraint ky { y - y == 0.0 [s] }
+  constraint kz { y - y == 0.0 }
+}`, {
+      'NK1::k': ['?/?/?/?', '?'],
+      'NK1::ky': ['?/?/?/?', '?'],
+      'NK1::kz': ['?/?/?/T', 'T'],
+    }),
   };
 
   /**
@@ -21414,6 +21544,10 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
     // a5 HD5 review: a body-only name held feature-wide, and a binding's dotted end, in either text order.
     ['a5-hd5-body', 'a5-hd5-body-rev'],
     ['a5-hd5-bind-dot', 'a5-hd5-bind-dot-rev'],
+    // a5 N2: an identity row under a divisor or base exactly nonzero, in either text order (fb's members and the
+    // literal-divisor probe's).
+    ['a5-n2-fb', 'a5-n2-fb-rev'],
+    ['a5-n2-q-lit', 'a5-n2-q-lit-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.

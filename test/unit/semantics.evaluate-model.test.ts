@@ -4326,6 +4326,94 @@ describe('checkConstraints — a bound partner is read only where every instance
 });
 
 /*
+ * N2: an equality whose two sides are ONE expression is satisfied wherever
+ * both sides have a value, so the check reads it without a value for the names
+ * in it — but only after the unit gate (decision 5): both sides must read one
+ * dimension and neither may be refused, so a dimension clash and an offset
+ * scale stay unknown. sk's `x - x == 0.0` decides, nk1's `y - y == 0.0 [s]`
+ * and the °C `t - t == 0.0` do not. The numeric surface has its own twin of the
+ * reading (semantics.solver).
+ */
+describe('N2 — the check reads an identity row as satisfied after the unit gate', () => {
+  const rowsOf = async (text: string) => {
+    const { model: m } = await loadModelText(text);
+    return new Map(checkConstraints(m!).map((c) => [m!.qualifiedName(c.id)!, c]));
+  };
+  const read = async (text: string, name: string) => (await rowsOf(text)).get(name)!;
+
+  it('reads sk’s `x - x == 0.0` satisfied over a valueless x', async () => {
+    const row = await read(`package SK { attribute x : ScalarValues::Real; assert constraint t0 { x - x == 0.0 } }`, 'SK::t0');
+    expect([row.result, row.message]).toEqual(['satisfied', 'Constraint satisfied']);
+  });
+
+  it('reads an identity over a literal divisor and over a literal base satisfied', async () => {
+    const divisor = await read(`package N2QL { attribute y : ScalarValues::Real; constraint c0 { y / 2.0 == y / 2.0 } }`, 'N2QL::c0');
+    expect([divisor.result, divisor.message]).toEqual(['satisfied', 'Constraint satisfied']);
+    const base = await read(`package N2PL { attribute y : ScalarValues::Real; constraint c0 { 2.0 ^ y == 2.0 ^ y } }`, 'N2PL::c0');
+    expect([base.result, base.message]).toEqual(['satisfied', 'Constraint satisfied']);
+  });
+
+  it('keeps a free divisor and a zero divisor unknown, in today’s sentences', async () => {
+    const free = await read(
+      `package N2QF { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real; constraint c0 { y / z == y / z } }`,
+      'N2QF::c0',
+    );
+    expect(free.result).toBe('unknown');
+    expect(free.message).toBe(
+      'Could not evaluate: y has no value anywhere and nothing specialises it; z has no value anywhere and nothing specialises it',
+    );
+    const zero = await read(
+      `package N2QZ { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real = 0.0; constraint c0 { y / z == y / z } }`,
+      'N2QZ::c0',
+    );
+    expect(zero.result).toBe('unknown');
+    expect(zero.message).toBe('Could not evaluate: y has no value anywhere and nothing specialises it');
+  });
+
+  it('keeps an offset scale unknown, with the offset sentence', async () => {
+    const row = await read(
+      `package N2C { attribute t : ISQ::TemperatureValue = 20.0 ['°C']; constraint c0 { t - t == 0.0 } }`,
+      'N2C::c0',
+    );
+    expect(row.result).toBe('unknown');
+    expect(row.message).toContain('is on an offset temperature scale (°C/°F)');
+  });
+
+  it('keeps nk1’s dimension clash and valueless-length identity unknown', async () => {
+    const rows = await rowsOf(`package NK1 {
+      attribute x : ISQ::LengthValue = 2.0 [m];
+      attribute y : ISQ::LengthValue;
+      constraint k { x - x == 0.0 [s] }
+      constraint ky { y - y == 0.0 [s] }
+    }`);
+    expect([rows.get('NK1::k')!.result, rows.get('NK1::ky')!.result]).toEqual(['unknown', 'unknown']);
+    expect(rows.get('NK1::k')!.message).toContain('different physical dimensions');
+  });
+
+  it('does not read an ill-typed body as an identity: a String, a Boolean and a part have no dimension', async () => {
+    // A name that denotes no number is no quantity: its dimension is unknown
+    // (not dimensionless), so the identity test never runs over arithmetic no
+    // completion of the model gives a value.
+    const bodies = [
+      `package P { attribute s : ScalarValues::String; constraint c0 { s - s == 0.0 } }`,
+      `package P { attribute b : ScalarValues::Boolean; constraint c0 { b / 2.0 == b / 2.0 } }`,
+      `package P { part def D; part p : D; constraint c0 { p - p == 0.0 } }`,
+    ];
+    for (const text of bodies) {
+      expect([text, (await read(text, 'P::c0')).result]).toEqual([text, 'unknown']);
+    }
+  });
+
+  it('does not prove a divisor nonzero from the solve’s double: `0.1 + 0.2 - 0.3` is exactly zero', async () => {
+    // Only a reading of what the model states proves a divisor nonzero; `z`'s
+    // value expression has no exact reading, and the numeric lane's binary64
+    // seed is no proof — its row stays unknown as the check's does.
+    const text = `package N2CAN { attribute y : ScalarValues::Real; attribute z : ScalarValues::Real = 0.1 + 0.2 - 0.3; constraint c0 { y / z == y / z } }`;
+    expect((await read(text, 'N2CAN::c0')).result).toBe('unknown');
+  });
+});
+
+/*
  * DEFAULTS A BINDING JOINS AGREE AS CONSTANTS, NEVER BY TEXT (plan
  * per-instance-check, step F1b, A.4 Part 0). Two defaults bound to each other
  * with no value beside them stand where they are one value, and give way

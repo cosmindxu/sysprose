@@ -61,8 +61,10 @@ import {
   addRationals,
   divideRationals,
   evaluateDecided,
+  identicallyEqual,
   multiplyRationals,
   negateRational,
+  provenNonzero,
   statedRational,
   tieSentence,
   writtenRational,
@@ -164,7 +166,9 @@ import {
   isRefusalReason,
   isUnresolvedSentence,
   operandDerivation,
+  sidesAgreeInDimension,
   valueUnitRefusal,
+  type ConstraintQuantityOptions,
   type DerivationMemo,
   type Quantity,
 } from './units-eval';
@@ -1216,6 +1220,36 @@ function isTotal(node: ExprNode): boolean {
   }
 }
 
+/**
+ * Does `node` carry a `/`, `%` or `^` — the operators whose reading is defined
+ * only where a divisor or a base is nonzero, so the only ones an identity needs
+ * a guard for ({@link identicallyEqual}, N2)? A side without one is already
+ * read as a total expression by {@link readsIdenticalSides}, and a gathered
+ * equation whose sides both lack one has nothing left for the guarded path.
+ */
+function guardedByDivisorOrPower(node: ExprNode): boolean {
+  switch (node.kind) {
+    case 'binary':
+      return (
+        node.op === '/' ||
+        node.op === '%' ||
+        node.op === '^' ||
+        guardedByDivisorOrPower(node.left) ||
+        guardedByDivisorOrPower(node.right)
+      );
+    case 'unary':
+      return guardedByDivisorOrPower(node.operand);
+    case 'if':
+      return (
+        guardedByDivisorOrPower(node.cond) ||
+        guardedByDivisorOrPower(node.then) ||
+        guardedByDivisorOrPower(node.else)
+      );
+    default:
+      return false;
+  }
+}
+
 /** Does a body read a name its own element declares, which its owner's scope answers with another feature? */
 function shadowedIn(model: Model, el: ElementRecord, node: ExprNode, markers: MarkerDimensions): boolean {
   return shadowedNamesOf(model, el, namesReadIn(node).filter((n) => !markers.has(n))).length > 0;
@@ -2171,6 +2205,15 @@ interface SolveCore {
    * those. Every other value is one the solve produced.
    */
   given: Set<ElementId>;
+  /**
+   * The values the model STATES exactly, as rationals: a decimal a feature
+   * writes, a value the caller fixed, or the bare literal an asserted
+   * definition fixed it at — never a value the solve COMPUTED, however
+   * precisely binary64 holds it (`0.1 + 0.2 - 0.3` is exactly 0, and the
+   * double 5.55e-17 is no proof that a divisor is nonzero). N2's guard reads
+   * only these (`identicallyEqual`'s `nonzero`, decision 3).
+   */
+  exact: ReadonlyMap<ElementId, Rational>;
   /** The constraint and calculation usages whose bodies are among the equations. */
   relations: Set<ElementId>;
   /**
@@ -2336,6 +2379,40 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
   // produced them. A fact that reads a value a check fixed gives one that moves
   // with it, and is not among them ({@link designReadings}).
   const factFixed = new Set<ElementId>();
+  // The equation that fixed each factFixed value, where one fact did — a bare
+  // `name == literal` — so its exact reading can be taken from what the model
+  // STATES, not from the double the solve stored ({@link exactStated}).
+  const factFixedBy = new Map<ElementId, Equation>();
+  /**
+   * The exact rational the model STATES for `id`, in the feature's storage
+   * unit — a decimal a value writes ({@link statedRational}), a value the
+   * caller fixed, or the bare literal an asserted definition fixed it at. A
+   * value the solve COMPUTED has none: `z = 0.1 + 0.2 - 0.3` is exactly 0,
+   * and the double 5.55e-17 the solve seeded for it is no proof that a divisor
+   * is nonzero (N2's guard, decision 3: a binary64 value never enters the
+   * check).
+   */
+  const exactStated = (id: ElementId): Rational | undefined => {
+    if (fixedIds.has(id)) {
+      const v = values.get(id);
+      return v === undefined ? undefined : writtenRational(v);
+    }
+    const f = model.get(baseIdOf(id));
+    if (f !== undefined) {
+      const raw = f.attrs.value;
+      if (typeof raw === 'number' && raw === values.get(id) && !defaultGivesWay(model, f)) {
+        const stated = statedRational(raw, f.attrs.valueText);
+        if (stated !== undefined) return stated;
+      }
+    }
+    const by = factFixedBy.get(id);
+    if (by === undefined) return undefined;
+    // A `name == literal` asserted definition fixes the name at that literal;
+    // any other fact (`x * 2.0 == 4.0`) gives a value, not a reading.
+    const other = isRefTo(by.lhs, by, id) ? by.rhs : isRefTo(by.rhs, by, id) ? by.lhs : undefined;
+    if (other === undefined || other.kind !== 'num' || other.literal !== undefined) return undefined;
+    return writtenRational(other.value, other.text);
+  };
   // The values an equation found no root at: what it reads is the same, so is the answer. Every propagation pass asks again of every
   // equation with one unknown left, and a one-to-one equation that finds no root searches the line for one (203 samples and the
   // poles among them): in a chain that takes a pass to fix each link, that was once per link per equation.
@@ -2379,7 +2456,10 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     used.add(eq);
     // A root of an equation with more than one is one of several: no value the model fixes ({@link designReadings}); that of an
     // equation one to one in it (`d / t`, `2.0 ^ y`) is the only.
-    if (!isCheck(eq) && eq.vars.every((v) => v === u || known.has(v) || factFixed.has(v)) && !curved) factFixed.add(u);
+    if (!isCheck(eq) && eq.vars.every((v) => v === u || known.has(v) || factFixed.has(v)) && !curved) {
+      factFixed.add(u);
+      factFixedBy.set(u, eq);
+    }
     return true;
   };
   // Is `eq` curved in the one unknown it may fix — about to take a root?
@@ -2475,6 +2555,57 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     return any;
   };
 
+  /**
+   * The identity rows of the system — an equality whose two sides are ONE
+   * expression ({@link identicallyEqual}, N2: `0.0 / x == 0.0`, `x ^ 0.0 ==
+   * 1.0`, `x - x == 0.0`) — dropped from the design equations. Such a row fixes
+   * nothing, and kept as a design equation its plateau stops the solve
+   * converging: beside `c2 { x == 2.0 }` the two that meet x = 2 exactly left x
+   * unsettled at the value c2 fixed, and every row over it unjudged.
+   *
+   * A divisor or a base is proved exactly nonzero only from an exact reading of
+   * what the model STATES or ASSERTS ({@link exactStated}) — never from the
+   * double the solve settled on, where `z = 0.1 + 0.2 - 0.3` is a nonzero
+   * 5.55e-17 — and never along a freedom, where another point divides by zero:
+   * `y / z == y / z` over a free z is no identity to read. The equations are
+   * dropped in place, so every sweep, the residual summary and the freedom
+   * analysis read the system as it stands.
+   */
+  const dropIdentities = (): boolean => {
+    const dropped = new Set<Equation>();
+    for (const eq of eqs) {
+      if (!guardedByDivisorOrPower(eq.lhs) && !guardedByDivisorOrPower(eq.rhs)) continue;
+      const nonzero = (n: ExprNode): boolean => {
+        if (n.kind === 'num') {
+          const r = writtenRational(n.value, n.text);
+          return r !== undefined && r.num !== 0n;
+        }
+        if (n.kind === 'unary') return n.op !== 'not' && nonzero(n.operand);
+        if (n.kind !== 'ref') return false;
+        const id = eq.nameToId.get(refText(n));
+        if (id === undefined) return false;
+        // The equation reads a scaled name in SI (`v · factor + offset`). A
+        // factor keeps a nonzero reading nonzero, but a shifted origin can
+        // cancel it, and {@link exactStated} reads the value STORED; only an
+        // unscaled name is proved here.
+        if (eq.scale?.get(id) !== undefined) return false;
+        const exact = exactStated(id);
+        return exact !== undefined && exact.num !== 0n;
+      };
+      if (identicallyEqual(eq.lhs, eq.rhs, nonzero)) dropped.add(eq);
+    }
+    if (dropped.size === 0) return false;
+    // `own` may BE `eqs` (no assert holds a name in a form the solve does not
+    // read), so the lists are deduplicated before they are rewritten.
+    for (const list of new Set<Equation[]>([eqs, facts, checks, own])) {
+      const kept = list.filter((eq) => !dropped.has(eq));
+      list.length = kept.length;
+      for (let i = 0; i < kept.length; i++) list[i] = kept[i]!;
+    }
+    for (const eq of dropped) used.delete(eq);
+    return true;
+  };
+
   let iterations = 0;
   let progressing = true;
 
@@ -2496,6 +2627,11 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
       }
 
       if (sweepFacts()) changed = true;
+      // What the facts fixed is now fixed: the identity rows among the design
+      // equations can be proved tautologies no value changes ({@link
+      // dropIdentities}), and they never blocked the sweep, only the
+      // convergence — a dropped row is one the fixpoint re-reads without.
+      if (dropIdentities()) changed = true;
       // The checks as the facts: those affine or one to one in their unknown, then what the affine equations fix together,
       // and only then a root of one curved in it — `c0 { x * x == 4.0 }` above `c1 { x == 2.0 }` read x = 2 from c1.
       if (!changed) {
@@ -2615,7 +2751,30 @@ function solveUncached(model: Model, opts: SolveOptions): SolveCore {
     if (imposed.has(el.id) && eq.vars.some((v) => contested.has(v))) imposed.delete(el.id);
     else if (agreeing.has(eq) && !eq.vars.some((v) => contested.has(v))) imposed.add(el.id);
   }
-  return { point: values, free, unsettled, given, relations, imposed, held, contested, rival, curved, converged, iterations, residual };
+  // The exact readings the solve can prove for the numeric surface's row judge
+  // ({@link SolveCore.exact}): what the model states or asserts, never what the
+  // solve computed ({@link exactStated}).
+  const exact = new Map<ElementId, Rational>();
+  for (const id of values.keys()) {
+    const r = exactStated(id);
+    if (r !== undefined) exact.set(id, r);
+  }
+  return {
+    point: values,
+    free,
+    unsettled,
+    given,
+    relations,
+    imposed,
+    held,
+    contested,
+    rival,
+    curved,
+    converged,
+    iterations,
+    residual,
+    exact,
+  };
 }
 
 /**
@@ -6094,6 +6253,9 @@ function feasibleFrom(
   const { judged: ownIneqs, held: heldByClause } = conjunctReadings(model, ineqs, searchedOrFixed, fixedIds, overFreedom, values, own, sweep);
   const statedIneqs = statedVerdicts(model, ownIneqs.filter((iq) => !CONJUNCT_INEQUALITY.has(iq)), searchedOrFixed, values, own, sweep);
   // The point as a solve of its own, for the numeric surface to read there.
+  // Its values are the search's doubles; the exact readings a divisor's guard
+  // may use are the point reader's (`at.exact`, a name the model states or the
+  // caller fixes), so this core adds none of its own.
   const atPoint = (): SolveCore => ({
     point: values,
     free: new Set(),
@@ -6108,6 +6270,7 @@ function feasibleFrom(
     converged: true,
     iterations,
     residual: 0,
+    exact: new Map(),
   });
   // An inequality over a value the caller FIXED, that reads nothing the
   // search moved, is read at the point as the numeric surface reads it there
@@ -6796,13 +6959,14 @@ function numericRows(
     // "1e-6" is a metre-or-second-sized constant with no relation to the
     // model's scale, so a dimensional comparison is left to the evaluator's
     // own relative tolerance.
-    const detailed = evaluateConstraintQuantityDetailed(model, el, {
+    const uaOpts: ConstraintQuantityOptions = {
       fallback: solvedScope,
       ...(at !== undefined && moved ? { bind: at.bind } : {}),
       absTol: scale || !searched ? 0 : tol,
       searched,
       memo,
-    });
+    };
+    const detailed = evaluateConstraintQuantityDetailed(model, el, uaOpts);
 
     const residual = isIneq
       ? iq
@@ -6845,6 +7009,47 @@ function numericRows(
     // A name read at the model's value where the point moved what it reads.
     if (at !== undefined && at.stale.length > 0) {
       row.reason = staleSentence(at.stale);
+      out.push(row);
+      continue;
+    }
+
+    // ONE EXPRESSION ON BOTH SIDES: a tautology fixes nothing and holds
+    // wherever both sides have a value, so no point of the solve decides it —
+    // `x - x == 0.0` over a valueless x, `y / 2.0 == y / 2.0` over a free y
+    // (N2, {@link identicallyEqual}). Read only after the unit gate, where the
+    // unit-aware reader decided nothing, both sides read one dimension and no
+    // refusal reason stands on either. A divisor or base is exactly nonzero
+    // only where the model STATES or ASSERTS an exact reading — a decimal value
+    // or an asserted bare-literal definition ({@link SolveCore.exact}) — never
+    // from the double the solve settled on (`0.1 + 0.2 - 0.3` is exactly 0) nor
+    // from a point along a freedom; where there is none the row stays unknown
+    // ({@link provenNonzero}).
+    const exactOfSolved: ExactScope = (name) => {
+      const decided = at !== undefined ? at.exact(name) : undefined;
+      if (decided !== undefined) return decided;
+      const id = keys.get(name);
+      if (id === undefined) return undefined;
+      // The relation reads a scaled name in SI (`v · factor + offset`); the
+      // exact reading is the value STORED, and only an unscaled name is proved.
+      if (scale?.get(id) !== undefined) return undefined;
+      return core.exact.get(id);
+    };
+    if (
+      isEq &&
+      !read &&
+      detailed.verdict === 'unknown' &&
+      !isRefusalReason(detailed.reason) &&
+      body !== undefined &&
+      node?.kind === 'binary' &&
+      sidesAgreeInDimension(model, el, node.left, node.right, uaOpts, body.literals) &&
+      identicallyEqual(
+        substituteLiterals(node.left, body.literals),
+        substituteLiterals(node.right, body.literals),
+        (n) => provenNonzero(n, exactOfSolved),
+      )
+    ) {
+      row.result = 'satisfied';
+      row.amount = 0;
       out.push(row);
       continue;
     }
