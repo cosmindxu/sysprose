@@ -317,7 +317,9 @@ headings.
       an equation" for a value a typed assert makes unreadable.
       - CDQ's `t2` check sentence ("… gives way to `assert constraint e : Eq` in CDQ::q … and is not
       read by this tool, has no asserted equation, and nothing specialises it") contradicts itself,
-      and TP1's ("… is not read by this tool and nothing specialises it") runs on the same way.
+      and TP1's runs on the same way — CLOSED 2026-11-17 by a5-words W7: where an asserted relation
+      reads the name without defining it the sites use the A.2 sentence, so the sentence no longer
+      denies the reader it names.
       - ME9's `P::c in S::p` says only "a referenced value is unknown", not the agreeing clash.
       Probes: per-instance-rest-scratch/branch-review2/p (cd1, cdq, eb4) and branch-review/p (tp1,
       me9).
@@ -515,14 +517,15 @@ headings.
       not only the dependent rows (a one-expression body is read since numeric2 S1, beside
       comment, `doc` and attribute members since solver2 S4); (c) members declared inside a refused
       body (the shapes of (a)) are not mapped (kept verbatim in the save); and `assert not x >
-      1.0;` swallows `x` as the
-      clause's name, giving a `validation/duplicate-name` finding beside the new error; (d) a caller
+      1.0;` no longer swallows `x` as the clause's name (CLOSED 2026-11-17 by a5-words W4: no
+      `validation/duplicate-name` beside the clause error);
       that runs the engines on a model whose load report it ignores sees the clause dropped from the
-      axiom set; (e) a degraded `contracts` / `obligations` report shows a requirement whose only
-      clause was refused as having no formal clause. (f) in a negated clause, an attribute member
-      with `:=`, a prefix (e.g. `in`), a subsetting or redefinition, a multiplicity or a body of
-      its own, a `rep language` member, and annotations are refused (probe
-      solver2-pass-scratch/s4/gen Z187-Z199). (g) The parse-error forms `not satisfy R by s0;` and
+      (e) CLOSED 2026-11-17 by a5-words W4: a degraded `contracts` / `obligations` report says the
+      requirement's only clause was refused (the skipped expression-less clause is carried and
+      named), not that it has no formal clause. (f) in a negated clause, an attribute member with
+      `:=`, a prefix (e.g. `in`), a subsetting or redefinition, a multiplicity or a body of its own
+      are refused; a `rep language` member and annotations are mapped since 2026-11-17 (a5-words
+      W4; unnamed `rep` only; probe solver2-pass-scratch/s4/gen Z187-Z199).
       `satisfy not R by s0;` behave as on base: the load is degraded and verify exits 2, but the
       save is not faithful (`not satisfy R by s0;` saves as `satisfy R by s0;` followed by a stray
       `not`; `assert satisfy R by s0;` saves as `assert constraint; satisfy R by s0;`, which re-reads
@@ -937,11 +940,9 @@ true values. What follows is what that branch and the review of it left open; en
       `twins`, `redefinition`); on the twins model SMT went from `inconsistent-axioms` to
       `not-evaluable`. (3) A usage-level `:>> k = 7.0` over a bound `k = 5.0` keeps its own binding
       F row; `u.k == 5.0` / `== 7.0` now read ? with the unread-end sentence instead of the
-      binding-conflict sentence. (4) `bounds --measure u.k` (dotted path of a fenced feature) exits 2
-      with `internal error: VerifyOptionError: --measure names nothing in this model: u.k` and a
-      stack trace, where the qualified `RS::U::k` reads inconclusive [verification/not-evaluable]:
-      map the unread-path error to the not-evaluable row (scripts/sysprose.ts bounds, boundsReport,
-      src/api/verification.ts ~2700; probe fence-seed-scratch/review/b1.sysml). (5) CLOSED 2026-11-16 by a5-heads2 HD2: the generator covers a bare-name constraint inside the
+      (4) CLOSED 2026-11-17 by a5-words W2: `bounds --measure u.k` (a dotted path of a fenced
+      feature) now gives the not-evaluable row instead of the "names nothing" refusal with a stack
+      trace; `--measure`/`--free` resolve a dotted path and quoted spellings (see (f) below).
       definition, the usage body and a subtype, a nested part with a same-named attribute, the R1
       channels, a unit on k and a deep binding chain — rebuilt out of tree, 120 models x 2 orders,
       0 WRONG / 0 decided->different-decided / 0 order mismatches. Still not generated: a bound end
@@ -960,8 +961,9 @@ true values. What follows is what that branch and the review of it left open; en
       "a call, an index or a string literal" and gives the real cause only after a semicolon;
       (e) a `//` comment holding an apostrophe inside an expression now reads "Unterminated quoted
       name at N" where it read "Unterminated string literal" (both unknown; probe rv/cm.sysml);
-      (f) `bounds --measure` and `--free` take the printed unquoted qualified name but not a
-      spelling with quote marks (probe fix-quoted-scratch/bnd.mts); (g) a `::`-qualified reference
+      (f) CLOSED 2026-11-17 by a5-words W2: `bounds --measure` and `--free` take a quoted spelling
+      (`QS::P::'K x'`, `QD::P::'a.b'`) as their unquoted forms do, and `quoteName` is exported for
+      the property draft (probe fix-quoted-scratch/bnd.mts);
       inside an expression is unread, quoted or bare; (h) the default `bounds` measure and the
       instance labels follow name order, so a bare and a quoted-renamed model differ there (7
       corpus models); about 407 of the 637 corpus models were not run through the quoted-rename
