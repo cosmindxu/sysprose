@@ -523,6 +523,8 @@ export class DefiningEquations {
   private readonly subsettingAsked = new Map<ElementId, ReadOtherwise | null>();
   /** {@link rerootedSubsettings}, once asked. */
   private rerooting?: ReadonlyMap<ElementId, ElementRecord>;
+  /** {@link unionedSubsetters}, once asked. */
+  private unioning?: ReadonlyMap<ElementId, ElementRecord>;
 
   constructor(readonly model: Model) {
     this.rev = model.rev;
@@ -1113,9 +1115,11 @@ export class DefiningEquations {
         }
         // A subject something binds is read through what it stands for, in
         // the instance it stands for; a usage that subsets a feature the instance
-        // redefines, as one of what that feature is there ({@link subsettedIn}).
+        // redefines, as one of what that feature is there ({@link subsettedIn}),
+        // or a feature a usage that is `[1..1]` subsets, as that usage there
+        // ({@link unionOf}).
         const subject = this.subjectOf(ownerId, feat);
-        const subsetted = subject === undefined ? this.subsettedIn(ownerId, feat) : undefined;
+        const subsetted = subject === undefined ? (this.subsettedIn(ownerId, feat) ?? this.unionOf(ownerId, feat)) : undefined;
         const into = subject ?? subsetted ?? feat;
         const bound = subject !== undefined && into !== feat ? this.boundInstance(ownerId, feat, into, { instance, enclosing }) : undefined;
         visit(
@@ -2102,10 +2106,17 @@ export class DefiningEquations {
         const otherwise = names.length > 0 ? this.instanceReadingOtherwise(`${f.id} subsetting`, scope, names) : undefined;
         if (!otherwise) continue;
         // Read below it in each instance as one of what g is there, where every context that reads g otherwise
-        // redefines it ({@link subsettedIn}): only a reading of the usage itself is read as the element's own.
+        // redefines it ({@link subsettedIn}) — or, for a pair the union reads, where every such context has the
+        // feature that stands for the subsetter there (so the subsetter reads as the instance has it,
+        // {@link unionOf}): only a reading of the usage itself is read as the element's own.
         const listed = this.contextsOf({ id: `${f.id} subsetting`, ownerId: scope.id }, names).listed;
+        const rerooted = this.rerootedSubsettings().get(f.id)?.id === g.id;
+        const unioned = this.unionedSubsetters().get(g.id)?.id === f.id;
         const whole =
-          this.rerootedSubsettings().get(f.id)?.id === g.id && listed.length > 0 && listed.every((x) => this.subsettedIn(x.id, f) !== undefined);
+          listed.length > 0 &&
+          (rerooted
+            ? listed.every((x) => this.subsettedIn(x.id, f) !== undefined)
+            : unioned && listed.every((x) => this.unionOf(x.id, g) !== undefined));
         const key = this.qualifiedNameOf(g.id);
         if (!best || key < best.key) {
           best = { answer: { kind: 'subsetting', written: f, scope, path, instance: otherwise.instance, redefined: g, ...(whole ? { whole: true as const } : {}) }, key };
@@ -2137,20 +2148,18 @@ export class DefiningEquations {
     // Multiplicity: the subsetting usage has exactly one value (none stated, `[1]`, `[1..1]`), and the subsetted feature
     // and every usage that redefines it at most one (`[0..1]` too), so w's p2 is w's only p1 whatever redefines it.
     const singleValued = (f: ElementRecord, g: ElementRecord): boolean => {
-      const bound = (m: unknown): [string, string] | undefined => {
-        if (m === undefined) return ['1', '1'];
-        if (typeof m !== 'string') return undefined;
-        const [lo, hi] = m.replace(/^\[|\]$/g, '').split('..').map((x) => x.trim());
-        return hi === undefined ? [lo!, lo!] : [lo!, hi];
-      };
-      const own = bound(f.attrs.multiplicity);
-      if (!own || own[0] !== '1' || own[1] !== '1') return false;
+      // None stated is `[1, 1]` here (a usage that subsets or redefines something inherits one, {@link
+      // effectiveMultiplicityOf}), which reads p2 as p1 whatever redefines it: the union ({@link unionSubsetting}) is
+      // the reading that needs the exact bounds.
+      const bound = (x: ElementRecord): readonly [string, string] => effectiveMultiplicityOf(this.model, x) ?? ['1', '1'];
+      const own = bound(f);
+      if (own[0] !== '1' || own[1] !== '1') return false;
       return this.model
         .all()
         .filter((x) => x.id === g.id || (x.attrs.isLibrary !== true && isUsage(x.eClass) && redefinedClosure(this.model, x).some((y) => y.id === g.id)))
         .every((x) => {
-          const b = bound(x.attrs.multiplicity);
-          return b !== undefined && (b[1] === '0' || b[1] === '1');
+          const b = bound(x);
+          return b[1] === '0' || b[1] === '1';
         });
     };
     for (const r of this.model.ofKind('Subsetting')) {
@@ -2208,6 +2217,47 @@ export class DefiningEquations {
     const g = this.rerootedSubsettings().get(feat.id);
     if (!g || ownerId === feat.ownerId) return undefined;
     return this.features(ownerId).find((x) => x.id !== g.id && x.id !== feat.id && redefinedClosure(this.model, x).some((y) => y.id === g.id));
+  }
+
+  /**
+   * The pairs the union reads ({@link unionSubsetting}), each subsetted feature by its own id with the usage that
+   * subsets it, once per revision: `part p2 :> p1 [1]` in W. Both multiplicities are exactly `[1..1]` there, so every
+   * instance's p1 IS its p2, and the walk reads p1 in it as the feature that stands for p2 there ({@link unionOf}).
+   */
+  unionedSubsetters(): ReadonlyMap<ElementId, ElementRecord> {
+    if (this.unioning) return this.unioning;
+    // Asked again while it is built (the pair test reads no walk, but guard it): nothing is a union meanwhile.
+    this.unioning = new Map();
+    const built = new Map<ElementId, ElementRecord>();
+    const scans = unionScans(this.model);
+    for (const r of this.model.ofKind('Subsetting')) {
+      if (r.attrs.isLibrary === true) continue;
+      const f = r.source?.[0] !== undefined ? this.model.get(r.source[0]) : undefined;
+      const g = r.target?.[0] !== undefined ? this.model.get(r.target[0]) : undefined;
+      if (!f || !g || f.id === g.id || built.has(g.id)) continue;
+      if (unionSubsetting(this.model, this, f, g, scans)) built.set(g.id, f);
+    }
+    this.unioning = built;
+    return built;
+  }
+
+  /**
+   * The feature of `ownerId` that the walk reads `feat` as there, for a pair the union reads ({@link
+   * unionedSubsetters}): the feature that stands for the subsetter `f` in that owner — an instance's redefinition of
+   * it (`part w : W { part :>> p2 { attribute :>> load = 50.0; } }`), or `f` itself where it is a feature of the
+   * owner (`part w : W { part q :> p1 { attribute :>> load = 50.0; } }`) or of its type (`part def W { part p1 : T0[1];
+   * part q :> p1 [1] { attribute :>> load = 50.0; } }`). {@link subsettedIn} is the converse, for {@link
+   * rerootedSubsettings}. `undefined` in the owner itself and where the owner has no feature that stands for `f`: there
+   * `g` is read as written, which is the element's own value.
+   */
+  private unionOf(ownerId: ElementId, feat: ElementRecord): ElementRecord | undefined {
+    const f = this.unionedSubsetters().get(feat.id);
+    if (!f || ownerId === feat.ownerId) return undefined;
+    const x = this.features(ownerId).find((y) => y.id !== feat.id && (y.id === f.id || redefinedClosure(this.model, y).some((z) => z.id === f.id)));
+    // A feature that says nothing of its own reads as the subsetted one does: reading `g` as it would turn two names
+    // onto one value and change no reading (`part w : W;` over `part p2 :> p1;`), so it is left as written.
+    if (!x || !this.saysOwnOver(x, feat)) return undefined;
+    return x;
   }
 
   /**
@@ -7188,9 +7238,21 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
   // A usage the walk reads in each instance as one of what g is there ({@link DefiningEquations.rerootedSubsettings})
   // says nothing of g's values: the instance test that reads its names otherwise is that walk's.
   const rerooted = defs.rerootedSubsettings();
+  // A pair the union reads ({@link unionSubsetting}) is one value in every instance: the walk reads the subsetted
+  // feature there as the subsetter ({@link DefiningEquations.unionOf}), so no reading of the SUBSETTED feature
+  // abstains — no offer of it here, and none in the fixpoint below, which is what leaves `spreadOtherwise` nothing to
+  // spread. The subsetter's own fence stays: reading IT still reads the element's own value, never the instance's.
+  const unioned = defs.unionedSubsetters();
   for (const { f, g } of pairs) {
+    const reads = unioned.get(g.id)?.id === f.id;
     const own = defs.subsettingOtherwise(f);
-    if (own) offer(f, own, 0);
+    // A pair the union reads is one value in every instance: the walk reads the subsetted feature there as the
+    // subsetter ({@link DefiningEquations.unionOf}), so no reading of the SUBSETTED feature abstains — no offer of it
+    // here, and none in the fixpoint below, which is what leaves `spreadOtherwise` nothing to spread. The subsetter's
+    // own fence stays where its readings are not the walk's: a whole answer (`own.whole`) is the one a context has
+    // the feature that stands for it in, and then its reading is the walk's too.
+    if (own && !(reads && own.whole)) offer(f, own, 0);
+    if (reads) continue;
     const other = rerooted.get(f.id)?.id === g.id ? undefined : defs.subsettedOtherwise(f, g);
     if (other) offer(g, other, 0);
   }
@@ -7205,6 +7267,8 @@ function subsettingsOtherwise(model: Model): SubsettingsOtherwise {
     // Every other usage a tainted one subsets (not the feature the instance itself redefines), nearest first.
     for (let more = true; more; more = accept()) {
       for (const { f, g } of pairs) {
+        // A pair the union reads is one value, read below: no reading through it abstains ({@link unionSubsetting}).
+        if (unioned.get(g.id)?.id === f.id) continue;
         const a = answerOf(f);
         // A usage read below as one of what g is there leaves g's readings as written ({@link TaintEntry.whole}).
         if (!a || taint.get(f.id)?.whole || taint.has(g.id) || g.id === f.id || g.attrs.isLibrary === true || !isUsage(g.eClass)) continue;
@@ -7550,6 +7614,180 @@ function cleanSubsetting(model: Model, defs: DefiningEquations, f: ElementRecord
     !narrowing.some((r) => from(r, g.id)) &&
     !subsettings.some((r) => into(r, [g.id, ...redefiners]) && !from(r, f.id))
   );
+}
+
+/** The owned usage kinds SysML 7.6.3 gives the implicit `[1..1]` to: an attribute, item, part or port usage. */
+const IMPLICIT_ONE_KINDS: ReadonlySet<string> = new Set(['AttributeUsage', ...VALUED_PART_KINDS]);
+
+/**
+ * The EFFECTIVE multiplicity of `el`, as SysML 7.6.3 fixes it (sysml.txt:3355-3366, decision 13), the exact `[lo, hi]`
+ * or `undefined`:
+ *  - the bounds its own `attributes.multiplicity` states — bracket-free (`1`, `1..1`, `0..*`, `2`; the mapper writes
+ *    what it read, and nothing when the author wrote none, map-to-model.ts `formatMultiplicity`);
+ *  - declaring none, `[1, 1]` for an owned attribute, item, part or port usage that owns no subsetting or
+ *    redefinition (:3360-3366), which is the implicit default;
+ *  - `undefined` otherwise — a usage that declares none and subsets or redefines something inherits what it subsets,
+ *    which no caller wants guessed ({@link singleValued} reads an `undefined` as one, {@link unionSubsetting} as not
+ *    exactly `[1..1]`).
+ */
+function effectiveMultiplicityOf(model: Model, el: ElementRecord): readonly [string, string] | undefined {
+  const m = el.attrs.multiplicity;
+  if (m !== undefined) {
+    if (typeof m !== 'string') return undefined;
+    const [lo, hi] = m.replace(/^\[|\]$/g, '').split('..').map((x) => x.trim());
+    return hi === undefined ? [lo!, lo!] : [lo!, hi];
+  }
+  if (!IMPLICIT_ONE_KINDS.has(el.eClass) || el.ownerId == null) return undefined;
+  const owner = model.get(el.ownerId);
+  if (!owner || (!isDefinition(owner.eClass) && !isUsage(owner.eClass))) return undefined;
+  if (model.relationshipsFrom(el.id).some((r) => r.eClass === 'Subsetting' || r.eClass === 'ReferenceSubsetting' || r.eClass === 'Redefinition')) return undefined;
+  return ['1', '1'];
+}
+
+/** The model-wide lists {@link unionSubsetting} reads, built once per {@link DefiningEquations.unionedSubsetters}. */
+interface UnionScans {
+  /** The user Subsetting and ReferenceSubsetting relationships, then those and the Redefinitions. */
+  subsettings: readonly ElementRecord[];
+  narrowing: readonly ElementRecord[];
+  /** The usages that redefine each feature, by the feature's id. */
+  redefinersOf: ReadonlyMap<ElementId, readonly ElementRecord[]>;
+  /** The text each element states (`attrs.value`, else `attrs.expression`), and whether a VALUE (not a relation) states it. */
+  readings: readonly { text: string; derives: boolean }[];
+}
+
+/** {@link UnionScans}, once per {@link DefiningEquations.unionedSubsetters}: one pass over the model, not one per pair. */
+function unionScans(model: Model): UnionScans {
+  const users = model.all().filter((r) => r.attrs.isLibrary !== true);
+  const subsettings = users.filter((r) => r.eClass === 'Subsetting' || r.eClass === 'ReferenceSubsetting');
+  const redefinersOf = new Map<ElementId, ElementRecord[]>();
+  const readings: { text: string; derives: boolean }[] = [];
+  for (const x of users) {
+    const value = typeof x.attrs.value === 'string' ? x.attrs.value : undefined;
+    const expression = typeof x.attrs.expression === 'string' ? x.attrs.expression : undefined;
+    const text = value ?? expression;
+    if (text !== undefined) readings.push({ text, derives: value !== undefined || x.eClass === 'CalculationUsage' });
+    if (!isUsage(x.eClass)) continue;
+    for (const y of redefinedClosure(model, x)) {
+      const list = redefinersOf.get(y.id);
+      if (list) list.push(x);
+      else redefinersOf.set(y.id, [x]);
+    }
+  }
+  return {
+    subsettings,
+    narrowing: [...subsettings, ...users.filter((r) => r.eClass === 'Redefinition')],
+    redefinersOf,
+    readings,
+  };
+}
+
+/**
+ * Is the pair read as ONE value: `f`, a usage that subsets the single feature `g`, with both EFFECTIVE multiplicities
+ * exactly `[1..1]` ({@link effectiveMultiplicityOf}) — so every instance's `g` is its `f`, and the walk reads `g`
+ * there as the feature that stands for `f` ({@link DefiningEquations.unionOf}), with no reading through either
+ * abstaining ({@link subsettingTaint})? SysML 7.6.3 (sysml.txt:3355-3366, decision 13).
+ *
+ * `g` is `[1..1]` by an explicit `[1]`/`[1..1]` or by the implicit default of an owned part usage that owns no
+ * subsetting or redefinition; `f` by an explicit `[1]`/`[1..1]`, or, declaring none (it owns a subsetting, so the
+ * implicit default is not its), inherited from `g` (:3355-3359). `[0..1]`, `[0..*]`, `[2]`, `[1..*]` and a union
+ * bound above 1 leave every row `?` (rvq0, the grid).
+ *
+ * The rest is {@link cleanSubsetting}'s test, less the narrowing a REDEFINITION makes: an instance's `:>> f` IS the
+ * union, where a usage that SUBSETS `f` (a chain, `p3 :> p2`) keeps the fence. The says-own half is read against the
+ * give-way rule: `g` must state nothing of its own, and a value `f` states (`= 50.0`, on it or on a redefinition of
+ * it) may meet only `g`'s own `default`, which gives way to it (decision 14) — a value `g` states with `=` is a second
+ * (e1-subset's `part q9 :> q` over q's `:>> L = 2.0`), as are a `::>`, a nested, an attribute and a component join. A
+ * pair {@link DefiningEquations.rerootedSubsettings} already reads the OTHER way (`g` in an instance as `f`'s, sa7)
+ * is not this one's.
+ *
+ * The same exact `[1..1]` rule holds for what REDEFINES the SUBSETTER in an instance: `part :>> p2 [0..1]` can hold
+ * no value at all there, so `p2` is not `p1` (RM01, RM0, RM2, RMI); a redefinition that declares none inherits the
+ * multiplicity it redefines (:3355-3359), which the declared ends above pin to exactly `[1..1]`. A usage that
+ * redefines the SUBSETTED feature keeps the fence whatever it declares: the walk reads that redefinition as written
+ * (RP1, RMG0).
+ */
+function unionSubsetting(model: Model, defs: DefiningEquations, f: ElementRecord, g: ElementRecord, scans: UnionScans): boolean {
+  if (f.id === g.id || f.attrs.isLibrary === true || g.attrs.isLibrary === true || f.ownerId == null) return false;
+  if (!isUsage(f.eClass) || !isUsage(g.eClass) || f.eClass !== g.eClass || f.eClass === 'AttributeUsage') return false;
+  if (f.attrs.isRef === true || g.attrs.isRef === true) return false;
+  const ofG = effectiveMultiplicityOf(model, g);
+  if (!ofG || ofG[0] !== '1' || ofG[1] !== '1') return false;
+  const ofF = f.attrs.multiplicity === undefined ? ofG : effectiveMultiplicityOf(model, f);
+  if (!ofF || ofF[0] !== '1' || ofF[1] !== '1') return false;
+  // `f` is a feature of `g`'s owner, or of an instance or a specialisation of it: a subsetter nested in another
+  // usage (`part sub { part p2 :> p1; }` over W's p1) has no per-instance p2 of W's, so p1 is not its value there.
+  const home = g.ownerId != null ? model.get(g.ownerId) : undefined;
+  const owner = f.ownerId != null ? model.get(f.ownerId) : undefined;
+  if (!home || !owner) return false;
+  const under =
+    owner.id === home.id ||
+    generalizationsOf(model, owner.id).some((x) => x.id === home.id) ||
+    model.typesOf(owner.id).some((t) => t.id === home.id || generalizationsOf(model, t.id).some((x) => x.id === home.id));
+  if (!under) return false;
+  // The walk already reads `g` in an instance as one of `f`'s there: that reading, not this one, is the pair's.
+  if (defs.rerootedSubsettings().get(f.id)?.id === g.id) return false;
+  const subsettings = scans.subsettings;
+  const narrowing = scans.narrowing;
+  const into = (r: ElementRecord, ids: readonly ElementId[]): boolean => (r.target ?? []).some((t) => ids.includes(t));
+  const from = (r: ElementRecord, id: ElementId): boolean => r.source?.[0] === id;
+  const redefiners = scans.redefinersOf.get(g.id) ?? [];
+  // A usage that REDEFINES the subsetted feature keeps the fence, whatever multiplicity it declares: in that context
+  // the name denotes the redefinition as written, not the pair, so the union reading is not applied to it, while the
+  // pair would still lift every abstention along it — a bare `part :>> p1;` would decide the instance's p1 at the
+  // definition's own value where its p2 states 50 (RP1), and `[0..*]` lets it hold more than one (RMG0).
+  if (redefiners.length > 0) return false;
+  // A usage that REDEFINES the SUBSETTER must itself be exactly `[1..1]`: one that declares another multiplicity can
+  // hold no value at all there (`part :>> p2 [0..1]`, RM01), and then the subsetted feature's own value stands and
+  // nothing joins the two; one that declares none inherits the pair's (see above).
+  const exactlyOne = (x: ElementRecord): boolean => {
+    const m = effectiveMultiplicityOf(model, x);
+    return m === undefined || (m[0] === '1' && m[1] === '1');
+  };
+  if (!(scans.redefinersOf.get(f.id) ?? []).every(exactlyOne)) return false;
+  // The pair's owner is a definition or a usage: a package's usages are ONE instance each, which this tool reads
+  // through the subsetted feature as written, and the two names a package declares are read by other packages.
+  const pairOwner = f.ownerId != null ? model.get(f.ownerId) : undefined;
+  if (!pairOwner || isPackage(pairOwner)) return false;
+  // `g` states nothing of its own: the reading through `f` loses no value and no child of `g`'s.
+  if (defs.saysOwnOver(g, f)) return false;
+  // Nothing reads `f` itself: the walk reads `f` at the element's own values in an instance that does not redefine
+  // it, and one that does is read as written — a value, a calculation's body, an asserted equation, a constraint or
+  // a binding over `f`'s name is no reading the union makes (`bind x = p2.load`, `assert constraint { 'p2'.load == 7.0 }`).
+  const readsName = (text: string | undefined, name: string | undefined): boolean =>
+    typeof text === 'string' && name !== undefined && new RegExp(`(?<![\\w$])${name.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}(?![\\w$])`).test(text);
+  const nameOfF = defs.nameOf(f);
+  const nameOfG = defs.nameOf(g);
+  for (const { text, derives } of scans.readings) {
+    if (readsName(text, nameOfF)) return false;
+    // A VALUE that derives from a name of `g` (`calc m1 { 10.0 - p1.load }`) is one value for every instance: a row
+    // over it stands for all of them.
+    if (derives && readsName(text, nameOfG)) return false;
+  }
+  // A type of `f` that is no type of `g` states something of its own for `f` (`part q :> p1 : Q50 [1]`): the two
+  // names are one value only through that type, which this tool's reading of `g` does not carry.
+  const gTypes = new Set([...model.typesOf(g.id), ...model.typesOf(g.id).flatMap((t) => generalizationsOf(model, t.id))].map((t) => t.id));
+  for (const t of [...model.typesOf(f.id), ...model.typesOf(f.id).flatMap((x) => generalizationsOf(model, x.id))]) {
+    if (gTypes.has(t.id) || t.attrs.isLibrary === true) continue;
+    if (model.children(t.id).some((c) => isUsage(c.eClass) && (hasStatedValue(model, c) || redefinedClosure(model, c).length > 0))) return false;
+  }
+  // One subsetter only, and nothing SUBSETS `f` (`p3 :> p2`, a chain): a redefinition of `f` is the union's own.
+  if (subsettings.some((r) => into(r, [f.id]))) return false;
+  const mine = subsettings.filter((r) => from(r, f.id));
+  if (mine.length === 0 || mine.some((r) => (r.target ?? []).some((t) => t !== g.id))) return false;
+  if (narrowing.some((r) => from(r, g.id))) return false;
+  if (subsettings.some((r) => into(r, [g.id]) && !from(r, f.id))) return false;
+  // One value: a value `f` states (or one a redefinition of `f` states) meets `g`'s own `default`, which gives way to
+  // it; a value `g` states with `=` is two.
+  const stated = (x: ElementRecord): boolean => x.attrs.value !== undefined && x.attrs.value !== null;
+  const eqValue = (x: ElementRecord): boolean => stated(x) && x.attrs.defaultValue !== true;
+  const fStates = [f, ...(scans.redefinersOf.get(f.id) ?? [])].some(
+    (x) => stated(x) || model.children(x.id).some((c) => isUsage(c.eClass) && stated(c)),
+  );
+  if (fStates) {
+    const side = [g, ...model.typesOf(g.id).flatMap((t) => [t, ...generalizationsOf(model, t.id)])];
+    if (side.some((x) => eqValue(x) || model.children(x.id).some((c) => isUsage(c.eClass) && eqValue(c)))) return false;
+  }
+  return true;
 }
 
 /** `taint` without the entries keyed by `exempt`. */

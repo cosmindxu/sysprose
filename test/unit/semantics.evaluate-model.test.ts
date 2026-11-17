@@ -4109,6 +4109,162 @@ describe('checkConstraints — a bound partner is read only where every instance
     });
   });
 
+  describe('HD6: a subsetted feature is read as its subsetter where both effective multiplicities are [1..1]', () => {
+    // SysML 7.6.3 (sysml.txt:3355-3366, decision 13): a usage whose effective multiplicity is exactly `[1..1]` that
+    // subsets another `[1..1]` feature holds that feature's one value. The union `p1 = p2` in W, with w's `:>> p2`
+    // stating 50, makes `w.p1.load` 50 — W's own `c` reads W's `T0`'s 1 beside its own row in w — where before the
+    // step the walk read W's p1 (1) in every reading and each row abstained with the subsetting's sentence. A usage
+    // that declares no multiplicity inherits the one it subsets (:3355-3359), so rv-q's q is `[1..1]` too; `[0..1]`,
+    // `[0..*]`, `[2]` and a subsetted `[0..1]` keep the fence, as do a chain, a join and an attribute shape.
+    const check = (m: Model, rel: string) => checkConstraints(m).find((k) => m.qualifiedName(k.id) === rel)!;
+    const numeric = (m: Model, rel: string) => checkConstraintsNumeric(m).find((r) => m.qualifiedName(r.id) === rel)!.result;
+    const T0 = 'part def T0 { attribute load default = 1.0; }';
+    const RV1 = `package RV1 {
+      ${T0}
+      part def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load <= 5.0 } }
+      part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+      constraint k1 { w.p1.load <= 5.0 }
+      constraint k1R { w.p1.load >= 5.0 }
+    }`;
+    it('reads rv1 as its subsetter, and files the definition’s row in the instance too', async () => {
+      const { model: m } = await loadModelText(RV1);
+      const c = check(m!, 'RV1::W::c');
+      // W's own p1 is T0's default 1; in w it is w's p2's 50.
+      expect([c.result, (c.instances ?? []).map((i) => [i.context, i.result])]).toEqual(['satisfied', [['w', 'violated']]]);
+      expect([check(m!, 'RV1::k1').result, check(m!, 'RV1::k1R').result]).toEqual(['violated', 'satisfied']);
+      for (const [rel, want] of [
+        ['RV1::W::c', 'satisfied'],
+        ['RV1::k1', 'violated'],
+        ['RV1::k1R', 'satisfied'],
+      ] as const)
+        expect(numeric(m!, rel), rel).toBe(want);
+    });
+    it('reads the subsetter an instance declares, with no multiplicity of its own (rv-q)', async () => {
+      const { model: m } = await loadModelText(`package RVQ {
+        ${T0}
+        part def W { part p1 : T0[1]; }
+        part w : W { part q :> p1 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k1R { w.p1.load >= 5.0 }
+      }`);
+      expect([check(m!, 'RVQ::k1').result, check(m!, 'RVQ::k1R').result]).toEqual(['violated', 'satisfied']);
+      expect([numeric(m!, 'RVQ::k1'), numeric(m!, 'RVQ::k1R')]).toEqual(['violated', 'satisfied']);
+    });
+    it('reads the subsetter a specialisation declares, redefined in the instance (rv-spec)', async () => {
+      const { model: m } = await loadModelText(`package RVS {
+        ${T0}
+        part def W { part p1 : T0[1]; }
+        part def W2 :> W { part p2 :> p1 [1]; }
+        part w : W2 { part :>> p2 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k1R { w.p1.load >= 5.0 }
+      }`);
+      expect([check(m!, 'RVS::k1').result, check(m!, 'RVS::k1R').result]).toEqual(['violated', 'satisfied']);
+      expect([numeric(m!, 'RVS::k1'), numeric(m!, 'RVS::k1R')]).toEqual(['violated', 'satisfied']);
+    });
+    it('keeps the fence where a multiplicity is not exactly [1..1] (rvq0 and the grid)', async () => {
+      // rvq0 is decision 13's own spelling of the boundary: `part q [0..1] :> p1`.
+      const rvq0 = await loadModelText(`package RVQ0 {
+        ${T0}
+        part def W { part p1 : T0[1]; }
+        part w : W { part q [0..1] :> p1 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+        constraint k1R { w.p1.load >= 5.0 }
+      }`);
+      for (const rel of ['RVQ0::k1', 'RVQ0::k1R']) {
+        expect([check(rvq0.model!, rel).result, numeric(rvq0.model!, rel)], rel).toEqual(['unknown', 'unknown']);
+        expect(check(rvq0.model!, rel).message, rel).toContain('`p1` in RVQ0::w is subsetted by `q`');
+        expect(check(rvq0.model!, rel).message, rel).toContain('reads otherwise');
+      }
+      // The grid: subsetter `[0..*]`, subsetter `[2]`, and a subsetted `[0..1]` — each the rv1 shape.
+      for (const [p1, p2, who] of [
+        ['part p1 : T0[1];', 'p2 :> p1 [0..*]', 'GT'],
+        ['part p1 : T0[1];', 'p2 :> p1 [2]', 'GW'],
+        ['part p1 : T0[0..1];', 'p2 :> p1', 'GS'],
+      ] as const) {
+        const { model: m } = await loadModelText(`package ${who} {
+          ${T0}
+          part def W { ${p1} part ${p2}; constraint c { p1.load <= 5.0 } }
+          part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+          constraint k1 { w.p1.load <= 5.0 }
+        }`);
+        for (const rel of [`${who}::W::c`, `${who}::k1`]) {
+          expect([check(m!, rel).result, numeric(m!, rel)], rel).toEqual(['unknown', 'unknown']);
+          expect(check(m!, rel).message, rel).toContain(`\`p1\` in ${who}::W is subsetted by \`p2\``);
+          expect(check(m!, rel).message, rel).toContain('reads otherwise');
+        }
+      }
+    });
+    it('keeps the fences a chain, a join and an attribute shape have (sub-rv1-chain, -diamond, SA7A)', async () => {
+      for (const [name, W, w, k] of [
+        // A chain: p3 subsets p2 subsets p1, all [1] — the instance's value reaches p1 only two hops out.
+        ['R5', 'part p1 : T0[1]; part p2 :> p1 [1]; part p3 :> p2 [1];', 'part w : W { part :>> p3 { attribute :>> load = 50.0; } }', 'w.p1.load'],
+        // A usage with two supers: u3 is both u1 and u2, so u1's value turns on the join.
+        ['DM', 'part u1 : T0[1]; part u2 : T0[1]; part u3 :> u1, u2 [1];', 'part w : W { part :>> u2 { attribute :>> load = 50.0; } }', 'w.u1.load'],
+      ] as const) {
+        const { model: m } = await loadModelText(`package ${name} { ${T0} part def W { ${W} } ${w} constraint k1 { ${k} <= 5.0 } }`);
+        expect([check(m!, `${name}::k1`).result, numeric(m!, `${name}::k1`)], name).toEqual(['unknown', 'unknown']);
+      }
+      // An attribute subsetting an attribute is not read as one value (the exclusion the pins hold).
+      const { model: attr } = await loadModelText(`package SA7A {
+        part def W { attribute a1 default = 1.0; attribute a2 :> a1; constraint c { a2 <= 5.0 } }
+        part w : W { attribute :>> a1 = 50.0; }
+        constraint k { w.a2 <= 5.0 }
+      }`);
+      for (const rel of ['SA7A::W::c', 'SA7A::k']) expect([check(attr!, rel).result, numeric(attr!, rel)], rel).toEqual(['unknown', 'unknown']);
+    });
+    it('keeps the fence where an instance redefines either end of the pair, and where the subsetted feature states its own default', async () => {
+      // The subsetter's redefinition holds no value at `[0..1]`, or more than one at `[0..*]`/`[2]`: it is not p1
+      // there, and p1's own value (or the model's contradiction) stands — no row may decide (RM01, RM0, RM2, RMI).
+      for (const [mult, who] of [
+        ['[0..1]', 'RM01'],
+        ['[0..*]', 'RM0'],
+        ['[2]', 'RM2'],
+      ] as const) {
+        const { model: standin } = await loadModelText(`package ${who} {
+          ${T0}
+          part def W { part p1 : T0[1]; part p2 :> p1 [1]; }
+          part w : W { part :>> p2 ${mult} { attribute :>> load = 50.0; } }
+          constraint k1 { w.p1.load <= 5.0 }
+          constraint k1R { w.p1.load >= 5.0 }
+        }`);
+        for (const rel of [`${who}::k1`, `${who}::k1R`]) {
+          expect([check(standin!, rel).result, numeric(standin!, rel)], rel).toEqual(['unknown', 'unknown']);
+          expect(check(standin!, rel).message, rel).toContain(`\`p1\` in ${who}::W is subsetted by \`p2\``);
+        }
+      }
+      // An instance that redefines the SUBSETTED feature is read as written, not as the pair: a bare `:>> p1` and a
+      // `:>> p1 [0..*]` alike abstain (RP1, RMG0).
+      for (const [m, who] of [
+        ['', 'RP1'],
+        ['[1]', 'RP1A'],
+        ['[0..*]', 'RP1S'],
+      ] as const) {
+        const { model: m2 } = await loadModelText(`package ${who} {
+          ${T0}
+          part def W { part p1 : T0[1]; part p2 :> p1 [1]; }
+          part w : W { part :>> p1 ${m}; part :>> p2 { attribute :>> load = 50.0; } }
+          constraint k1 { w.p1.load <= 5.0 }
+          constraint k1R { w.p1.load >= 5.0 }
+        }`);
+        for (const rel of [`${who}::k1`, `${who}::k1R`]) {
+          expect([check(m2!, rel).result, numeric(m2!, rel)], rel).toEqual(['unknown', 'unknown']);
+          expect(check(m2!, rel).message, rel).toContain('is subsetted by');
+        }
+      }
+      // The subsetted feature's own `default` gives way to the subsetter's stated value under decision 13's wording;
+      // this tool abstains instead, and the narrower rule is recorded here so the choice cannot move silently.
+      const { model: own } = await loadModelText(`package OWND {
+        ${T0}
+        part def W { part p1 : T0[1] { attribute :>> load default = 1.0; } part p2 :> p1 [1]; }
+        part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+        constraint k1 { w.p1.load <= 5.0 }
+      }`);
+      expect([check(own!, 'OWND::k1').result, numeric(own!, 'OWND::k1')]).toEqual(['unknown', 'unknown']);
+      expect(check(own!, 'OWND::k1').message).toContain('is subsetted by');
+    });
+  });
+
   /** R's `L = 2.0 * K`, bound into its q's p by a binding written in q's body (or in a definition nested in R). */
   const enclosed = (pkg: string, nested: boolean, override: boolean) => `package ${pkg} {
     ${P}

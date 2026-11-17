@@ -1707,15 +1707,29 @@ in p2: with `part p2 : T1 :> p1;`, T1's `constraint tc { load <= 5.0 }` read in
 W's p2 is a row of its own, *could not be evaluated*, beside T1's own row; one
 nested in T1 (`part sub { attribute v = load; constraint tc { v <= 5.0 } }`)
 has no element that stands for w's p2's sub, so its row, which stands for every
-T1's sub, is *could not be evaluated*. The subsetted p1 is read alike from the
-other side: where an instance reads p2 otherwise (w's `part :>> p2 { attribute
-:>> load = 50.0; }`), w's p2 is its only p1 when both are `[1]`, but this tool
-reads p1 at W's own values, so each row read through p1 — W's own `constraint c
-{ p1.load <= 5.0 }`, the package's `w.p1.load` — is *could not be evaluated*,
-in a sentence that names p1, the subsetter nearest to it that is read otherwise
-(or is read with one) and w; a calculation's body or a derived value that names p1
-(`calc m1 { 10.0 - p1.load }`) is read through it too. So does every usage of the same
-subsetting component (the usages that subset one another, however many links apart,
+T1's sub, is *could not be evaluated*. The subsetted p1 is read from the other
+side too, where both effective multiplicities are exactly `[1..1]` (SysML 7.6.3:
+a usage that declares none inherits the one it subsets, and `[1]`, `[1..1]` and
+the implicit `[1..1]` of an owned attribute, item, part or port usage with no
+subsetting or redefinition are the ways to be `[1..1]`). Beside W's `part p1 :
+T0[1]; part p2 :> p1 [1];`, w's `part :>> p2 { attribute :>> load = 50.0; }`
+makes w's p2 its only p1, and this tool reads p1 in w as that p2: W's own
+`constraint c { p1.load <= 5.0 }` reads W's own p1 (T0's default 1,
+*satisfied*) beside its row of its own in w (w's p2's 50, *violated*), the
+package's `w.p1.load` is 50, and `bounds` claims the bound — on every surface.
+The same holds where the subsetter is the instance's own (`part q :> p1 {
+attribute :>> load = 50.0; }` in w,
+declaring no multiplicity and inheriting p1's) or a specialisation's (`part def
+W2 :> W { part p2 :> p1 [1]; }`, w redefining p2 with a value). Every other
+shape keeps the sentence: any multiplicity other than exactly `[1..1]` on either
+usage, or one that a redefinition of either declares in an instance (w's `part
+:>> p2 [0..1]`, a `part :>> p1 [0..*]`); a pair a package declares; a subsetter
+nested in another usage; an attribute usage; a `::>`; a subsetted feature that
+says something of its own, a `default` included; and any value, constraint,
+asserted equation or calculation elsewhere in the model that names p1 or p2
+(`bind x = p2.load`, `assert constraint e { 'p2'.load == 7.0 }`, `calc m1 { 10.0
+- p1.load }`), which the walk reads at W's own values there. So does every usage
+of the same subsetting component (the usages that subset one another, however many links apart,
 whichever way round), for every instance of what they are features of — the usage
 the instance redefines itself (w's own p1 beside W's `part p2 :> p1;`), one that
 redefines the root (a `v : W { part :>> p1 { ... } }` beside w), or a second
@@ -1734,8 +1748,10 @@ its own (`attribute y :> x = 50.0;`) or through its type (`part q : Q50 :> p1;` 
 `Q50` that redefines `load`). The rows read through p2 itself abstain
 with them where p2 subsets one of these, though p2 is the usage that holds the
 value: this tool does not tell the two readings apart; a usage that subsets none of
-them is read as written. It does not read the
-multiplicity, so a `p1` other members fill abstains too. Where no instance reads
+them is read as written. The multiplicity decides whether p1 is p2 at all:
+any other than exactly `[1..1]`, on either usage or on a redefinition of either,
+abstains too, so a `p1` other members fill and a `p2` that may be empty do.
+Where no instance reads
 p1 otherwise and no usage of its component says anything of its own, it reads as
 written. Which of several usages a sentence names (the nearest, then the lowest
 qualified name) does not turn on the order the text is written in.
