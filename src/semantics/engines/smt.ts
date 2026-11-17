@@ -1497,7 +1497,7 @@ async function judgeOneInner(model: Model, input: JudgeInput & { trace: JudgeTra
     ...bound(
       'model-values',
       `every feature at the value the model binds it to; ${variables.length} symbol(s), 0 free` +
-        `${siSentence(si)}${solverSentence(input.backend)}`,
+        `${siSentence(si)}`,
     ),
   };
 }
@@ -1896,6 +1896,14 @@ function classesOfJudgement(
  * deliberate: the golden verdict corpus pins `detail`, and a claim sentence
  * carrying a version string would make every golden a pin on the solver
  * package's release schedule rather than on this tool's behaviour.
+ *
+ * IT NAMES THE SOLVER ONLY WHERE ITS ANSWER DECIDED THE OUTCOME. `proved` is
+ * the negation's `unsat` and `design-admitted` is a `sat` under the release:
+ * in both, the answer IS the verdict. `refuted` is not — z3's `sat` there is a
+ * CANDIDATE counterexample, and the verdict is published only after `confirm`
+ * re-reads the goal on the numeric surface, so that sentence would credit the
+ * solver with a decision its answer did not make. The refuted site therefore
+ * appends nothing (W1).
  * (The package is named nowhere in this file on purpose: the browser-build
  * guard in `test/integration/smt-z3.integration.test.ts` holds every source
  * that names it to the variable-specifier form, and this engine never imports

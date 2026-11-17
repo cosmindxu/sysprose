@@ -1042,7 +1042,8 @@ describe('the defect sidecar names real entries and the register reads it', () =
     expect(by('D-inconsistent-axioms')).toMatchObject({ classes: ['bind-equality', 'inherited-context'], kind: 'abstains' });
     // Read again in the instance, or fenced on the SMT engine, since instance3-pass S1: no longer a wrong statement.
     expect(by('D-subsetting-contradiction')).toMatchObject({ classes: ['inherited-context', 'per-instance'], kind: 'abstains' });
-    expect(by('D-bound-detail')).toMatchObject({ classes: ['text-as-real'], kind: 'wrong-statement' });
+    // closed by W1: the bound names z3 only where a z3 call decided, so a refuted row's candidate counterexample is no longer credited
+    expect(sidecar.defects.some((d) => d.id === 'D-bound-detail')).toBe(false);
   });
 });
 
