@@ -2081,6 +2081,42 @@ export function clauseHostOf(model: Model, id: ElementId): ElementId | undefined
   return objectiveOf(model, el)?.id;
 }
 
+/** A negated clause a requirement (or a case objective) wrote and the mapper refused: no surface reads it. */
+export interface RefusedClause {
+  role: 'assume' | 'require' | 'assert';
+  /** The statement as written, whitespace-collapsed: `require not constraint c { … }`. */
+  written: string;
+}
+
+/**
+ * The clauses a requirement or a case objective wrote as a NEGATION and the mapper kept verbatim, in document order.
+ *
+ * {@link clausesOf} files only a child that carries a string `expression`, which a refused negated clause does not: the
+ * mapper keeps it as written (`attrs.negated`, `attrs.unparsedText`) so the save writes it back, and the load degrades.
+ * Both reports that call a requirement with no clause "prose only" are therefore false about a requirement that did
+ * write one; this is the fact they read to say "its clause is not read" instead. No `Contract` field carries it:
+ * {@link clauseHostOf} and the callers hand it the model.
+ *
+ * The owner is the one {@link clausesOf} reads — the `objective` of a case, the element otherwise — so a clause is
+ * reported where it is filed. The absence of a string `expression` is the test, not emptiness: a clause with an
+ * expression is read, negated or not.
+ */
+export function refusedClausesOf(model: Model, id: ElementId): RefusedClause[] {
+  const el = model.get(id);
+  if (!el) return [];
+  const owner = CASE_KINDS.has(el.eClass) ? objectiveOf(model, el) : el;
+  if (!owner) return [];
+  const out: RefusedClause[] = [];
+  for (const child of model.children(owner.id)) {
+    if (child.eClass !== CLAUSE_KIND || child.attrs.negated !== true) continue;
+    if (typeof child.attrs.expression === 'string') continue;
+    const role = child.attrs.requirementRole;
+    if (role !== 'assume' && role !== 'require' && role !== 'assert') continue;
+    out.push({ role, written: String(child.attrs.unparsedText ?? '').replace(/\s+/g, ' ').trim() });
+  }
+  return out;
+}
+
 /**
  * The verdict facet a requirement CLAIMS, with no evidence behind it.
  *

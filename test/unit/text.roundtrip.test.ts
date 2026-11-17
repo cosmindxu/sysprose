@@ -1630,7 +1630,7 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
       'assert not constraint c { part q; load > 10.0 }',
       'assert not constraint c { in attribute y = 2.0; load > y }',
       'assert not constraint c { attribute y :>> load = 2.0; load > y }',
-      'assert not constraint c { rep language "ocl" /* load > 10 */ load > 10.0 }',
+      'assert not constraint c { rep r language "ocl" /* load > 10 */ load > 10.0 }',
       'assert not constraint c { attribute y = 2.0; }',
     ];
     for (const form of refused) {
@@ -1683,6 +1683,55 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     expect(serializeModel(parseModel(nb7).model)).toBe(nb7);
     // With the `;` the clause ends there, and the `satisfy` after it is its own statement, as before.
     expect(parseModel(nb('assert not; satisfy R by s0;')).model.all().filter((e) => e.eClass === 'Satisfy').length).toBe(1);
+  });
+
+  it('declares no name for a swallowed `assert not x`, and keeps an annotation and a language-only `rep` standing', () => {
+    // W4 (c): `assert not x > 1.0;` parses as the clause `assert not x` (no `;` in its CST) and two tokens the
+    // recovery cannot place. `x` is the first token of the expression, not a declaration: keeping it declared made
+    // `validation/duplicate-name` fire beside the refusal whenever a sibling held `x`. The finding still names it.
+    const swallowed = parseModel('package A { part def P { attribute x = 3.0; assert not x > 1.0; } }');
+    expect(swallowed.diagnostics.map((d) => d.code)).toEqual([
+      'parse/mismatched-token',
+      'parse/mismatched-token',
+      'mapper/negated-assert-unread',
+    ]);
+    const mapper = swallowed.diagnostics.find((d) => d.code === 'mapper/negated-assert-unread')!;
+    expect(mapper.message).toContain('the negation of `x`');
+    const kept = swallowed.model.all().filter((e) => e.attrs.negated === true);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.declaredName).toBeUndefined();
+    expect(kept[0]!.attrs.unparsedText).toBe('assert not x');
+    // The save is what base wrote (recorded, not made byte-identical): the clause kept, `> 1.0;` dropped by recovery,
+    // a stray `1.0` left after the part def.
+    expect(serializeModel(swallowed.model)).toBe(
+      'package A {\n    part def P {\n        attribute x = 3.0;\n        assert not x\n    }\n    1.0\n}',
+    );
+    // A TERMINATED refused clause wrote its name as a name (`assert not constraint c;`), so that one stays declared.
+    const terminated = parseModel('package A { part def P { attribute c = 3.0; assert not constraint c; } }');
+    expect(terminated.model.all().filter((e) => e.attrs.negated === true).map((e) => e.declaredName)).toEqual(['c']);
+
+    // W4 (f, optional): an annotation and a `rep language "…"` member say nothing a reader judges, so the negation
+    // leaves them standing and the clause is read as the plain clause over `not (…)`. A NAMED `rep r language "…"`
+    // declares a name under the negation and stays refused, as every other member kind (262(f)) does.
+    const src =
+      'package A { metadata def M; part def P { attribute load : ScalarValues::Real = 50.0; ' +
+      'assert not constraint c { @M rep language "ocl" /* the load */ load > 10.0 } } part p : P; }';
+    const { model, diagnostics } = parseModel(src);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const standing = model.all().filter((e) => e.attrs.negated === true);
+    expect(standing).toHaveLength(1);
+    expect(standing[0]!.attrs.expression).toBe('not (load > 10.0)');
+    expect(model.children(standing[0]!.id).map((c) => c.eClass).sort()).toEqual([
+      'MetadataUsage',
+      'TextualRepresentation',
+    ]);
+    const saved = serializeModel(model);
+    expect(saved).toContain('@M');
+    expect(saved).toContain('language "ocl"');
+    expect(saved).not.toMatch(/\brep\b/);
+    const again = parseModel(saved);
+    expect(again.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(serializeModel(again.model)).toBe(saved);
   });
 
   it('resolves a forward disjoint / subset target and leaves genuine typos unresolved (F4)', () => {

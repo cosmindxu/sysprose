@@ -46,7 +46,7 @@ describe('rule 1 — duplicate-name', () => {
     expect(runRule(m, 'duplicate-name')).toHaveLength(0);
   });
 
-  it('negative: two siblings with the same name are flagged', () => {
+  it('negative: two siblings with the same name are flagged, and a name a refused clause swallowed is none', async () => {
     const m = new Model();
     const f = new ModelFactory(m);
     const p = f.pkg('P');
@@ -56,6 +56,23 @@ describe('rule 1 — duplicate-name', () => {
     expect(diags).toHaveLength(2);
     expect(diags[0].ruleId).toBe('duplicate-name');
     expect(diags[0].severity).toBe('error');
+    // `assert not x > 1.0;` declares no `x`: the name is the first token of an expression the recovery abandoned, and
+    // having declared it made `duplicate-name` fire beside the mapper's refusal whenever a sibling held `x` (W4).
+    const swallowed = await loadModelText('package A { part def P { attribute x = 3.0; assert not x > 1.0; } }', {
+      library: 'none',
+    });
+    expect(swallowed.report.diagnostics.filter((d) => d.code === 'validation/duplicate-name')).toEqual([]);
+    expect(swallowed.report.diagnostics.filter((d) => d.code === 'mapper/negated-assert-unread')).toHaveLength(1);
+    // Two attributes really named `x` are still two findings.
+    const dup = await loadModelText('package A { part def P { attribute x = 3.0; attribute x = 4.0; } }', {
+      library: 'none',
+    });
+    expect(dup.report.diagnostics.filter((d) => d.code === 'validation/duplicate-name')).toHaveLength(2);
+    // And a TERMINATED refused clause wrote its name as a name: beside a sibling it is a real duplicate.
+    const terminated = await loadModelText('package A { part def P { attribute c = 3.0; assert not constraint c; } }', {
+      library: 'none',
+    });
+    expect(terminated.report.diagnostics.filter((d) => d.code === 'validation/duplicate-name')).toHaveLength(2);
   });
 });
 

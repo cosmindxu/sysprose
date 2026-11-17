@@ -252,6 +252,7 @@ export {
   contractsOf,
   contractOf,
   clauseHostOf,
+  refusedClausesOf,
   clauseInheritanceCensus,
   claimedVerdictOf,
   isUserModelElement,

@@ -164,6 +164,7 @@ import {
 import {
   isStatementKind,
   quotePath,
+  refusedClausesOf,
   resolveFullName,
   runVerificationCases,
   statementKindOf,
@@ -1317,7 +1318,7 @@ function inheritedClauseLines(contract: Contract): string[] {
 }
 
 /**
- * What a contract with no clause of its own is, which is two different things.
+ * What a contract with no clause of its own is, which is four different things.
  *
  * `requirement massOk : MassLimit;` inherits a `require constraint` from its
  * definition and owns none — it is not prose, and saying so would be false
@@ -1327,10 +1328,21 @@ function inheritedClauseLines(contract: Contract): string[] {
  * constraint` and no `require` or `assume` (`requirement r { subject s : P = x;
  * assert constraint ca { s.L == 50.0 } }`, or one typed by a definition that
  * does): the assert is a fact of the model that the check judges, so the row
- * says it is that, not that the requirement carries prose.
+ * says it is that, not that the requirement carries prose. A fourth: it writes a
+ * clause this tool refused (`require not constraint c { … }`), which is a body
+ * the file states and no surface read — saying it wrote none would deny it.
  */
 function emptyClauseLine(model: Model, contract: Contract): string {
   if (contract.clausesInheritedFrom.length === 0) {
+    // A clause the load refused is a body this tool did not read, not prose: say so before the asserted and prose
+    // sentences, which are exact for the shapes that have no refused clause.
+    const refused = refusedClausesOf(model, contract.id);
+    if (refused.length > 0) {
+      const clauses = refused.map((c) => `the \`${c.role} not\` clause it writes, \`${c.written}\``);
+      return clauses.length === 1
+        ? `    its only clause is not read: ${clauses[0]}, is not read by this tool, so there is nothing to encode`
+        : `    its clauses are not read: ${clauses.slice(0, -1).join(', ')} and ${clauses.at(-1)}, are not read by this tool, so there is nothing to encode`;
+    }
     const owners = new Set<string>([contract.id, ...generalizationsOf(model, contract.id).map((t) => t.id)]);
     const asserted = model
       .ofKind('ConstraintUsage')
@@ -1508,9 +1520,14 @@ function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
 }
 
 /** One worklist row: what it is, what it says, and whether it can be encoded. */
-function obligationLines(o: Obligation): string[] {
+function obligationLines(model: Model, o: Obligation): string[] {
   const id = o.shortId ? `${o.shortId}  ` : '';
-  const what = o.expression === '' ? '(no constraint body)' : o.expression;
+  const what =
+    o.expression === ''
+      ? refusedClausesOf(model, o.element.id).length > 0
+        ? '(its clause is not read)'
+        : '(no constraint body)'
+      : o.expression;
   const head = `  ${o.role.padEnd(10)} ${o.source.padEnd(13)} ${id}${what}`;
   const tail: string[] = [];
   if (o.encodable === true) {
@@ -1581,7 +1598,7 @@ function reportObligations(model: Model, name: string, args: ParsedArgs): Report
       : []),
     ...(r.obligations.length === 0 && !missing
       ? [scope ? '  this scope holds no relation' : '  this model states no relation at all']
-      : r.obligations.flatMap(obligationLines)),
+      : r.obligations.flatMap((o) => obligationLines(model, o))),
     ...(refusals.length > 0
       ? [
           '  refused by gate:',

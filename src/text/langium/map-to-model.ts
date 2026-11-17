@@ -2408,9 +2408,15 @@ class Mapper {
         ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
       });
       const verbatim = node.$cstNode?.text;
+      // A name is declared only by a TERMINATED clause — `assert not constraint c;` or `assert not constraint c { … }`.
+      // A clause with no `;` in its own text is the swallowed head of an expression (`assert not x > 1.0` parses as
+      // `assert not x`, then two unmatched tokens), so `x` is not a declaration and calling it one made
+      // `validation/duplicate-name` fire beside this refusal whenever a sibling held `x`. The finding above still
+      // names it; only the phantom declaration goes.
+      const terminated = node.$cstNode !== undefined && /[;{]/.test(node.$cstNode.text);
       this.create('ConstraintUsage', {
         ownerId: ownerId ?? undefined,
-        declaredName: name,
+        declaredName: terminated ? name : undefined,
         attrs: {
           requirementRole: node.kind,
           negated: true,
@@ -2981,21 +2987,24 @@ function normalizeSpecOp(op: string): string {
 /**
  * Is this member of a negated clause's body one the negation leaves standing, so the clause is read as the plain
  * clause over `not (expr)` with the member mapped as the positive clause maps it (`assert constraint c { attribute y =
- * 2.0; not (load > y) }`)? A `comment`, a `doc` or a bare block comment means nothing a reader judges. An attribute usage
- * with a `=` value or none, typed at most, is a feature of the clause that holds whatever its result is: only the
- * result expression is negated. Anything else is refused: a nested constraint, requirement, part or calc (what a
- * clause nested under `not` states is unsettled), a `default` or `:=` value (its interplay with decision 14 under the
- * negation is unsettled), a textual representation in a language (it may be the clause's own expression), and any
- * prefix, subsetting, redefinition, multiplicity or body of the attribute's own.
+ * 2.0; not (load > y) }`)? A `comment`, a `doc`, a bare block comment or an annotation (`@M`) means nothing a reader
+ * judges. An attribute usage with a `=` value or none, typed at most, is a feature of the clause that holds whatever its
+ * result is: only the result expression is negated. A textual representation that carries text in a language, with no
+ * name of its own, is mapped as the positive clause maps it too: it is text about the clause, not the clause's
+ * expression. Anything else is refused: a nested constraint, requirement, part or calc (what a clause nested under
+ * `not` states is unsettled), a `default` or `:=` value (its interplay with decision 14 under the negation is
+ * unsettled), a NAMED textual representation (it declares a name under the negation, and what a name declared under
+ * `not` denotes is unsettled), and any prefix, subsetting, redefinition, multiplicity or body of the attribute's own.
  */
 function negationKeepsMember(m: Member): boolean {
   switch (m.$type) {
     case 'Doc':
     case 'Comment':
+    case 'Annotation':
       return true;
     case 'TextualRep': {
       const tr = m as TextualRepNode;
-      return tr.language === undefined && tr.name === undefined;
+      return tr.name === undefined;
     }
     case 'Definition': {
       const d = m as Definition;
