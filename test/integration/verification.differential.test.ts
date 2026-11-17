@@ -20406,6 +20406,26 @@ assert constraint t0 { x - x == 0.0 }
       'U2A::kf': ['?/?/F/?', null],
       'U2A::ohm': ['?/-/T/-', null],
     }),
+    // a5 W5: a feature that writes its own name after `:>` denotes ITSELF (the name shadows any outer or library
+    // one), so the specialization-cycle rule reports an ERROR — a new finding only, the rows are the ones they were:
+    // p1.load is T0's default 1.0 (<= 5.0 holds), p2.load is the instance's 50.0 (<= 5.0 fails), and neither is read
+    // through p1 (the subsetter reason). Both text orders.
+    ...reversed('a5-w5-self-cycle', `package CY3 {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0 :> p1 [1]; part p2 :> p1 [1]; }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k2 { w.p2.load <= 5.0 }
+}`, `package CY3 {
+  constraint k2 { w.p2.load <= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  part def W { part p2 :> p1 [1]; part p1 : T0 :> p1 [1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'CY3::k1': ['?/?/?/?', 'T'],
+      'CY3::k2': ['?/?/?/?', 'F'],
+    }),
   };
 
   /**
@@ -21659,6 +21679,8 @@ assert constraint t0 { x - x == 0.0 }
     // instance's own value, in either member order (the assert first in Q; the head's parts written first).
     ['a5-hd1-nrs', 'a5-hd1-nrs-rev'],
     ['a5-hd1-head', 'a5-hd1-head-rev'],
+    // a5 W5: a feature that subsets itself, in either text order.
+    ['a5-w5-self-cycle', 'a5-w5-self-cycle-rev'],
     // a5 F0: the package-head default family in either text order.
     ['a5-e2c', 'a5-e2cr'],
     ['a5-e1qp', 'a5-e1qpr'],
@@ -21882,6 +21904,17 @@ assert constraint t0 { x - x == 0.0 }
   it('sub-rv1-cycle: the subsetting cycle is reported as a specialization cycle', async () => {
     const { report } = await loadModelText(PROBES['sub-rv1-cycle']!.text, { fileName: 'cycle.sysml', strict: true });
     expect(report.diagnostics.filter((d) => d.code === 'validation/specialization-cycle').length).toBeGreaterThan(0);
+  });
+
+  // a5 W5: the SELF case the rule already had (`Element … specializes itself.`) never fired, because the `:>` name was
+  // resolved with the declaring element excluded and bound a library `p1`. It denotes the element now.
+  it('a5-w5-self-cycle: a feature that subsets itself is a specialization cycle', async () => {
+    const { model, report } = await loadModelText(PROBES['a5-w5-self-cycle']!.text, { fileName: 'cy3.sysml', strict: true });
+    const cycles = report.diagnostics.filter((d) => d.code === 'validation/specialization-cycle');
+    expect(cycles.map((d) => [d.severity, d.message, model!.qualifiedName(d.elementId!)])).toEqual([
+      ['error', 'Element CY3::W::p1 specializes itself.', 'CY3::W::p1'],
+    ]);
+    expect(report.diagnostics.filter((d) => d.message.includes('ShapeItems'))).toEqual([]);
   });
 
   // numeric2 S1: a negated clause is read as the plain clause over `not (body)` and kept as written (`negated`), and

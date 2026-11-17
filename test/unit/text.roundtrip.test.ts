@@ -701,6 +701,92 @@ describe('serializer — the reference form the resolver agrees with', () => {
     expect(serializeModel(model)).toContain('part w :>> w;');
   });
 
+  // W5: a `:>` name that writes the declaring element's own name denotes THAT element — the name shadows any
+  // outer or library one — so its Subsetting targets itself and the specialization-cycle rule reports it. It was
+  // resolved with the declaring element excluded, so it bound a library `p1` and none of the four surfaces saw a
+  // cycle.
+  it('binds a `:>` that writes the feature’s own name to the feature itself, and re-emits it as written', () => {
+    const src = `package P { part def T0 { attribute load default = 1.0; } part def W { part p1 : T0 :> p1 [1]; } }`;
+    const m1 = parseModel(src).model;
+    const edge = (m: Model): string[][] =>
+      m
+        .all()
+        .filter((e) => e.eClass === 'Subsetting')
+        .map((e) => [m.qualifiedName((e.source ?? [])[0]), m.qualifiedName((e.target ?? [])[0])]);
+    expect(edge(m1)).toEqual([['P::W::p1', 'P::W::p1']]);
+    const t1 = serializeModel(m1);
+    expect(t1).toContain('part p1 : T0 :> p1 [1];');
+    const m2 = parseModel(t1).model;
+    expect(edge(m2)).toEqual([['P::W::p1', 'P::W::p1']]);
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
+  it('binds an untyped `part p1 :> p1;` to the feature itself too', () => {
+    const src = `package P { part def T0 { attribute load default = 1.0; } part def W { part p1 :> p1; } }`;
+    const m1 = parseModel(src).model;
+    const subsetting = m1.all().find((e) => e.eClass === 'Subsetting')!;
+    expect(m1.qualifiedName((subsetting.source ?? [])[0])).toBe('P::W::p1');
+    expect(m1.qualifiedName((subsetting.target ?? [])[0])).toBe('P::W::p1');
+    const t1 = serializeModel(m1);
+    expect(t1).toContain('part p1 :> p1;');
+    const m2 = parseModel(t1).model;
+    const again = m2.all().find((e) => e.eClass === 'Subsetting')!;
+    expect(m2.qualifiedName((again.target ?? [])[0])).toBe('P::W::p1');
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
+  // W5: the SAVE side of the same rule. A bare `p1` after `:>` now resolves to the inner feature itself, so an
+  // inner feature subsetting an OUTER one must be spelled by its path: the shortcut used to keep the bare name
+  // (the old resolver excluded the source), and the saved file re-read as a self-specialization. The text was
+  // stable either way, so the tests below assert the TARGET identity, not the bytes.
+  it('saves an inner `:>` of an outer feature by a path that re-parses to that feature, not to itself', () => {
+    const src = `package P { part def E; part def W { part p1 : E :> P::p1; } part p1 : E; }`;
+    const edge = (m: Model): string[][] =>
+      m
+        .all()
+        .filter((e) => e.eClass === 'Subsetting')
+        .map((e) => [m.qualifiedName((e.source ?? [])[0]), m.qualifiedName((e.target ?? [])[0])]);
+    const m1 = parseModel(src).model;
+    expect(edge(m1)).toEqual([['P::W::p1', 'P::p1']]);
+    const t1 = serializeModel(m1);
+    expect(t1).toContain('part p1 : E :> P::p1;');
+    const m2 = parseModel(t1).model;
+    expect(edge(m2)).toEqual([['P::W::p1', 'P::p1']]);
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
+  it('saves a definition that subclasses an outer definition by its path too', () => {
+    const src = `import O::*;\npackage O { part def A; }\npackage P { part def A :> O::A; }`;
+    const sub = (m: Model): string[][] =>
+      m
+        .all()
+        .filter((e) => e.eClass === 'Subclassification')
+        .map((e) => [m.qualifiedName((e.source ?? [])[0]), m.qualifiedName((e.target ?? [])[0])]);
+    const m1 = parseModel(src).model;
+    expect(sub(m1)).toEqual([['P::A', 'O::A']]);
+    const t1 = serializeModel(m1);
+    expect(t1).toContain('part def A :> O::A;');
+    const m2 = parseModel(t1).model;
+    expect(sub(m2)).toEqual([['P::A', 'O::A']]);
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
+  it('saves an inner `:>` of an IMPORTED feature by the path that finds it again', () => {
+    const src = `package O { part def E; part p1 : E; }\npackage P { import O::*; part def W { part p1 : E :> O::p1; } }`;
+    const edges = (m: Model): string[][] =>
+      m
+        .all()
+        .filter((e) => e.eClass === 'Subsetting')
+        .map((e) => [m.qualifiedName((e.source ?? [])[0]), m.qualifiedName((e.target ?? [])[0])]);
+    const m1 = parseModel(src).model;
+    expect(edges(m1)).toEqual([['P::W::p1', 'O::p1']]);
+    const t1 = serializeModel(m1);
+    expect(t1).toContain('part p1 : E :> O::p1;');
+    const m2 = parseModel(t1).model;
+    expect(edges(m2)).toEqual([['P::W::p1', 'O::p1']]);
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
   it('the `redefinition …` STATEMENT binds like the inline form', () => {
     // Same construct, two spellings. The statement used to resolve its target
     // with plain full resolution, so it bound to the redefining feature itself

@@ -1418,9 +1418,14 @@ class Mapper {
     const scope = el.ownerId;
     // KerML §8.2.3.5.1 gives a redefinition its own rule — the generals of the
     // owning type are the local namespaces, tried before ordinary resolution.
+    // A `:>` name is resolved WITHOUT excluding the declaring element: a feature
+    // or definition that writes its own name after `:>` (`part p1 :> p1;`)
+    // denotes ITSELF, the name shadowing any outer one, and the specialization
+    // cycle it makes is the rule's to report. `:>>` keeps its own rule above,
+    // and `:`/`::>` still exclude the element they type.
     return req.op === ':>>'
       ? resolveRedefinedFeature(this.model, req.ref, el.id, scope)
-      : resolveFullName(this.model, req.ref, scope, { exclude: el.id });
+      : resolveFullName(this.model, req.ref, scope, req.op === ':>' ? {} : { exclude: el.id });
   }
 
   /**
