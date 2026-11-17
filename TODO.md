@@ -360,8 +360,11 @@ headings.
       review-2026-10-14/wave3-probes/numeric-curved/ (lens1-r5, worklist-probes, nc-rereview2-p1,
       sweeps/), review-2026-10-14/wave3-probes/text-order/. [numeric-curved; fence-numeric]
       fence-numeric2: (a) double roots read ? where base read t (`x * x == 0.0`, `(x - 3.0) ^ 2.0 ==
-      0.0`); (b) a tautology held exactly 0 or 1 by a quotient or power reads ? (`0.0 / x == 0.0`,
-      `x ^ 0.0 == 1.0`) and solveFeasible goes d1f1 to d0f0; (c) two stated values further apart
+      0.0`); (b) CLOSED 2026-11-17 by a5-numeric N2: a tautology's row now reads T where the divisor
+      or base is an exactly nonzero stated or asserted value (pins a5-n2-q-lit/-stated/-fixed and
+      the solved-for and remainder literal shapes; `0.0 / x == 0.0` and `x ^ 0.0 == 1.0` decide),
+      while a free divisor or base, a binary64-only cancellation and an unvalued tautology stay `?`
+      (the nk1 `ky` control); (c) two stated values further apart
       than 1e-8 of their size but closer than the 1e-6 gate read ? on both rows (`x == 1.0000001`
       beside `x == 1.0`); (d) a guarded divisor refuses the witness even when the branch is not
       taken (the `if ... ? ... else ...` spelling now parses on all four surfaces (a5-std S2), so the fd probe can be written in either form; N3 reads it); (e) dividesByNearZero is absolute in SI, so a free divisor below 1e-6 loses its witness
@@ -451,10 +454,11 @@ headings.
       definition keeps its old reading, once, never outward (probes sat-nested-pa3-def and
       sat-nested-pa3-amb-*;
       review-2026-10-14/wave3-probes/fence-readings/s2/nq1.sysml, nq2, nq5, nq7). (6) A subsetted
-      feature is read as the union of its own value and its subsetter's when p1's upper bound is 1,
-      abstaining when it is unstated or above 1 (needs a multiplicity ruling; also settles
-      e1-subset; review-2026-10-14/wave3-probes/fence-readings/s2/rv1.sysml, rev/rv-spec.sysml,
-      rev/rv-q.sysml). (7) mu sM1, sN1, sN2 stay ?/?/?/X by design; a #clash F row files the two-values contradiction; a firm value beside a more specific default on the line's other name reads none (LN3) (review-2026-10-14/wave3-probes/fence-readings/s2/mu.sysml, mur.sysml, mu1.sysml).
+      feature is CLOSED 2026-11-17 by a5-heads2 HD6: the union `p1 = q` is read as q only where both
+      effective multiplicities are exactly [1..1] (SysML 7.6.3, decision 13) — rv1 decides, rvq0 and
+      the [0..*]/[2] grid stay `?` (pins a5-hd6-rv1/-rvq/-spec and revs; also settles e1-subset;
+      review-2026-10-14/wave3-probes/fence-readings/s2/rv1.sysml, rev/rv-spec.sysml, rev/rv-q.sysml).
+      (7) mu sM1, sN1, sN2 stay ?/?/?/X by design; a #clash F row files the two-values contradiction; a firm value beside a more specific default on the line's other name reads none (LN3) (review-2026-10-14/wave3-probes/fence-readings/s2/mu.sysml, mur.sysml, mu1.sysml).
       (8) An own-sibling redefinition is not read as one hard validation error
       (review-2026-10-14/wave3-probes/fence-readings/s2/os-a.sysml); models that contain one still
       decide cells, the model being invalid and flagged. (9) Bindings: Q's own generic row (P::a2 in
@@ -467,7 +471,8 @@ headings.
       Rows read through a subsetter whose subsetted usage an instance reads otherwise abstain
       together with the subsetted usage's rows
       (review-2026-10-14/wave3-probes/fence-readings/p/v1.sysml, v2.sysml); the component fence
-      ignores multiplicity; a chain taint does not reach a subsetter declared deeper in a
+      ignores multiplicity EXCEPT the [1..1] subsetter rule HD6 reads; a chain taint does not reach
+      a subsetter declared deeper in a
       specialisation the model never instantiates. (11) Order only, sound either way: the SMT lane's
       `?` versus `X` letters on contradictory merged lines and `T` versus `?` on generic requirement
       rows; the row key of a constraint read in a specialisation context flips with member order
@@ -870,8 +875,10 @@ true values. What follows is what that branch and the review of it left open; en
       measure unbounded only through an unbounded Integer, e.g. `x - 2.0 * y > 0.0` min x, and an
       Integer measure with no bound) or the encoder cannot fix an integer symbol (read other than
       through `to_real`, or a script with a string literal); probe
-      solver2-pass-scratch/s6/gen/u.cases.json. (2) The `bounds` exit-code sentence
-      (scripts/lib/sysprose-spec.ts BOUNDS_EXIT_CODES) does not list the two new not-decided kinds.
+      solver2-pass-scratch/s6/gen/u.cases.json. (2) CLOSED 2026-11-17 by a5-words W1: the `bounds`
+      exit-code sentence (scripts/lib/sysprose-spec.ts BOUNDS_EXIT_CODES) now names both kinds it
+      withheld — the integer-branch cap reached over mixed Integer and Real, and a feature typed by
+      a domain below the integers this lane does not carry.
       Since a5-encode E1 the type floors of Natural and Positive are carried as `type:`-labelled
       axioms in encodeScript (a pinned Natural/Positive now decides where the floor is Int-sound;
       consistency maps the label to its declaration and the `axiom` census does not count it); a
@@ -893,8 +900,10 @@ true values. What follows is what that branch and the review of it left open; en
       class register (`docs/constraint-class-defects.json`) caps the maturity of the cells these
       touch; each is a sentence or a basis that is wrong or misleading today, pinned by goldens so a
       fix moves them on purpose: (1) `x ^ -1` is refused as "the exponent is not a literal"
-      (`contracts.ts` tests the unary minus as a non-number); (2) `bound.detail` says "decided by z3 5.3.1" on rows the numeric surface decided (`s.a
-      == s.b`, "bus" vs "car"); (3) to probe, not a defect: the
+      (`contracts.ts` tests the unary minus as a non-number); (2) CLOSED 2026-11-17 by a5-words W1:
+      `bound.detail` appends the z3 sentence only where a z3 call decided the outcome (proved and
+      design-admitted), so a refuted row the numeric re-read published no longer claims it; the
+      D-bound-detail defect is deleted and the class facts regenerated; (3) to probe, not a defect: the
       engine's `pinnedSymbols` pins a self-referencing equation (`x == x * y` pins x) and pins the
       right-hand defined feature of `assert constraint qa { L == M }` (8 probes h5-pin*), and
       whether either changes a `partialAntecedent` answer is unverified. [classes-2 S4]

@@ -16680,8 +16680,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // A usage that is subsetted by one an instance reads otherwise (RV1): w's p2 is its only p1 (both [1]), so
     // `w.p1.load` is 50, but p1 was read at W's own T0 (1): W's `c` and `k1` read T and their reverses F, and strict
-    // reported a false violation. Each reading through p1 abstains now, naming w (the multiplicity is not read: a
-    // `p1[0..*]` other members fill abstains too); a W no instance redefines keeps its T (rv1-plain).
+    // reported a false violation. Since HD6 the union is read wherever both effective multiplicities are exactly
+    // [1..1] (SysML 7.6.3, decision 13): the walk reads p1 in w as w's p2, so W's `c` reads W's own 1 (T) beside its
+    // instance row in w (50, F), `w.p1.load` is 50, and `k1`/`k1R` are F/T. A W no instance redefines keeps its T
+    // (rv1-plain), and a multiplicity other than [1..1] keeps the fence (rvq0, the grid: a5-hd6-*).
     ...reversed('sub-rv1', `package RV1 {
         part def T0 { attribute load default = 1.0; }
         part def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load <= 5.0 } }
@@ -16695,9 +16697,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def W { constraint c { p1.load <= 5.0 } part p2 :> p1 [1]; part p1 : T0[1]; }
         part def T0 { attribute load default = 1.0; }
       }`, {
-      'RV1::W::c': ['?/?/?/?', 'T'],
-      'RV1::k1': ['?/?/?/?', 'F'],
-      'RV1::k1R': ['?/?/?/?', 'T'],
+      'RV1::W::c': ['T/T/T/T', 'T'],
+      'RV1::W::c in RV1::w': ['F/F/F/F', 'F'],
+      'RV1::k1': ['F/F/F/F', 'F'],
+      'RV1::k1R': ['T/T/T/T', 'T'],
     }),
     'sub-rv1-ge': probe(`package RV1 {
         part def T0 { attribute load default = 1.0; }
@@ -16706,13 +16709,14 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint k1 { w.p1.load >= 5.0 }
         constraint k1R { w.p1.load <= 5.0 }
       }`, {
-      'RV1::W::c': ['?/?/?/?', 'F'],
-      'RV1::k1': ['?/?/?/?', 'T'],
-      'RV1::k1R': ['?/?/?/?', 'F'],
+      'RV1::W::c': ['F/F/F/F', 'F'],
+      'RV1::W::c in RV1::w': ['T/T/T/T', 'T'],
+      'RV1::k1': ['T/T/T/T', 'T'],
+      'RV1::k1R': ['F/F/F/F', 'F'],
     }),
     // The subsetter in a specialisation of the definition that has the subsetted usage (w's p2 is its only p1; k1 is
     // false and k1R true), and a subsetter an instance declares itself (`part q :> p1` in w, with a value of its own):
-    // the same wrong answer, T/T/T/T and a false strict violation, abstains now.
+    // the same wrong answer, T/T/T/T and a false strict violation, since HD6 reads each as one value.
     ...reversed('sub-rv1-spec', `package RVS {
         part def T0 { attribute load default = 1.0; }
         part def W { part p1 : T0[1]; }
@@ -16728,8 +16732,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part def W { part p1 : T0[1]; }
         part def T0 { attribute load default = 1.0; }
       }`, {
-      'RVS::k1': ['?/?/?/?', 'F'],
-      'RVS::k1R': ['?/?/?/?', 'T'],
+      'RVS::k1': ['F/F/F/F', 'F'],
+      'RVS::k1R': ['T/T/T/T', 'T'],
     }),
     'sub-rv1-instance-subsetter': probe(`package RVQ {
         part def T0 { attribute load default = 1.0; }
@@ -16738,8 +16742,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint k1 { w.p1.load <= 5.0 }
         constraint k1R { w.p1.load >= 5.0 }
       }`, {
-      'RVQ::k1': ['?/?/?/?', 'F'],
-      'RVQ::k1R': ['?/?/?/?', 'T'],
+      'RVQ::k1': ['F/F/F/F', 'F'],
+      'RVQ::k1R': ['T/T/T/T', 'T'],
     }),
     // The same one hop further out, which the first fence left: p3 subsets p2 subsets p1 (all [1]), an instance gives p3 a
     // value, and p1 was still read at W's own values (T/T/T/T where `w.p1.load` is 50); likewise a subsetter an instance
@@ -16826,7 +16830,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     // A subsetter that says something of its own, declared in the DEFINITION (`part def W { part p1; part q :> p1 { … } }`)
     // or in a specialisation of it: every instance has it, so `w.p1.load` is 50 where the walk read T0's 1. The same
-    // text with the subsetter inside the instance was fenced; the usage it subsets abstains wherever it is declared.
+    // text with the subsetter inside the instance was fenced; the usage it subsets abstains wherever it is declared
+    // (HD6 reads the union only where nothing reads the SUBSETTER itself, and `k2` reads `w.q`).
     ...reversed('sub-rv1-def-subsetter', `package DS {
         part def T0 { attribute load default = 1.0; }
         part def W { part p1 : T0[1]; part q :> p1 [1] { attribute :>> load = 50.0; } }
@@ -20228,6 +20233,159 @@ assert constraint t0 { x - x == 0.0 }
       'NK1::ky': ['?/?/?/?', '?'],
       'NK1::kz': ['?/?/?/T', 'T'],
     }),
+
+    // a5 HD6: a feature is read as the usage that subsets it only where BOTH effective multiplicities are exactly
+    // [1..1] (SysML 7.6.3, sysml.txt:3355-3366; decision 13). The union `p1 = p2` in W, with w's `:>> p2` stating 50:
+    // every w's p1 IS its p2, so `w.p1.load` is 50 — W's own `c` reads W's T0's 1 (T) beside its row in w (F), and
+    // k1/k1R are F/T. RV1's shapes are `sub-rv1`/`-rev` above; these are HD6's own pins, in both text orders.
+    ...reversed('a5-hd6-rv1', `package RV1 {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; part p2 :> p1 [1]; constraint c { p1.load <= 5.0 } }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, `package RV1 {
+  constraint k1R { w.p1.load >= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  part def W { constraint c { p1.load <= 5.0 } part p2 :> p1 [1]; part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'RV1::W::c': ['T/T/T/T', 'T'],
+      'RV1::W::c in RV1::w': ['F/F/F/F', 'F'],
+      'RV1::k1': ['F/F/F/F', 'F'],
+      'RV1::k1R': ['T/T/T/T', 'T'],
+    }),
+    // The subsetter an instance declares itself: q declares no multiplicity and owns a subsetting, so it is not the
+    // implicit `[1..1]` — it inherits p1's, which is `[1]` — and `w.p1.load` is 50.
+    ...reversed('a5-hd6-rvq', `package RVQ {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; }
+  part w : W { part q :> p1 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, `package RVQ {
+  constraint k1R { w.p1.load >= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W { part q :> p1 { attribute :>> load = 50.0; } }
+  part def W { part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'RVQ::k1': ['F/F/F/F', 'F'],
+      'RVQ::k1R': ['T/T/T/T', 'T'],
+    }),
+    // The subsetter in a specialisation of the definition that has the subsetted usage.
+    ...reversed('a5-hd6-spec', `package RVS {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; }
+  part def W2 :> W { part p2 :> p1 [1]; }
+  part w : W2 { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, `package RVS {
+  constraint k1R { w.p1.load >= 5.0 }
+  constraint k1 { w.p1.load <= 5.0 }
+  part w : W2 { part :>> p2 { attribute :>> load = 50.0; } }
+  part def W2 :> W { part p2 :> p1 [1]; }
+  part def W { part p1 : T0[1]; }
+  part def T0 { attribute load default = 1.0; }
+}`, {
+      'RVS::k1': ['F/F/F/F', 'F'],
+      'RVS::k1R': ['T/T/T/T', 'T'],
+    }),
+    // The rule's boundary, on the 15-combo grid the step's generator carries: subsetter none/[1]/[0..1]/[0..*]/[2]
+    // x subsetted [1]/implicit/[0..1]. Only the four combos with both sides exactly [1..1] decide — subsetted `[1]` or
+    // the implicit default x subsetter none or `[1]` — and every other keeps today's fence and sentence. rvq0 is the
+    // plan's `part q [0..1] :> p1` (decision 13), which no surviving model held.
+    'a5-hd6-grid-none': probe(`package GN {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; part p2 :> p1; constraint c { p1.load <= 5.0 } }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, {
+      'GN::W::c': ['T/T/T/T', 'T'],
+      'GN::W::c in GN::w': ['F/F/F/F', 'F'],
+      'GN::k1': ['F/F/F/F', 'F'],
+      'GN::k1R': ['T/T/T/T', 'T'],
+    }),
+    'a5-hd6-rvq0': probe(`package RVQ0 {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; }
+  part w : W { part q [0..1] :> p1 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, {
+      'RVQ0::k1': ['?/?/?/?', '?'],
+      'RVQ0::k1R': ['?/?/?/?', '?'],
+    }),
+    'a5-hd6-grid-sub01': probe(`package GS {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[0..1]; part p2 :> p1; constraint c { p1.load <= 5.0 } }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, {
+      'GS::W::c': ['?/?/?/?', '?'],
+      'GS::k1': ['?/?/?/?', '?'],
+      'GS::k1R': ['?/?/?/?', '?'],
+    }),
+    'a5-hd6-grid-star': probe(`package GT {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; part p2 :> p1 [0..*]; constraint c { p1.load <= 5.0 } }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, {
+      'GT::W::c': ['?/?/?/?', '?'],
+      'GT::k1': ['?/?/?/?', '?'],
+      'GT::k1R': ['?/?/?/?', '?'],
+    }),
+    'a5-hd6-grid-two': probe(`package GW {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; part p2 :> p1 [2]; constraint c { p1.load <= 5.0 } }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, {
+      'GW::W::c': ['?/?/?/?', '?'],
+      'GW::k1': ['?/?/?/?', '?'],
+      'GW::k1R': ['?/?/?/?', '?'],
+    }),
+    // The rule's fail-closed edge (HD6 review): an instance's redefinition of the SUBSETTER with a multiplicity other
+    // than exactly [1..1] can hold no value at all (`[0..1]`), more than one (`[2]`) or many (`[0..*]`), so p1 is not
+    // p2 there and p1's own value stands — no row may decide. The same fence holds for an instance that redefines the
+    // SUBSETTED feature, which the walk reads as written in that context (the subsetter's 50 does not reach it), and
+    // for the subsetted feature's own `default`, which decision 13's give-way wording would let the 50 override (a
+    // narrower rule this tool keeps, recorded for the coordinator — `a5-hd6-own-default`).
+    'a5-hd6-standin01': probe(`package RM01 {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; part p2 :> p1 [1]; }
+  part w : W { part :>> p2 [0..1] { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, {
+      'RM01::k1': ['?/?/?/?', '?'],
+      'RM01::k1R': ['?/?/?/?', '?'],
+    }),
+    'a5-hd6-redefp1': probe(`package RP1 {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1]; part p2 :> p1 [1]; }
+  part w : W { part :>> p1; part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+  constraint k1R { w.p1.load >= 5.0 }
+}`, {
+      'RP1::k1': ['?/?/?/?', '?'],
+      'RP1::k1R': ['?/?/?/?', '?'],
+    }),
+    'a5-hd6-own-default': probe(`package OWND {
+  part def T0 { attribute load default = 1.0; }
+  part def W { part p1 : T0[1] { attribute :>> load default = 1.0; } part p2 :> p1 [1]; }
+  part w : W { part :>> p2 { attribute :>> load = 50.0; } }
+  constraint k1 { w.p1.load <= 5.0 }
+}`, {
+      'OWND::k1': ['?/?/?/?', '?'],
+    }),
   };
 
   /**
@@ -21548,6 +21706,12 @@ assert constraint t0 { x - x == 0.0 }
     // literal-divisor probe's).
     ['a5-n2-fb', 'a5-n2-fb-rev'],
     ['a5-n2-q-lit', 'a5-n2-q-lit-rev'],
+
+    // a5 HD6: a feature read as the usage that subsets it (both effective multiplicities [1..1]), the subsetter an
+    // instance declares, and the subsetter a specialisation declares, in either text order.
+    ['a5-hd6-rv1', 'a5-hd6-rv1-rev'],
+    ['a5-hd6-rvq', 'a5-hd6-rvq-rev'],
+    ['a5-hd6-spec', 'a5-hd6-spec-rev'],
     // fix-quoted S1: a model with single-quoted names and the same model with plain ones, in either text order.
     ...QUOTED_FAMILY.flatMap((f) => [[`quoted-${f.name}`, `quoted-${f.name}-bare`] as const, [`quoted-${f.name}-rev`, `quoted-${f.name}-bare-rev`] as const]),
     // Q5: two asserted equations that give one feature two values, with the two exchanged.
