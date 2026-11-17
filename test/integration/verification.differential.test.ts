@@ -21782,6 +21782,10 @@ assert constraint t0 { x - x == 0.0 }
     ['line-twice-units', 'TU::c5', /TU::a redefines `x` twice, with 5\.0 \[kg\] and 5000\.0 \[g\], so the model states both/],
     ['line-sentence-twice-renamed', 'ST::c5y', /ST::a redefines `x` twice, with 6\.0 and 5\.0, so the model states both for the one feature and neither is read/],
     ['line-of-parts', 'LP::cX5', /LP::Q2::X redefines `M` and `N` together, so in LP::s they are one feature/],
+    // a5 W2: the seeds rollup (3) sentence ALREADY names the unread end — the step pins the clause as it
+    // stands and does not reword it. `u.k` is withheld (the binding's end is `RS::U::w::p`, a scope the page
+    // may read otherwise), so the check's and the literal engine's rows carry the same `RS::U::w::p` clause.
+    ['rename-onto-alias-seed-redef', 'RS::c5', /whose end this tool cannot follow; RS::U::w::p is, or is typed by or specialises, a scope that inherits two features for one name/],
     // S0: an instance a withheld scope holds, in the scope's sentence (the cause clause is the SMT lane's, byte for byte).
     ['withheld-instance-defs', 'WID::P::c in WID::S::p', /WID::P::c is not read in WID::S::p: WID::S owns, or joins a feature of, a binding whose end is a copy standing on one of several features the order of the text chooses between, so this instance is listed and not decided/],
     ['withheld-instance-defs', 'WID::P::c in WID::s::p', /WID::P::c is not read in WID::s::p: WID::s owns, or joins a feature of, a binding whose end is a copy standing on one of several features/],
@@ -22921,6 +22925,61 @@ describe('one symbol per instance, and every instance holds what its types hold'
     }
     // A literal is the one value in every instance: read, and released, by the feature's own symbol.
     expect([...resolveFreeFeatures(m, ['g1.g'], rows).qualifiedNames]).toEqual(['FR::G::g']);
+    // a5 W2: a quoted spelling resolves to the feature its unquoted twin names
+    // (the maps are keyed by unquoted names), through the same order and without
+    // changing what the unquoted spelling itself resolves to.
+    const quoted = `package QS {
+    part def P { attribute 'K x' : ScalarValues::Real = 25.0; constraint cF { 'K x' <= 10.0 } constraint cT { 'K x' >= 10.0 } }
+    part p : P; }`;
+    const mq = await contextModel(quoted, 'QS');
+    const rowsQ = obligationsOf(mq);
+    for (const spelling of ["QS::P::'K x'", "'K x'", 'QS::P::K x']) {
+      const freed = resolveFreeFeatures(mq, [spelling], rowsQ);
+      expect([freed.unresolved, freed.unread, [...freed.qualifiedNames]], spelling).toEqual([
+        [],
+        [],
+        ['QS::P::K x'],
+      ]);
+    }
+    // …and a quoted dot-holding name resolves where its dotted twin does, while
+    // PA5's bare quoted-dot key (the name walk offers `'a.b'` itself) stays.
+    const quotedDot = `package QD {
+    part def P { attribute 'a.b' : ScalarValues::Real = 25.0; constraint cF { 'a.b' <= 10.0 } constraint cT { 'a.b' >= 10.0 } }
+    part p : P; }`;
+    const md = await contextModel(quotedDot, 'QD');
+    const rowsD = obligationsOf(md);
+    for (const spelling of ['QD::P::a.b', "QD::P::'a.b'", "'a.b'"]) {
+      const freed = resolveFreeFeatures(md, [spelling], rowsD);
+      expect([freed.unresolved, freed.unread, [...freed.qualifiedNames]], spelling).toEqual([
+        [],
+        [],
+        ['QD::P::a.b'],
+      ]);
+    }
+    // A dotted path the name walk WITHHOLDS (`u.k`: the walk cannot follow the
+    // binding's end, and offers only `u.w`) through the resolver a relation body
+    // goes through: the definition's feature, under the qualified spelling's own
+    // symbol.
+    const seedRedef = `package RS {
+    part def P { attribute a default = 11.0; attribute b default = 12.0; }
+    part def P2 :> P { attribute :>> a default = 13.0; }
+    part def H { part p : P; }
+    part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }
+    part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; bind k = w.p.a; }
+    part u : U { attribute :>> k = 7.0; }
+    constraint c5 { u.k == 5.0 }
+    constraint c13 { u.k == 13.0 }
+    constraint c16 { u.k == 16.0 } }`;
+    const ms = await contextModel(seedRedef, 'RS');
+    const rowsS = obligationsOf(ms);
+    for (const spelling of ['u.k', 'RS::U::k']) {
+      const freed = resolveFreeFeatures(ms, [spelling], rowsS);
+      expect([freed.unresolved, freed.unread, [...freed.qualifiedNames]], spelling).toEqual([
+        [],
+        [],
+        ['RS::U::k'],
+      ]);
+    }
   });
 });
 

@@ -11,6 +11,7 @@ import {
   serializeModel,
   settleRedefinitions,
 } from '@text/index';
+import { quoteName } from '@text/serializer';
 import { validate } from '@validation/index';
 import {
   NOTE_BODY_TERMINATOR,
@@ -2057,6 +2058,20 @@ describe('round-trip — a comment keeps what it points at', () => {
       expect(text).toContain(`comment '${name}' /* a note */`);
       expect(comment(model).declaredName).toBe(name);
     }
+  });
+
+  it('quotes a name exactly where the grammar cannot read it bare (a5 W2 exports the rule)', () => {
+    // The serializer's own rule, exported for the words steps (W3): a plain
+    // identifier passes through, a name with a space or a dot is quoted, a
+    // reserved word is quoted (Langium lexes it as a token that outranks ID),
+    // and the notation's own escapes are applied to `\` and `'`.
+    expect(quoteName('mass')).toBe('mass');
+    expect(quoteName('_x1')).toBe('_x1');
+    expect(quoteName('K x')).toBe("'K x'");
+    expect(quoteName('a.b')).toBe("'a.b'");
+    expect(quoteName('part')).toBe("'part'");
+    expect(quoteName("it's")).toBe("'it\\'s'");
+    expect(quoteName('a\\b')).toBe("'a\\\\b'");
   });
 
   it('escapes a locale that contains a quote or a backslash', () => {

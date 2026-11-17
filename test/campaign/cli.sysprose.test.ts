@@ -3442,6 +3442,211 @@ package P {
     );
   }, 240_000);
 
+  /**
+   * a5 W2 — the seeds rollup (4) and the quoted rollup (f), at the command's surface.
+   *
+   * `--measure u.k` and `--free u.k` were refused by the sentence that INVITES
+   * the dotted path (`Write the qualified name, the dotted path a constraint
+   * body would use (uav.endurance)`), and every quoted spelling (`QS::P::'K x'`)
+   * was refused while its unquoted twin resolved. Both are resolved now, through
+   * the resolver a relation body goes through. The seed-redef model is the W2
+   * reconstruction (the original probe is lost; the shape is the surviving
+   * `min/b1-bounds.txt` output plus the `rename-onto-alias-seed` pins), and the
+   * quoted one is the `QUOTED_FAMILY` `space` shape with quote marks on every
+   * spelling. Each model is written into this case's own temp dir: no new
+   * fixture files.
+   */
+  const W2_SEED_REDEF = [
+    'package RS {',
+    '  part def P { attribute a default = 11.0; attribute b default = 12.0; }',
+    '  part def P2 :> P { attribute :>> a default = 13.0; }',
+    '  part def H { part p : P; }',
+    '  part def H1 :> H { part :>> p { attribute q :>> a = 16.0; } }',
+    '  part def U { part w : H1 { part :>> p : P2; } attribute k = 5.0; bind k = w.p.a; }',
+    '  part u : U { attribute :>> k = 7.0; }',
+    '  constraint c5 { u.k == 5.0 }',
+    '  constraint c13 { u.k == 13.0 }',
+    '  constraint c16 { u.k == 16.0 }',
+    '}',
+    '',
+  ].join('\n');
+
+  /** One test's file, a `mkdtemp` of its own, removed whatever the case does. */
+  const withModel = async <T>(name: string, text: string, body: (file: string) => Promise<T>): Promise<T> => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-w2-'));
+    try {
+      const file = join(dir, name);
+      writeFileSync(file, text);
+      return await body(file);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it('bounds resolves the dotted path its own refusal sentence invites, over the qualified name’s rows', () =>
+    withModel('seed-redef.sysml', W2_SEED_REDEF, async (file) => {
+      // A fenced measure: the name walk withholds `u.k` (the binding's end is a
+      // scope the saved file may read otherwise), so the two bounds are the
+      // quality `not-evaluable` the qualified spelling also files, never a number.
+      const dotted = await run(['bounds', file, '--measure', 'u.k', '--sense', 'both', '--json']);
+      expect(dotted.code, 'the two bound rows are not established: exit 2, not a usage error').toBe(2);
+      expect(dotted.stderr, 'the sentence that invites the dotted path refused it').not.toContain('names nothing');
+      expect(dotted.stderr, 'a --measure refusal reached the internal-error banner').not.toContain('internal error');
+      const control = await run(['bounds', file, '--measure', 'RS::U::k', '--sense', 'both', '--json']);
+      expect(control.code).toBe(2);
+      const rows = (r: Run) => {
+        const { body } = payload<{
+          bounds: {
+            measure: { qualifiedName: string };
+            bounds: Array<{ sense: string; outcome: string; code: string | null; value: number | null }>;
+          };
+        }>(r);
+        return {
+          measure: body.bounds.measure.qualifiedName,
+          rows: body.bounds.bounds.map((b) => [b.sense, b.outcome, b.code, b.value]),
+        };
+      };
+      expect(rows(dotted), 'the dotted path resolved to another feature or another symbol').toEqual(rows(control));
+      expect(rows(dotted)).toEqual({
+        measure: 'RS::U::k',
+        rows: [
+          ['min', 'inconclusive', 'verification/not-evaluable', null],
+          ['max', 'inconclusive', 'verification/not-evaluable', null],
+        ],
+      });
+    }), 240_000);
+
+  it('verify accepts the dotted path for --free and reports the qualified spelling’s release', () =>
+    withModel('seed-redef.sysml', W2_SEED_REDEF, async (file) => {
+      const dotted = await run(['verify', file, '--free', 'u.k', '--json']);
+      // Accepted: the rows are the model's own (the withheld binding), not a
+      // refusal of the spelling. `names nothing` on stderr would be that refusal.
+      expect(dotted.code).toBe(2);
+      expect(dotted.stderr, 'the dotted --free spelling was refused').not.toContain('names nothing');
+      expect(dotted.stderr, 'a --free refusal reached the internal-error banner').not.toContain('internal error');
+      const control = await run(['verify', file, '--free', 'RS::U::k', '--json']);
+      expect(control.code).toBe(2);
+      const released = (r: Run) =>
+        payload<{ verify: { results: Array<{ clause: { qualifiedName: string }; claim: string; code: string | null }> } }>(
+          r,
+        ).body.verify.results.map((x) => [x.clause.qualifiedName, x.claim, x.code]);
+      expect(released(dotted), 'the dotted path released another feature').toEqual(released(control));
+      expect(released(dotted)).toEqual([
+        ['RS::c5', 'inconclusive', 'verification/not-evaluable'],
+        ['RS::c13', 'inconclusive', 'verification/not-evaluable'],
+        ['RS::c16', 'inconclusive', 'verification/not-evaluable'],
+      ]);
+    }), 240_000);
+
+  it('takes a quoted spelling where it takes the unquoted one, on --measure and on --free', () =>
+    withModel(
+      'quoted.sysml',
+      [
+        'package QS {',
+        "  part def P { attribute 'K x' : ScalarValues::Real = 25.0; constraint cF { 'K x' <= 10.0 } constraint cT { 'K x' >= 10.0 } }",
+        '  part p : P;',
+        '}',
+        '',
+      ].join('\n'),
+      async (file) => {
+        const measure = (spelling: string) =>
+          run(['bounds', file, '--measure', spelling, '--sense', 'both', '--json']);
+        const plain = await measure('QS::P::K x');
+        const quoted = await measure("QS::P::'K x'");
+        const bare = await measure("'K x'");
+        for (const [name, r] of [['plain', plain], ['quoted', quoted], ['bare quoted', bare]] as const) {
+          expect(r.code, `${name}: min and max are both 25`).toBe(0);
+          expect(r.stderr, `${name}: a quoted spelling was refused`).not.toContain('names nothing');
+        }
+        const bound = (r: Run) => {
+          const { body } = payload<{
+            bounds: { measure: { qualifiedName: string }; bounds: Array<{ sense: string; outcome: string; value: number | null }> };
+          }>(r);
+          return { measure: body.bounds.measure.qualifiedName, rows: body.bounds.bounds.map((b) => [b.sense, b.outcome, b.value]) };
+        };
+        expect(bound(quoted)).toEqual(bound(plain));
+        expect(bound(bare)).toEqual(bound(plain));
+        expect(bound(plain)).toEqual({
+          measure: 'QS::P::K x',
+          rows: [
+            ['min', 'optimum', 25],
+            ['max', 'optimum', 25],
+          ],
+        });
+        // The same spelling on `--free` releases the same feature: the two runs
+        // report the same rows and the same reason (`free-variable-unbounded`,
+        // because `--free` asks for a two-sided domain this model does not give).
+        const free = (spelling: string) => run(['verify', file, '--free', spelling, '--json']);
+        const freePlain = await free('QS::P::K x');
+        const freeQuoted = await free("QS::P::'K x'");
+        expect(freePlain.code).toBe(2);
+        expect(freeQuoted.code).toBe(2);
+        expect(freeQuoted.stderr, 'the quoted --free spelling was refused').not.toContain('names nothing');
+        const claims = (r: Run) =>
+          payload<{ verify: { results: Array<{ clause: { qualifiedName: string }; claim: string; code: string | null }> } }>(
+            r,
+          ).body.verify.results.map((x) => [x.clause.qualifiedName, x.claim, x.code]);
+        expect(claims(freeQuoted)).toEqual(claims(freePlain));
+        expect(claims(freePlain)).toEqual([
+          ['QS::P::cF', 'inconclusive', 'verification/free-variable-unbounded'],
+          ['QS::P::cT', 'inconclusive', 'verification/free-variable-unbounded'],
+        ]);
+      },
+    ), 300_000);
+
+  it('takes a quoted dotted name, keeps the quoted-dot key that already resolved, and still refuses a name that names nothing', () =>
+    withModel(
+      'quoted-dot.sysml',
+      [
+        'package QD {',
+        "  part def P { attribute 'a.b' : ScalarValues::Real = 25.0; constraint cF { 'a.b' <= 10.0 } constraint cT { 'a.b' >= 10.0 } }",
+        '  part p : P;',
+        '}',
+        '',
+      ].join('\n'),
+      async (file) => {
+        const bound = async (spelling: string) => {
+          const r = await run(['bounds', file, '--measure', spelling, '--sense', 'both', '--json']);
+          const { body } = payload<{
+            bounds: { measure: { qualifiedName: string }; bounds: Array<{ sense: string; outcome: string; value: number | null }> };
+          }>(r);
+          return {
+            code: r.code,
+            stderr: r.stderr,
+            measure: body.bounds.measure.qualifiedName,
+            rows: body.bounds.bounds.map((b) => [b.sense, b.outcome, b.value]),
+          };
+        };
+        const plain = await bound('QD::P::a.b');
+        // PA5's bare quoted-dot key: the name walk itself offers `'a.b'`, and it
+        // resolved before the step — the raw try must keep it resolving.
+        const bare = await bound("'a.b'");
+        const quoted = await bound("QD::P::'a.b'");
+        for (const [name, r] of [['plain', plain], ['bare quoted', bare], ['quoted', quoted]] as const) {
+          expect(r.code, `${name}: min and max are both 25`).toBe(0);
+          expect(r.stderr, `${name}: a quoted spelling was refused`).not.toContain('names nothing');
+        }
+        expect({ measure: quoted.measure, rows: quoted.rows }).toEqual({ measure: plain.measure, rows: plain.rows });
+        expect({ measure: bare.measure, rows: bare.rows }).toEqual({ measure: plain.measure, rows: plain.rows });
+        expect({ measure: plain.measure, rows: plain.rows }).toEqual({
+          measure: 'QD::P::a.b',
+          rows: [
+            ['min', 'optimum', 25],
+            ['max', 'optimum', 25],
+          ],
+        });
+        // A mistyped spelling must stay refused, by the same exact sentence and
+        // never under the internal-error banner.
+        const missing = await run(['bounds', file, '--measure', 'QD::P::nosuch.name', '--sense', 'both']);
+        expect(missing.code).toBe(2);
+        expect(missing.stderr).toContain(
+          '--measure names nothing in this model: `QD::P::nosuch.name`. Write the qualified name, the ' +
+            'dotted path a constraint body would use (`uav.endurance`), or a feature name unique in scope.',
+        );
+        expect(missing.stderr, 'a mistyped --measure reached the internal-error banner').not.toContain('internal error');
+      },
+    ), 300_000);
+
   it('bounds stands a row down where a refused axiom reaches the objective', async () => {
     // AT THE COMMAND'S SURFACE, because this is the row a reader acts on: an
     // axiom nothing asserted widens the space the bound was computed over, so

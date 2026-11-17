@@ -4445,6 +4445,13 @@ describe('checkConstraints — a bound partner is read only where every instance
       expect(rows).toEqual([['SU::c5', 'unknown'], ['SU::cz', 'satisfied']]);
       const c5 = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'SU::c5')!;
       expect(c5.message).toContain('u.k is not read: it states a value, and a binding joins it to a feature of a scope the saved file may read otherwise');
+      // The sentence NAMES THE UNREAD END (`SU::U::w::p`), not only the binding conflict: a5 W2 pins the
+      // clause as it stands (the step does not reword it), on every surface that carries it.
+      expect(c5.message).toContain(
+        'whose end this tool cannot follow; SU::U::w::p is, or is typed by or specialises, a scope that ' +
+          'inherits two features for one name from general types whose features do not mask one another',
+      );
+      expect(c5.message).toContain('so no name of SU::U::w::p is read');
       expect(checkConstraintsNumeric(m!).find((r) => r.id === c5.id)!.result).toBe('unknown');
     }
     // The fenced name stays taken: a bare `k` is never the one nested `s.k` of an unrelated part, nor one of two nested `k`.

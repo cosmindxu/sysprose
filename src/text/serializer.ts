@@ -363,7 +363,7 @@ const RESERVED_WORDS = new Set<string>([
   'typed', 'typing', 'unions', 'until', 'use', 'var', 'variant', 'variation',
   'verification', 'verify', 'via', 'view', 'viewpoint', 'while', 'xor',
 ]);
-function quoteName(name: string): string {
+export function quoteName(name: string): string {
   if (PLAIN_IDENT.test(name) && !RESERVED_WORDS.has(name)) return name;
   return `'${name.replace(/([\\'])/g, '\\$1')}'`;
 }
