@@ -1484,7 +1484,7 @@ true values. What follows is what that branch and the review of it left open; en
       the spec version, the declined areas and the refresh procedure; the handover carries the same.
       [coverage-universe; CU-10]
 
-- [ ] **Read a typed or asserted body's dotted, derived and per-instance values (TY1 follow-up).**
+- [x] **Read a typed or asserted body's dotted, derived and per-instance values (TY1 follow-up).**
       TY1 stopped under its STOP RULE (b): the positional pairing works (`tp1` F/F/F/F, `tp2`, `tp3`,
       `tpr` refused with the positional sentence, `XS2` byte-identical), but nineteen pinned
       `name-cd*`/`name-tp*` rows stay `?` because the typed equation never reaches the feature-level
@@ -1507,8 +1507,11 @@ true values. What follows is what that branch and the review of it left open; en
       remains only for a genuine refusal). Ruling 2026-11-18: the step's sound letters widen beyond
       the nineteen named rows to `mask-param MP::tc/MP::tx` literal `?→T` and `MP::V::holds` `?→T`
       (`name-cd-eq` is within `name-cd*`), because the file-wide abstention could not be kept
-      without restoring the false "body not read" claim. STILL OPEN: re-run TY1's body-reading half
-      on top of TY1A and re-pin the named families. TY2 follow-up: TY1A's SAME_POINT_DEMOTED move
+      without restoring the false "body not read" claim. TY1's body-reading half is delivered by
+      TY1A itself (it applied the saved TY1 partial and extended it; no re-run is owed). Nine named
+      rows stay a sound `?` with a true sentence, as the step permits (CD4::Q::cl, CD5::Q::cl,
+      CD6::P::c, CD8::Q::cl-in-q, CD8::Q::e-in-q, CD8::topL check, CD9::Q::c, CD9::Q::cl,
+      CD9::topF). The literal and SMT obligation stays TY2's half. TY2 follow-up: TY1A's SAME_POINT_DEMOTED move
       lowers the `lra` class from differential-tested to tested (knownFalse 0→2, tableDisagree +2);
       it is a recorded measurement change, not a regression.
 
