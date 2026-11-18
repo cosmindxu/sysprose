@@ -1562,3 +1562,53 @@ tagged `[O1 …]` are what its steps and reviews left open.
       (messages, CSP hosts, the resource-key header). Done when the manual test passes on the live
       site. [review 2026-10-14 F-C2] Awaits user decision U16 (do the Google setup when
       convenient).
+
+- [ ] **The `parallel` keyword is read as the state definition's name, and its regions are walked as
+      separate machines with no sign of it.** SysML v2 Part 1 §7.18 gives `state def X parallel { … }`
+      (grammar `isParallel ?= 'parallel'`), but `sysml.langium` has no `parallel` keyword: in
+      `state def Modes parallel { state nav {…} state comms {…} }` the word `parallel` becomes the
+      definition's name (`P::Ctl::parallel::nav`), `Modes` is lost, no diagnostic is raised, and
+      `reach` prints "2 state machine(s), 2 walked to exhaustion" — byte-for-byte the output of the
+      same file without `parallel` (but for the name). The explorer's parallel refusal
+      (`explore.ts` `unsupportedConstructs`, `construct: 'parallel-regions'`) is reachable only
+      through the API, so from text it never fires. Wrong statements today: an element named
+      `parallel` that the model does not declare, and region-by-region claims on a machine whose
+      regions run concurrently (a guard or trigger that couples two regions is walked as if they
+      were independent). Fence first: parse `parallel` into `attrs.parallel` so the existing
+      refusal fires, and pin the probe below; interleaving the regions is a separate, later item.
+      Probe: `state def Modes parallel` with two regions, each `state off; state on; transition off
+      accept go then on;`. Done: the definition keeps its name, `reach`/`check-behaviour` report
+      `verification/behaviour-unsupported-construct` (parallel-regions) and no exhaustive claim, and
+      the 637-model differential stays exactly "631 identical, 6 differ". [mc-vs-bib 2026-11-18; wrong statement]
+
+- [ ] **Say that the PSSM Clause 9 oracle was not built, or build a scored subset.** `docs/04` cites
+      `omg-pssm-1.0-2019` Clause 9 as "a UML/fUML oracle for the conformance scorecard" for
+      `reach`/`check-behaviour`; nothing in `src/` or `test/` uses it (one comment in
+      `src/semantics/mc/profile.ts`). Done: CONFORMANCE §8.5 states that the departure from PSSM is
+      declared field by field and not measured, or a subset of the Clause 9 tests is run and scored.
+      [mc-vs-bib 2026-11-18; A]
+
+- [ ] **Correct the two non-goals that send properties to an export that does not exist.** `docs/04`
+      non-goals 1 and 3 send "anything unbounded" to "z3 k-induction or an SMV export" and real-time
+      patterns to "export-only"; no SMV/nuXmv/OCRA export ships (only the opt-in OCRA reading of a
+      bare `connect`), and the `cristoforetti-2026` path planned in phase 5 was not built. Done: the
+      non-goals and CONFORMANCE say these properties are refused (`inconclusive`), with no external
+      route today; building the export stays a separate decision. [mc-vs-bib 2026-11-18; B]
+
+- [ ] **State that machines are walked one at a time.** The behaviour profile and the non-goals do not
+      say that no composition of state machines (synchronous or asynchronous) is checked; the corpus
+      treats it as central (`graics-2020`, `cristoforetti-2026`, `basu-2011`). Done: a profile field
+      or a non-goal says so, with the sentence pinned. [mc-vs-bib 2026-11-18; C]
+
+- [ ] **Read the corpus against model-checking candidates 6–8 before building any of them.** `docs/05`
+      and `docs/06` cite no SystemsPerspectiveBib document. Before stutter-simulation (6), signature
+      consistency (7) or the behavioural fault tree (8) is built, read `bittner-2015`, `stewart-2021`,
+      `joshi-2006` (8), `dealfaro-henzinger-2001` (6, 7) and `peres-ghazel-2023` (6) against them and
+      record agreements and conflicts in `docs/05`. Done: `docs/05` carries the reading per candidate.
+      [mc-vs-bib 2026-11-18; D]
+
+- [ ] **Fix `docs/05`'s reason for rejecting realizability.** It rejects realizability with synthesis
+      ("synthesis produces an implementation"); realizability *checking* (`katis-2022`,
+      `larraz-tinelli-2022`) returns a verdict, not an implementation. The reason that holds is
+      `docs/04` non-goal 5 (only static contracts are decided). Done: `docs/05` §4 gives that reason.
+      [mc-vs-bib 2026-11-18; E]
