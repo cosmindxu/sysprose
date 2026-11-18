@@ -9849,12 +9849,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           assert constraint holds : Rule { in cap = c; in need = d; } }
         constraint def Rule { in cap : ScalarValues::Real; in need : ScalarValues::Real; cap >= need }
       }`, {
-      // Since names-pass S2 an assert typed by a constraint definition (`holds : Rule`) is read by no surface: its own
-      // row abstains naming the definition, and the literal engine and SMT abstain on every row of the file (sound,
-      // weaker; the merge of pin-265's probe with names-pass). The check and the numeric surface keep T.
-      'MP::tc': ['T/?/T/?', 'T'],
-      'MP::tx': ['T/?/T/?', 'T'],
-      'MP::V::holds': ['?/-/?/-', null],
+      // TY1A reads the typed body `holds : Rule` with the values its parameters are given, so the assert no longer
+      // leaves the file every literal and SMT row abstained on: tc and tx decide there too, and `holds` itself reads
+      // T on the check and the numeric surface (`cap >= need` at 10 and 4). B's `in attribute x` is a value the same
+      // positional reading carries, so tx reads b.x = 5.
+      'MP::tc': ['T/T/T/?', 'T'],
+      'MP::tx': ['T/T/T/?', 'T'],
+      'MP::V::holds': ['T/-/T/-', null],
     }),
     // A name the walk places nowhere (contradicted-pair-meet's review): in a package that holds two features under one
     // name (Q5W2's `w`), whose names the walk withholds, and through a usage a renamed redefinition hides (Q5H's `r.a`,
@@ -10028,9 +10029,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'SEM::tM1': ['F/X/F/X', null],
       'SEM::tM50': ['T/X/T/X', null],
     }),
-    // The two the amended decision leaves as they were: an assert typed by an equation's definition over a
-    // `default` (no surface reads its equation, so every row over L abstains — the `=` twin is read as written,
-    // F3), and a feature WITHOUT a value, which an asserted equation defines (v9's CV-17 shape).
+    // An assert typed by an equation's definition over a `default`: TY1A reads the substituted equation at the
+    // feature level, so L is 50 (t50 T, t1 F) — the `=` twin is read as written (F3). And a feature WITHOUT a
+    // value, which an asserted equation defines (v9's CV-17 shape).
     'stand-typed': probe(`package ST {
         constraint def Eq { in x : ScalarValues::Real; x == 50.0 }
         part def P { attribute L : ScalarValues::Real default = 1.0; assert constraint ca : Eq { in x = L; } }
@@ -10038,9 +10039,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint t50 { p.L == 50.0 }
         constraint t1 { p.L == 1.0 }
       }`, {
-      'ST::P::ca': ['?/-/?/-', 'T'],
-      'ST::t1': ['?/?/?/?', null],
-      'ST::t50': ['?/?/?/?', null],
+      'ST::P::ca': ['T/-/T/-', 'T'],
+      'ST::t1': ['F/F/F/?', 'F'],
+      'ST::t50': ['T/T/T/?', 'T'],
     }),
     'stand-valueless': probe(`package SN {
         part def P { attribute L : ScalarValues::Real; assert constraint ca { L == 50.0 } }
@@ -10255,8 +10256,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p : P;
         constraint t1 { p.L == 5.0 }
       }`, {
-      'T1V::P::ca': ['?/-/?/-', 'T'],
-      'T1V::t1': ['T/?/T/?', 'T'],
+      'T1V::P::ca': ['T/-/T/-', 'T'],
+      'T1V::t1': ['T/T/T/?', 'T'],
     }),
     // default-stands' branch review. A binding to a value written with `=` that holds a `default` only in ANOTHER
     // context — a specialisation never instantiated (T4C's `Q5 :> Q { :>> L = 7.0 }`) or a sibling instance (T4D's
@@ -13813,13 +13814,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R38::Q::c in R38::q2': ['?/?/?/?', 'F'],
     }),
     // An assert typed by a constraint definition whose body is an equation (CD1's `e : Eq { in a = L; }` over
-    // Eq's `a == 50.0`) makes L 50 (decision 14), but no surface reads it: L's default 1 was read, and `L ==
-    // 50.0` refuted on all four (O6 S1's review). Since per-instance-rest S3 the default gives way, read
-    // nowhere, in a sentence naming the assert, and is no design freedom to the numeric surface, which took
-    // `L == 50.0` as a design equation until S3's review (CD13 below: one that disagrees decided other rows).
-    // The assert's own row (`e`, and each typed assert below) filed nothing on any surface until names-pass S2
-    // (A4): it abstains now on the check and the numeric surface, in a sentence naming the definition, and is a
-    // refused axiom on the other two (an assert files no goal there). The ref is decision 14's: `a == 50.0` holds.
+    // Eq's `a == 50.0`) makes L 50 (decision 14): TY1A reads the given-way default and the substituted equation
+    // at the feature level, so L is 50, the derived `p.m2` over `:>> load = L` is −40, and c/topF are F while
+    // cl/topL are T. Its own row `e` decides (`defines L = 50`) rather than abstaining; the literal and SMT
+    // engines read the typed body only once TY2 files it as an obligation. The ref is decision 14's: `a == 50.0`
+    // holds.
     'name-cd1': probe(`package CD1 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         constraint def Eq { in a : ScalarValues::Real; a == 50.0 }
@@ -13834,11 +13833,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topF { q.p.m2 >= 0.0 }
         constraint topL { q.L == 50.0 }
       }`, {
-      'CD1::Q::c': ['?/?/?/?', 'F'],
-      'CD1::Q::e': ['?/-/?/-', 'T'],
-      'CD1::Q::cl': ['?/?/?/?', 'T'],
-      'CD1::topF': ['?/?/?/?', 'F'],
-      'CD1::topL': ['?/?/?/?', 'T'],
+      'CD1::Q::c': ['F/F/F/?', 'F'],
+      'CD1::Q::e': ['T/-/T/-', 'T'],
+      'CD1::Q::cl': ['T/T/T/?', 'T'],
+      'CD1::topF': ['F/F/F/?', 'F'],
+      'CD1::topL': ['T/T/T/?', 'T'],
     }),
     // Its sibling with a design relation that disagrees with the typed equation (`cl { p.load == 5.0 }`, where L
     // and so load are 50): the numeric surface solved cl as a design equation over the given-way L, then
@@ -13857,10 +13856,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         }
         part q : Q;
       }`, {
-      'CD13::Q::c': ['?/?/?/?', 'F'],
-      'CD13::Q::e': ['?/-/?/-', 'T'],
-      'CD13::Q::c2': ['?/?/?/?', 'T'],
-      'CD13::Q::cl': ['?/?/?/?', 'F'],
+      'CD13::Q::c': ['F/F/F/?', 'F'],
+      'CD13::Q::e': ['T/-/T/-', 'T'],
+      'CD13::Q::c2': ['T/T/T/?', 'T'],
+      'CD13::Q::cl': ['F/F/F/?', 'F'],
     }),
     // A typed assert placed elsewhere than beside the default it names read that default on all four surfaces
     // until S3's review (each identical at 7565eb2): in a usage over its type's default (cd9, cd4), over a default
@@ -13881,10 +13880,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topL { q.L == 50.0 }
       }`, {
       'CD9::Q::c': ['?/?/?/?', 'T'],
-      'CD9::q::e': ['?/-/?/-', 'T'],
+      'CD9::q::e': ['T/-/T/-', 'T'],
       'CD9::Q::cl': ['?/?/?/?', 'F'],
+      'CD9::Q::cl in CD9::q': ['T/T/T/?', 'T'],
       'CD9::topF': ['?/?/?/?', 'F'],
-      'CD9::topL': ['?/?/?/?', 'T'],
+      'CD9::topL': ['T/T/T/?', 'T'],
     }),
     'name-cd4': probe(`package CD4 {
         constraint def Eq { in a : ScalarValues::Real; a == 50.0 }
@@ -13896,8 +13896,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.L == 50.0 }
       }`, {
       'CD4::Q::cl': ['?/?/?/?', 'F'],
-      'CD4::q::e': ['?/-/?/-', 'T'],
-      'CD4::top': ['?/?/?/?', 'T'],
+      'CD4::Q::cl in CD4::q': ['T/T/T/?', 'T'],
+      'CD4::q::e': ['T/-/T/-', 'T'],
+      'CD4::top': ['T/T/T/?', 'T'],
     }),
     'name-cd8': probe(`package CD8 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -13913,11 +13914,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topF { q.p.m2 >= 0.0 }
         constraint topL { q.L == 50.0 }
       }`, {
-      'CD8::Q::c': ['?/?/?/?', 'F'],
-      'CD8::Q::e': ['?/-/?/-', 'T'],
-      'CD8::Q::cl': ['?/?/?/?', 'T'],
-      'CD8::topF': ['?/?/?/?', 'F'],
-      'CD8::topL': ['?/?/?/?', 'T'],
+      'CD8::Q::c': ['F/F/F/?', 'F'],
+      'CD8::Q::e': ['T/-/T/-', 'T'],
+      'CD8::Q::e in CD8::q': ['?/-/?/-', null],
+      'CD8::Q::cl': ['T/T/T/?', 'T'],
+      'CD8::Q::cl in CD8::q': ['?/?/?/?', null],
+      'CD8::topF': ['F/F/F/?', 'F'],
+      'CD8::topL': ['?/?/T/?', 'T'],
     }),
     'name-cd2': probe(`package CD2 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -13932,11 +13935,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint topF { q.p.m2 >= 0.0 }
         constraint topL { q.p.load == 50.0 }
       }`, {
-      'CD2::Q::c': ['?/?/?/?', 'F'],
-      'CD2::Q::e': ['?/-/?/-', 'T'],
-      'CD2::Q::cl': ['?/?/?/?', 'T'],
-      'CD2::topF': ['?/?/?/?', 'F'],
-      'CD2::topL': ['?/?/?/?', 'T'],
+      'CD2::Q::c': ['F/F/F/?', 'F'],
+      'CD2::Q::e': ['T/-/T/-', 'T'],
+      'CD2::Q::cl': ['T/T/T/?', 'T'],
+      'CD2::topF': ['F/F/F/?', 'F'],
+      'CD2::topL': ['T/T/T/?', 'T'],
     }),
     'name-cd6': probe(`package CD6 {
         constraint def Eq { in a : ScalarValues::Real; a == 50.0 }
@@ -13949,8 +13952,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.p.load <= 10.0 }
       }`, {
       'CD6::P::c': ['?/?/?/?', 'T'],
-      'CD6::Q::e': ['?/-/?/-', 'T'],
-      'CD6::top': ['?/?/?/?', 'F'],
+      'CD6::Q::e': ['T/-/T/-', 'T'],
+      'CD6::top': ['F/F/F/?', 'F'],
     }),
     'name-cd5': probe(`package CD5 {
         constraint def Eq { in a : ScalarValues::Real; a == 50.0 }
@@ -13963,12 +13966,12 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.L == 50.0 }
       }`, {
       'CD5::Q::cl': ['?/?/?/?', 'F'],
-      'CD5::e': ['?/-/?/-', 'T'],
-      'CD5::top': ['?/?/?/?', 'T'],
+      'CD5::e': ['T/-/T/-', 'T'],
+      'CD5::top': ['T/T/T/?', 'T'],
     }),
     // A typed assert's body that reads a parameter's feature (`x.load` over `in x = p`) defines p's load, and one
-    // that specialises a constraint usage (`ea :> e0`) takes e0's parameter values: both read P's default 1 on all
-    // four surfaces, at 3c54ae0 too, until the branch review (p's load is 50). p's load gives way now, by feature.
+    // that specialises a constraint usage (`ea :> e0`) takes e0's parameter values: TY1A reads the substituted
+    // equation where the assert's parameters are valued (p's load is 50, so c/top are F and e is T).
     'name-tp1': probe(`package TP1 {
         part def P { attribute load : ScalarValues::Real default = 1.0; }
         constraint def Eq { in x : P; x.load == 50.0 }
@@ -13980,9 +13983,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q;
         constraint top { q.p.load <= 10.0 }
       }`, {
-      'TP1::Q::c': ['?/?/?/?', 'F'],
-      'TP1::Q::e': ['?/-/?/-', 'T'],
-      'TP1::top': ['?/?/?/?', 'F'],
+      'TP1::Q::c': ['F/F/F/?', 'F'],
+      'TP1::Q::e': ['T/-/T/-', 'T'],
+      'TP1::top': ['F/F/F/?', 'F'],
     }),
     'name-tp2': probe(`package TP2 {
         part def P { attribute load : ScalarValues::Real default = 1.0; }
@@ -13996,18 +13999,16 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q;
         constraint top { q.p.load <= 10.0 }
       }`, {
-      'TP2::Q::c': ['?/?/?/?', 'F'],
+      'TP2::Q::c': ['F/F/F/?', 'F'],
       // a5 S4: the plain typed `e0` files its own row too.
-      'TP2::Q::e0': ['?/?/?/?', 'T'],
-      'TP2::Q::ea': ['?/-/?/-', 'T'],
-      'TP2::top': ['?/?/?/?', 'F'],
+      'TP2::Q::e0': ['T/T/T/?', 'T'],
+      'TP2::Q::ea': ['T/-/T/-', 'T'],
+      'TP2::top': ['F/F/F/?', 'F'],
     }),
     // A typed assert over a value written with `=` that its definition's equation contradicts (`a == 50.0` over `in
-    // a = Z`, Z = 3): the untyped twin (`assert constraint e { Z == 50.0 }`) reads e F and Z's readers X on literal and
-    // SMT; this one filed no row, and literal and SMT read top3, and top2, which reads nothing it names, T at 3 — a
-    // pass over a model that contradicts itself (names-pass S2). Its own row files the refused axiom now, and both
-    // surfaces abstain on every row in the existing sentences (an assert this tool cannot read; a proof whose context a
-    // gate refused). The check reads the values as written, as for the twin.
+    // a = Z`, Z = 3). TY1A reads the body, so it now matches its untyped twin (`assert constraint e { Z == 50.0 }`):
+    // e is F, the model contradicts itself, and Z's readers report inconsistent axioms on the literal and SMT engines
+    // (I7_ALLOWED). The check reads the values as written, as for the twin.
     'name-cd-eq': probe(`package CDE {
         attribute Z : ScalarValues::Real = 3.0;
         attribute W : ScalarValues::Real = 9.0;
@@ -14016,9 +14017,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top2 { W <= 10.0 }
         constraint top3 { Z <= 10.0 }
       }`, {
-      'CDE::e': ['?/-/?/-', null],
-      'CDE::top2': ['T/?/T/?', null],
-      'CDE::top3': ['T/?/T/?', null],
+      'CDE::e': ['F/-/F/-', null],
+      'CDE::top2': ['T/X/T/X', null],
+      'CDE::top3': ['T/X/T/X', null],
     }),
     // A binding into one instance reaches the path it binds, not every feature typed alike (O2 S4's residual):
     // q2's `bind p.s.extra = E` is no reason to read P's `t.extra <= 10.0` per instance. Matched by feature, it
@@ -19346,7 +19347,8 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
     }),
     // a5 S4: a plain `constraint nl : Newton { in f = force; … }` files its own row, ?/?/?/? in the one sentence the typed assert's row has
     // (tp1, tp3, g5d); it filed none on any surface, so a violated `nl` (2500 against 1000 * 2) was silent. It is no axiom: the plain constraints
-    // beside it read T/F as before on all four, in either text order. The reading itself (ref F for `nl`) is the typed-usage step's (TY1/TY2).
+    // beside it read T/F as before on all four, in either text order. TY1A reads the body (`nl` is F for
+    // `2500 != 1000 * 2`); the literal and SMT engines read it once TY2 files it as an obligation.
     ...Object.fromEntries(
       (['a5-typed-row', 'a5-typed-row-rev'] as const).map((k) => {
         const text = `package TYR {
@@ -19361,9 +19363,9 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
   constraint kX { x == 3.0 }
 }`;
         return [k, probe(k === 'a5-typed-row' ? text : reversedMembers(text), {
-          'TYR::car::nl': ['?/?/?/?', 'F'],
-          'TYR::car2::nl2': ['?/?/?/?', 'T'],
-          'TYR::c': ['?/?/?/?', 'T'],
+          'TYR::car::nl': ['F/F/F/F', 'F'],
+          'TYR::car2::nl2': ['T/T/T/?', 'T'],
+          'TYR::c': ['T/T/T/?', 'T'],
           'TYR::kForce': ['T/T/T/T', 'T'],
           'TYR::kForce2': ['F/F/F/F', 'F'],
           'TYR::kX': ['T/T/T/T', 'T'],
@@ -20089,6 +20091,9 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
   constraint t2 { p2.L >= 200.0 }
 }`, {
       'H5BE::q::ca': ['?/-/?/-', null],
+      // The bind's end (p.L) is not below the usage's owner, so TY1A spells it by its qualified name (never a bare
+      // `L`, which q's own inherited L would win): a qualified name with no `=` literal is refused, so no instance row
+      // is filed — the sound abstention its own row already carries.
       'H5BE::t1': ['?/?/?/?', null],
       'H5BE::t2': ['?/?/?/?', null],
     }),
@@ -20102,6 +20107,9 @@ package Defs { part def P { attribute load : ScalarValues::Real default = 1.0; }
   constraint def Cd { in x : ScalarValues::Real; x >= 0.0 and x <= 100.0 }
 }`, {
       'H5BE::q::ca': ['?/-/?/-', null],
+      // The bind's end (p.L) is not below the usage's owner, so TY1A spells it by its qualified name (never a bare
+      // `L`, which q's own inherited L would win): a qualified name with no `=` literal is refused, so no instance row
+      // is filed — the sound abstention its own row already carries.
       'H5BE::t1': ['?/?/?/?', null],
       'H5BE::t2': ['?/?/?/?', null],
     }),
@@ -21500,6 +21508,13 @@ assert constraint t0 { x - x == 0.0 }
       'a5-hd1-va | VA1::Q::c in VA1::q2',
       'Q’s `bind load = L` joins `load = 50.0` to `L = 2.0 * K`, which at Q’s own K (default 0.5) is 1 — two values in the general, so the model contradicts itself and the SMT engine reports inconsistent-axioms; q2’s `:>> K = 25.0` makes L 50 there, the one value the check and the numeric surface read on the deep row (the valueAt path, HD1)',
     ],
+    ...['name-cd-eq | CDE::top2', 'name-cd-eq | CDE::top3'].map(
+      (key) =>
+        [
+          key,
+          'TY1A reads the typed assert `e : D` over `in a = Z` (Z = 3) as the equation `Z == 50.0`, which contradicts Z’s `= 3.0`: the model states two values for Z, so its axioms are inconsistent and the literal and SMT engines report it beside the check’s read of the row’s own value (9 and 3), exactly as the untyped twin does (decision 1)',
+        ] as const,
+    ),
   ]);
 
   const seen = new Map<string, Map<string, SurfaceRow>>();
@@ -21622,7 +21637,19 @@ assert constraint t0 { x - x == 0.0 }
   // P5G's q2's p read Q's bound L, which only the asserted `L == 2.0 * K` gave a value (E9); since decision 14 was
   // amended (2026-10-22) L keeps its `default = 7.0`, which the binding joins to P's `load default = 1.0`, and no
   // row there is decided. None is listed.
-  const SAME_POINT_DEMOTED = new Map<string, string>([]);
+  const SAME_POINT_DEMOTED = new Map<string, string>([
+    // TY1A: the check reads `cl` in the instance that holds the typed assert (L is the assert's 50 there), which the
+    // SMT engine — filing the typed body only once TY2 does — refutes at the general's `default = 1.0`; the same-point
+    // gate demotes its witness with nothing freed. CD4's assert is written in the instance q; CD9's `cl` is read in q.
+    [
+      'name-cd4 | CD4::Q::cl in CD4::q',
+      'TY1A reads the instance row at `e`’s L = 50 in q (cl holds there); the SMT engine refutes it at the general’s default 1.0, so its witness is not confirmed with nothing freed (TY2 files the typed body as an obligation)',
+    ],
+    [
+      'name-cd9 | CD9::Q::cl in CD9::q',
+      'TY1A reads the instance row at `e`’s L = 50 in q; the SMT engine refutes it at the general’s default 1.0, so its witness is not confirmed with nothing freed (TY2 files the typed body as an obligation)',
+    ],
+  ]);
   withZ3('I13: an SMT refutation with nothing freed against the check’s verdict only where listed', () => {
     const demoted = each().filter(
       (r) =>

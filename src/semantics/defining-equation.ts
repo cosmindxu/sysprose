@@ -964,8 +964,11 @@ export class DefiningEquations {
         ? { target }
         : { target, at: d.reader };
     }
-    // An asserted equation that defines it answers it, not a value it redefines.
-    if (this.statesOrDefines(d.reader, target)) return undefined;
+    // An asserted equation that defines it answers it, not a value it redefines. TY1: a `default` an asserted
+    // TYPED constraint usage names gives way to the substituted equation ({@link typedAssertNames}), and the
+    // scope must still answer the name so a value DERIVED from it (`m2` over `10.0 - load`) is read where the
+    // feature is written, as `answerFor` reads the equation there.
+    if (this.statesOrDefines(d.reader, target)) return typedAssertNames(this.model, target) ? { target } : undefined;
     for (const g of redefinedClosure(this.model, target)) {
       // Nor a default a binding of it overrides: the binding gives its value.
       if (this.statedValue(g) !== undefined) {
@@ -1704,14 +1707,19 @@ export class DefiningEquations {
   anyAsserted(): boolean {
     this.anyAsserts ??= this.model
       .ofKind('ConstraintUsage')
-      .some(
-        (c) =>
-          c.attrs.isLibrary !== true &&
-          isAsserted(c) &&
-          typeof c.attrs.expression === 'string' &&
-          c.attrs.expression.trim() !== '',
-      );
+      .some((c) => c.attrs.isLibrary !== true && isAsserted(c) && this.assertedBodyOf(c) !== undefined);
     return this.anyAsserts;
+  }
+
+  /**
+   * The relation an asserted usage states: its own body, or — for a typed usage no surface used to read — its
+   * constraint definition's body with the values its parameters are given (TY1). `undefined` where neither is read.
+   */
+  private assertedBodyOf(c: ElementRecord): string | undefined {
+    const expr = c.attrs.expression;
+    if (typeof expr === 'string' && expr.trim() !== '') return expr;
+    const typed = typedExpand(this.model, c, false);
+    return typed !== null && !('refused' in typed) ? typedRelationText(typed.node, typed.literals) : undefined;
   }
 
   /**
@@ -1725,8 +1733,8 @@ export class DefiningEquations {
       const out: Array<{ expr: string; names: readonly string[] }> = [];
       for (const child of this.model.children(readerId)) {
         if (child.attrs.isLibrary === true || !isAsserted(child)) continue;
-        const expr = child.attrs.expression;
-        if (typeof expr !== 'string' || expr.trim() === '') continue;
+        const expr = this.assertedBodyOf(child);
+        if (expr === undefined) continue;
         out.push({ expr, names: relationNamesOf(expr) });
       }
       hit = out;
@@ -2673,7 +2681,10 @@ export class DefiningEquations {
     // binding, or a value, that equates a part on the path with another part
     // (`bind r = s`: q's r is s, whose x the assert does not define).
     const ends = bindingEndsOf(this.model);
-    const fixed = (g: ElementRecord): boolean => ends.has(g.id) || (g.attrs.value !== undefined && g.attrs.value !== null);
+    // TY1: a `default` an asserted TYPED constraint usage names gives way to the substituted equation, so it is no
+    // value the assert is checked against — the equation defines the feature, here and on the path that reaches it.
+    const fixed = (g: ElementRecord): boolean =>
+      ends.has(g.id) || (g.attrs.value !== undefined && g.attrs.value !== null && !typedAssertNames(this.model, g));
     if ([f, ...redefinedClosure(this.model, f)].some(fixed)) return undefined;
     const path = [name];
     for (let cur = this.model.get(contextId); cur && isUsage(cur.eClass) && cur.ownerId != null; ) {
@@ -5333,7 +5344,19 @@ export function equationsOf(
   const parts = assertConjuncts(model, constraint);
   if (parts.length < 2) {
     const eq = equationOf(constraint);
-    return eq ? [eq] : [];
+    if (eq) return [eq];
+    // TY1: an ASSERT typed by a constraint definition states its body with the values its parameters are given, and
+    // an equation in it defines a name as any asserted equation does (decision 14's bare-name rule).
+    const written = constraint.attrs.expression;
+    if (isAsserted(constraint) && (typeof written !== 'string' || written.trim() === '')) {
+      const expanded = typedExpand(model, constraint, false);
+      if (expanded !== null && !('refused' in expanded) && expanded.node.kind === 'binary' && (expanded.node.op === '==' || expanded.node.op === '=')) {
+        const l = definedName(expanded.node.left, expanded.literals);
+        const r = definedName(expanded.node.right, expanded.literals);
+        if (l !== undefined || r !== undefined) return [{ node: expanded.node, literals: expanded.literals }];
+      }
+    }
+    return [];
   }
   const out: Array<{ node: Extract<ExprNode, { kind: 'binary' }>; literals: MarkerDimensions; part: ClausePart }> = [];
   for (const part of parts) {
@@ -10510,8 +10533,10 @@ const NO_DEFAULTS: ReadonlySet<ElementId> = new Set();
  * value it is there, LP1, SLD) — so that an opt-in tag that lets an assertion
  * adjust a written number, held until a model needs one (TODO.md), would
  * answer here alone. Typed asserts
- * are another matter: no surface reads their equation, so a `default` one may
- * define is read nowhere ({@link typedAssertHolding}).
+ * are another matter: where {@link typedAssertReads} the check and the numeric
+ * surface read the substituted equation, so a `default` one defines is read
+ * there; only the proof lane leaves it unread, until TY2 files it
+ * ({@link typedAssertHolding}).
  */
 export function replaceableDefaults(_model: Model): ReadonlySet<ElementId> {
   return NO_DEFAULTS;
@@ -10530,7 +10555,9 @@ export function replaceableDefaults(_model: Model): ReadonlySet<ElementId> {
  */
 export function writesStandingDefault(model: Model, f: ElementRecord): boolean {
   const g = [f, ...redefinedClosure(model, f)].find((x) => x.attrs.value !== undefined && x.attrs.value !== null);
-  return g !== undefined && g.attrs.defaultValue === true && !replaceableDefaults(model).has(g.id);
+  // A default an assert typed by an equation's definition makes give way is no standing default either (TY1): the
+  // assert now states the equation, and the default is read nowhere, as when the typed assert held it alone.
+  return g !== undefined && g.attrs.defaultValue === true && !replaceableDefaults(model).has(g.id) && !assertHeld(model).has(g.id);
 }
 
 /**
@@ -10797,8 +10824,9 @@ export function typedAssertHolding(model: Model, f: ElementRecord): ElementRecor
 /**
  * Is `f` itself a feature an assert typed by an equation's definition may
  * define ({@link typedAssertHolding})? The numeric surface reads such a
- * feature as no design freedom: the model states what it is, and nothing here
- * reads the equation that does.
+ * feature as no design freedom: the model states what it is, and the check and
+ * the numeric surface read the equation that does where {@link
+ * typedAssertReads}; only the proof lane leaves it unread, until TY2 files it.
  */
 export function typedAssertNames(model: Model, f: ElementRecord): boolean {
   return assertHeldIndex(model).typedBy.has(f.id);
@@ -10842,6 +10870,465 @@ export function typedAssertsHoldOnly(model: Model): boolean {
 /** Does any assert typed by an equation's definition name a feature it may define ({@link typedAssertNames})? */
 export function typedAssertsName(model: Model): boolean {
   return assertHeldIndex(model).typedBy.size > 0;
+}
+
+/** The label, kind and type name a typed assert's or plain constraint's body sentence names. */
+interface TypedBodySubject {
+  /** `` `e` ``, `This constraint` or `This assert`. */
+  label: string;
+  /** `typed by the constraint definition` or `typed through`. */
+  kind: string;
+  typeName: string;
+}
+
+/** {@link TypedBodySubject} for `el`, or `undefined` where no constraint definition supplies a body it lacks. */
+function typedBodySubject(model: Model, el: ElementRecord): TypedBodySubject | undefined {
+  const role = el.attrs.requirementRole;
+  if (el.eClass !== 'ConstraintUsage' || (role !== 'assert' && role !== undefined) || el.attrs.isLibrary === true) return undefined;
+  if (typeof el.attrs.expression === 'string' && el.attrs.expression.trim() !== '') return undefined;
+  const bodied = (t: ElementRecord): boolean =>
+    t.attrs.isLibrary !== true && typeof t.attrs.expression === 'string' && t.attrs.expression.trim() !== '';
+  const types = generalizationsOf(model, el.id).filter(bodied);
+  const def = types.find((t) => t.eClass === 'ConstraintDefinition') ?? (role === undefined ? undefined : types[0]);
+  if (def === undefined) return undefined;
+  const name = el.declaredName ?? el.declaredShortName;
+  const typeName = def.declaredName ?? def.declaredShortName ?? 'an unnamed definition';
+  const kind = def.eClass === 'ConstraintDefinition' ? 'typed by the constraint definition' : 'typed through';
+  return { label: name !== undefined ? `\`${name}\`` : role === undefined ? 'This constraint' : 'This assert', kind, typeName };
+}
+
+/** The sentence a genuine unread-body refusal files: this tool reads no body of it. */
+function unreadTypedBodyText(subject: TypedBodySubject): string {
+  return `${subject.label} is ${subject.kind} \`${subject.typeName}\`, whose body this tool does not read with the parameters' values`;
+}
+
+/**
+ * The sentence an assert or a plain constraint typed by a constraint definition files as its own row: where
+ * {@link expandTypedConstraint} reads the definition's body with the values its parameters are given (TY1), the body is
+ * read — the check and the numeric surface judge it, and only the proof lane files no relation of it (TY2), so the
+ * sentence says that lane's limit; a genuine refusal keeps the sentence that this tool reads no body of it, byte for
+ * byte. `undefined` for any other element: one with a body of its own is read as written, and one whose types state no
+ * body asserts nothing this tool sees.
+ */
+export function unreadTypedBodySentence(model: Model, el: ElementRecord): string | undefined {
+  const subject = typedBodySubject(model, el);
+  if (subject === undefined) return undefined;
+  const rel = typedConstraintRelation(model, el);
+  if (rel !== undefined && !('refused' in rel)) {
+    return `${subject.label} is ${subject.kind} \`${subject.typeName}\`, whose body the check and the numeric surface read with the parameters' values; the proof lane files no relation of it`;
+  }
+  return unreadTypedBodyText(subject);
+}
+
+/** A typed constraint usage's body, with the values its parameters are given substituted by position (TY1). */
+export interface TypedConstraintExpansion {
+  /** The definition's body, every parameter ref replaced by its value (a value that is no ref only where the ref stands alone). */
+  node: ExprNode;
+  /** The `[unit]` literals the body and the values carry, lowered ({@link ./unit-literals}). */
+  literals: MarkerDimensions;
+  /** The definition's parameter names, in declaration order, each with the value node given it here. */
+  params: ReadonlyMap<string, ExprNode>;
+}
+
+/**
+ * A typed constraint's parameter values in the context it is written in: the body with them substituted, or why not.
+ * `clause` names the usage and the definition with its parameters in position order, for a decided message:
+ * ``nl : Newton, with f = force, m = mass, a = accel``.
+ */
+export type TypedConstraintRelation =
+  | { text: string; params: ReadonlyMap<string, ExprNode>; clause: string }
+  | { refused: string };
+
+/** The directed own features of `el` — a definition's or a usage's parameters — in declaration order. */
+function directedOwn(model: Model, el: ElementRecord): ElementRecord[] {
+  return ownFeatures(model, el.id).filter((f) => {
+    const d = f.attrs.direction;
+    return d === 'in' || d === 'out' || d === 'inout';
+  });
+}
+
+/**
+ * The nearest general of `el` that STATES a constraint body this tool may read with the usage's values: the nearest
+ * `ConstraintDefinition` with a non-empty, non-library `attrs.expression`. A usage it specialises is no body of its
+ * own (`constraint c2 :> c1` over c1's body is c1's row, already judged), so only a definition supplies one; an
+ * asserted usage still reaches the definition through such a usage (`assert constraint ea :> e0` over `e0 : Eq`), and
+ * takes e0's parameter values ({@link typedValueSource}).
+ */
+function typedConstraintBodyOf(model: Model, el: ElementRecord): ElementRecord | undefined {
+  for (const t of generalizationsOf(model, el.id)) {
+    if (t.attrs.isLibrary === true || t.eClass !== 'ConstraintDefinition') continue;
+    const text = t.attrs.expression;
+    if (typeof text === 'string' && text.trim() !== '') return t;
+  }
+  return undefined;
+}
+
+/** The element whose owned parameters give the values: `el` itself, or the nearest usage it specialises that owns one. */
+function typedValueSource(model: Model, el: ElementRecord): ElementRecord {
+  if (directedOwn(model, el).length > 0) return el;
+  for (const t of generalizationsOf(model, el.id)) {
+    if (t.attrs.isLibrary === true || !isUsage(t.eClass)) continue;
+    if (directedOwn(model, t).length > 0) return t;
+  }
+  return el;
+}
+
+/** The user bindings, by each end feature: `bind nl.f = force` files both `nl.f → force` and `force → nl.f`. */
+interface TypedBindingIndex {
+  rev: number;
+  byEnd: Map<ElementId, Array<{ binding: ElementRecord; other: ElementId }>>;
+}
+
+const TYPED_BINDINGS = new WeakMap<Model, TypedBindingIndex>();
+
+function typedBindingIndex(model: Model): TypedBindingIndex {
+  const hit = TYPED_BINDINGS.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  const byEnd = new Map<ElementId, Array<{ binding: ElementRecord; other: ElementId }>>();
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true || !isBindingConnector(el)) continue;
+    const [s, t] = [el.source?.[0], el.target?.[0]];
+    if (s === undefined || t === undefined || s === t) continue;
+    for (const [end, other] of [[s, t], [t, s]] as const) {
+      const list = byEnd.get(end);
+      if (list) list.push({ binding: el, other });
+      else byEnd.set(end, [{ binding: el, other }]);
+    }
+  }
+  const fresh = { rev: model.rev, byEnd };
+  TYPED_BINDINGS.set(model, fresh);
+  return fresh;
+}
+
+/** The value feature a binding gives `p` (the parameter or a feature it redefines), or `undefined`. */
+function typedBindingPartnerOf(model: Model, p: ElementRecord): { binding: ElementRecord; other: ElementRecord } | undefined {
+  const { byEnd } = typedBindingIndex(model);
+  const ends = [p, ...redefinedClosure(model, p)];
+  for (const end of ends) {
+    for (const { binding, other } of byEnd.get(end.id) ?? []) {
+      if (ends.some((g) => g.id === other)) continue;
+      const f = model.get(other);
+      if (f !== undefined) return { binding, other: f };
+    }
+  }
+  return undefined;
+}
+
+/** The path from below `ancestorId` to `id`, dotted — or `undefined` where `id` is not below it. */
+function pathBelow(model: Model, ancestorId: ElementId, id: ElementId): string | undefined {
+  const a = model.qualifiedName(ancestorId);
+  const q = model.qualifiedName(id);
+  if (a === undefined || q === undefined || !q.startsWith(`${a}::`)) return undefined;
+  return q.slice(a.length + 2).split('::').map(keySegment).join('.');
+}
+
+/**
+ * The value `p` is given, as the text the usage's scope spells the value feature in (or the value as written, its unit
+ * beside it — {@link writtenValue}: `in x = 1000.0 [g]` states a mass, and the substituted relation must carry the
+ * dimension or it reads a different claim).
+ */
+function typedValueTextOf(model: Model, usage: ElementRecord, p: ElementRecord, deep: boolean): string | undefined {
+  const written = p.attrs.value;
+  if (written !== undefined && written !== null) {
+    // A `default` on a definition's parameter is no value an assertion gives way to.
+    if (p.attrs.defaultValue === true) return undefined;
+    // A value the surfaces read nowhere — a `:>>` redefinition the definition's own value contradicts (XS2's 100
+    // against `Lim`'s 1), or one a binding joins to a differing value — is unbound, and the refusal keeps the S4
+    // sentence byte for byte (the corpus reads XS2 nowhere, and a reading here would move its verdict).
+    if (deep && sharedDefinitions(model).contradiction(p) !== undefined) return undefined;
+    return writtenValue(p);
+  }
+  const bound = typedBindingPartnerOf(model, p);
+  if (bound === undefined) return undefined;
+  const { other } = bound;
+  if (deep) {
+    const definitions = sharedDefinitions(model);
+    if (definitions.contradiction(other) !== undefined || statedAgainstBoundSomewhere(model, other)) return undefined;
+  }
+  const owner = usage.ownerId;
+  const spelled = owner != null ? pathBelow(model, owner, other.id) : undefined;
+  if (spelled !== undefined) return spelled;
+  // The end is not below the usage's owner, so no path from there names it. Spelling it as a bare effective name
+  // would let a same-named feature in the usage's scope win (a false verdict for a model that binds the outer one),
+  // so carry the end's qualified spelling instead: parseRelationBody resolves it as the `in f = B::force` form does.
+  return effectiveQualifiedName(model, other.id);
+}
+
+/** Does `p`, a usage's parameter, redefine `q`, a definition's parameter at the same position, or carry its name? */
+function typedParameterPairs(model: Model, p: ElementRecord, q: ElementRecord): boolean {
+  if (redefinedClosure(model, p).some((g) => g.id === q.id)) return true;
+  const [a, b] = [effectiveNameOf(model, p), effectiveNameOf(model, q)];
+  return a !== undefined && a === b;
+}
+
+/** `1st`, `2nd`, `3rd`, `4th`, … */
+function ordinal(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  const last = n % 10;
+  return `${n}${last === 1 ? 'st' : last === 2 ? 'nd' : last === 3 ? 'rd' : 'th'}`;
+}
+
+/**
+ * The sentence a typed constraint files where a usage's parameter and its position name different parameters of the
+ * definition: KerML binds the i-th owned parameter to the definition's i-th (kerml.txt:10662-10670), and this tool
+ * refuses rather than read a relation by a name alone that the positional rule points elsewhere (decision 22).
+ */
+function typedPositionRefusal(model: Model, usage: ElementRecord, p: ElementRecord, position: number, def: ElementRecord, q: ElementRecord): string {
+  const label = usage.declaredName ?? usage.declaredShortName ?? 'this constraint';
+  const name = def.declaredName ?? def.declaredShortName ?? 'the definition';
+  return `\`${label}\`'s parameter \`${effectiveNameOf(model, p) ?? '?'}\` is its ${ordinal(position)}, and KerML binds it to ${name}'s ${ordinal(position)} parameter \`${effectiveNameOf(model, q) ?? '?'}\` (a parameter redefines the one at its position): the name and the position disagree, so \`${label}\` is not read`;
+}
+
+/** A relation node's text, every `[unit]` marker spelled back as the literal it lowered from. */
+export function typedRelationText(node: ExprNode, literals: MarkerDimensions = NO_MARKERS): string {
+  const atom = (n: ExprNode): string => {
+    const t = typedRelationText(n, literals);
+    return n.kind === 'ref' || n.kind === 'num' || n.kind === 'str' || n.kind === 'bool' || n.kind === 'null' ? t : `(${t})`;
+  };
+  switch (node.kind) {
+    case 'ref': {
+      if (node.path.length === 1) {
+        const m = literals.get(node.path[0]!);
+        if (m !== undefined) return `${m.magnitude} [${m.unit}]`;
+      }
+      const path = node.path.map(keySegment).join('.');
+      return node.qualifier !== undefined ? `${node.qualifier}::${path}` : path;
+    }
+    case 'num':
+      return node.text ?? String(node.value);
+    case 'bool':
+      return String(node.value);
+    case 'null':
+      return 'null';
+    case 'str':
+      return JSON.stringify(node.value);
+    case 'unary':
+      return `${node.op === 'not' ? 'not ' : node.op}${atom(node.operand)}`;
+    case 'binary':
+      return `${atom(node.left)} ${node.op} ${atom(node.right)}`;
+    case 'if':
+      return `if ${atom(node.cond)} then ${atom(node.then)} else ${atom(node.else)}`;
+    case 'call':
+      return `${node.name}(${node.args.map(atom).join(', ')})`;
+    case 'arrow':
+      return `${atom(node.left)}${node.text}`;
+  }
+}
+
+/** Every reference path the body reads, so the non-parameter names can be checked against both scopes. */
+function typedBodyHeads(node: ExprNode, out: Set<string>): void {
+  switch (node.kind) {
+    case 'ref':
+      out.add(node.path[0]!);
+      return;
+    case 'unary':
+      typedBodyHeads(node.operand, out);
+      return;
+    case 'binary':
+      typedBodyHeads(node.left, out);
+      typedBodyHeads(node.right, out);
+      return;
+    case 'if':
+      typedBodyHeads(node.cond, out);
+      typedBodyHeads(node.then, out);
+      typedBodyHeads(node.else, out);
+      return;
+    case 'call':
+      for (const a of node.args) typedBodyHeads(a, out);
+      return;
+    default:
+      return;
+  }
+}
+
+interface TypedExpansionMemo {
+  rev: number;
+  byUsage: Map<string, TypedConstraintExpansion | { refused: string } | null>;
+}
+
+const TYPED_EXPANSION = new WeakMap<Model, TypedExpansionMemo>();
+
+function typedExpand(model: Model, usage: ElementRecord, deep = true): TypedConstraintExpansion | { refused: string } | null {
+  let memo = TYPED_EXPANSION.get(model);
+  if (memo === undefined || memo.rev !== model.rev) {
+    memo = { rev: model.rev, byUsage: new Map() };
+    TYPED_EXPANSION.set(model, memo);
+  }
+  // The shallow form ({@link equationsOf}'s) skips the checks that read the model's shared definitions, which are
+  // being built when the equations are; the deep form (the check and numeric surfaces') asks them.
+  const key = deep ? usage.id : `${usage.id}#shallow`;
+  const hit = memo.byUsage.get(key);
+  if (hit !== undefined) return hit;
+  const answer = typedExpandUncached(model, usage, deep);
+  memo.byUsage.set(key, answer);
+  return answer;
+}
+
+/**
+ * The relation a typed constraint usage states, its definition's body with the values its parameters are given
+ * substituted BY POSITION (KerML 7.3.4.5 / SysML 7.20.2; decision 22): `constraint nl : Newton { in f = force; … }`,
+ * `bind nl.f = force`, or an asserted usage specialising one (`assert constraint ea :> e0` takes e0's values).
+ *
+ * A usage and a definition pair their OWN directed features index by index; each usage parameter must redefine the
+ * definition's parameter at its position or carry its name (INV-K). The value is the parameter's own `attrs.value`
+ * text (a FeatureValue; kerml.txt:14129), else the feature a `bind` joins it to, spelled in the usage's scope. A body
+ * name that is no parameter is read in the definition's scope and must name the same feature from the usage's scope,
+ * so a name only the definition sees refuses (planted bugs 17/38/39).
+ *
+ * Every refusal but the name/position disagreement keeps {@link unreadTypedBodySentence} byte for byte. `undefined`
+ * where the usage states a body of its own or no constraint definition supplies one; callers then read nothing.
+ */
+export function expandTypedConstraint(model: Model, usage: ElementRecord): TypedConstraintExpansion | { refused: string } | null {
+  return typedExpand(model, usage);
+}
+
+/**
+ * Is `f` a feature an asserted typed constraint usage this tool READS defines ({@link typedAssertHolding} whose body
+ * {@link typedConstraintRelation} gives a relation)? Such a feature is no longer unreadable to any surface: the
+ * equation the assert states is read, and gives it the value it has.
+ */
+export function typedAssertReads(model: Model, f: ElementRecord): boolean {
+  const a = typedAssertHolding(model, f);
+  if (a === undefined) return false;
+  const rel = typedConstraintRelation(model, a);
+  return rel !== undefined && !('refused' in rel);
+}
+
+/** {@link expandTypedConstraint}'s relation as the text the check and the numeric surface judge (TY1's half). */
+export function typedConstraintRelation(model: Model, usage: ElementRecord): TypedConstraintRelation | undefined {
+  const expanded = typedExpand(model, usage);
+  if (expanded === null) return undefined;
+  if ('refused' in expanded) return { refused: expanded.refused };
+  const body = typedConstraintBodyOf(model, usage);
+  const label = usage.declaredName ?? usage.declaredShortName;
+  const typeName = body?.declaredName ?? body?.declaredShortName ?? 'the definition';
+  const withs = [...expanded.params].map(([name, node]) => `${name} = ${typedRelationText(node, expanded.literals)}`);
+  const clause = `${label !== undefined ? `${label} : ` : ''}${typeName}${withs.length > 0 ? `, with ${withs.join(', ')}` : ''}`;
+  return { text: typedRelationText(expanded.node, expanded.literals), params: expanded.params, clause };
+}
+
+function typedExpandUncached(model: Model, usage: ElementRecord, deep: boolean): TypedConstraintExpansion | { refused: string } | null {
+  const role = usage.attrs.requirementRole;
+  if (usage.eClass !== 'ConstraintUsage' || usage.attrs.isLibrary === true) return null;
+  // A typed `require` / `assume` clause files no row yet.
+  if (role !== 'assert' && role !== undefined) return null;
+  const own = usage.attrs.expression;
+  if (typeof own === 'string' && own.trim() !== '') return null;
+  const body = typedConstraintBodyOf(model, usage);
+  if (body === undefined) return null;
+  // A genuine refusal, so the sentence is the unread one; asking {@link unreadTypedBodySentence} here would ask this
+  // expansion whether it reads the body it is refusing.
+  const subject = typedBodySubject(model, usage);
+  const refused = (): { refused: string } => ({
+    refused:
+      subject !== undefined
+        ? unreadTypedBodyText(subject)
+        : `\`${usage.declaredName ?? 'this constraint'}\` is typed by a constraint definition, whose body this tool does not read with the parameters' values`,
+  });
+
+  const bodyText = body.attrs.expression;
+  const bodyBody = typeof bodyText === 'string' ? parseRelationBody(bodyText) : undefined;
+  if (bodyBody === undefined || (bodyBody.hadUnit && !bodyBody.resolved)) return refused();
+
+  const defParams = directedOwn(model, body);
+  const source = typedValueSource(model, usage);
+  const usageParams = directedOwn(model, source);
+  if (usageParams.length > defParams.length) return refused();
+  for (let i = 0; i < usageParams.length; i++) {
+    if (!typedParameterPairs(model, usageParams[i]!, defParams[i]!)) {
+      return { refused: typedPositionRefusal(model, usage, usageParams[i]!, i + 1, body, defParams[i]!) };
+    }
+  }
+
+  const literals = new Map(bodyBody.literals);
+  const params = new Map<string, ExprNode>();
+  for (let i = 0; i < defParams.length; i++) {
+    const q = defParams[i]!;
+    const name = effectiveNameOf(model, q);
+    if (name === undefined) return refused();
+    const p = usageParams[i];
+    // A definition's parameter with no value and no binding is the unbound case: a body name the surfaces read nowhere.
+    const text = p !== undefined ? typedValueTextOf(model, usage, p, deep) : undefined;
+    if (text === undefined) return refused();
+    const value = parseRelationBody(text);
+    if (value === undefined || (value.hadUnit && !value.resolved)) return refused();
+    for (const [k, v] of value.literals) literals.set(k, v);
+    params.set(name, value.node);
+  }
+
+  // A name the body reads that is no parameter is read in the DEFINITION's scope, never at the usage: it must name
+  // the same feature from both (R1 must_fix 4's conservative alternative).
+  const heads = new Set<string>();
+  typedBodyHeads(bodyBody.node, heads);
+  for (const head of heads) {
+    if (params.has(head) || literals.has(head)) continue;
+    const inDef = resolveFullName(model, head, body.ownerId ?? body.id);
+    const inUsage = resolveFullName(model, head, usage.ownerId ?? usage.id);
+    if (inDef === undefined || inUsage === undefined || inDef.id !== inUsage.id) return refused();
+  }
+
+  const node = substituteTypedParams(model, bodyBody.node, params, (message) => message);
+  if (typeof node === 'string') return { refused: node };
+  return { node, literals, params };
+}
+
+/**
+ * {@link expandTypedConstraint}'s substitution over the body AST: a bare parameter ref becomes its value node; one used
+ * as a path head becomes the value's path plus the rest (the value must be a ref); any other use of a parameter whose
+ * value is no ref refuses, in `refuse`'s sentence.
+ */
+function substituteTypedParams(
+  model: Model,
+  node: ExprNode,
+  params: ReadonlyMap<string, ExprNode>,
+  refuse: (message: string) => string,
+): ExprNode | string {
+  const walk = (n: ExprNode): ExprNode | string => {
+    switch (n.kind) {
+      case 'ref': {
+        const head = n.path[0]!;
+        const value = params.get(head);
+        if (value === undefined) return n;
+        if (n.path.length === 1) return value;
+        if (value.kind !== 'ref') {
+          return refuse(`\`${head}\` is read as a path here, and the value it is given is no name: this tool does not read that`);
+        }
+        return { kind: 'ref', path: [...value.path, ...n.path.slice(1)], ...(value.qualifier !== undefined ? { qualifier: value.qualifier } : {}) };
+      }
+      case 'unary': {
+        const operand = walk(n.operand);
+        return typeof operand === 'string' ? operand : { ...n, operand };
+      }
+      case 'binary': {
+        const left = walk(n.left);
+        if (typeof left === 'string') return left;
+        const right = walk(n.right);
+        return typeof right === 'string' ? right : { ...n, left, right };
+      }
+      case 'if': {
+        const cond = walk(n.cond);
+        if (typeof cond === 'string') return cond;
+        const thenN = walk(n.then);
+        if (typeof thenN === 'string') return thenN;
+        const elseN = walk(n.else);
+        return typeof elseN === 'string' ? elseN : { ...n, cond, then: thenN, else: elseN };
+      }
+      case 'call': {
+        const args: ExprNode[] = [];
+        for (const a of n.args) {
+          const w = walk(a);
+          if (typeof w === 'string') return w;
+          args.push(w);
+        }
+        return { ...n, args };
+      }
+      default:
+        return n;
+    }
+  };
+  void model;
+  return walk(node);
 }
 
 /**

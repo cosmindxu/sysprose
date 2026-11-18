@@ -177,13 +177,13 @@ describe('semantics — the one walk, and the bare-name rule', () => {
     }`).model;
     expect(scopeFor(w, named(w, 'LW::U::B').id)('x')).toBeUndefined();
     expect(scopeFor(w, named(w, 'LW::H::a').id)('y')).toBeUndefined();
-    // An assert typed by a constraint definition names what it gives its parameters (`in a = L`): L, a default
-    // it sets in every Q, is not read for Q's p.
+    // An assert typed by a constraint definition names what it gives its parameters (`in a = L`): TY1A reads the
+    // substituted equation at the feature level, so L is 50 and Q's p reads it through the scope too.
     const t = parseModel(`package LT {
       constraint def Eq { in a; a == 50.0 }
       part def Q { attribute L default = 1.0; assert constraint e : Eq { in a = L; } part p { attribute y = L; } }
     }`).model;
-    expect(scopeFor(t, named(t, 'LT::Q::p').id)('y')).toBeUndefined();
+    expect(scopeFor(t, named(t, 'LT::Q::p').id)('y')).toBe(50);
   });
 
   it('offers a nested bare name only when exactly one feature below has it (xb1)', () => {
@@ -5801,8 +5801,9 @@ describe('checkConstraints — a default stands against an asserted equation (de
   });
 
   it('works the index out once per revision, and again after an edit (i)', async () => {
-    // The one assert that still holds a default is typed by an equation's definition, which no surface reads
-    // (an untyped one holds none since decision 14 was amended): L is read nowhere while Eq holds an equation.
+    // The one assert that still holds a default is typed by an equation's definition (an untyped one holds none
+    // since decision 14 was amended): TY1A reads the substituted equation, so L is 5 while Eq holds an equation,
+    // and the default stands again once Eq states an inequality (which defines nothing, U5).
     const { model: m } = await loadModelText(`package HT {
       constraint def Eq { in x : ScalarValues::Real; x == 5.0 }
       attribute L : ScalarValues::Real default = 2.0;
@@ -5811,7 +5812,7 @@ describe('checkConstraints — a default stands against an asserted equation (de
     }`);
     const L = named(m!, 'HT::L');
     expect(defaultGivesWay(m!, L)).toBe(true);
-    expect(checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'HT::c')!.result).toBe('unknown');
+    expect(checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'HT::c')!.result).toBe('violated');
     m!.setAttrs(named(m!, 'HT::Eq').id, { expression: 'x >= 5.0' });
     expect(defaultGivesWay(m!, L)).toBe(false);
     expect(checkConstraints(m!).find((k) => m!.qualifiedName(k.id) === 'HT::c')!.result).toBe('satisfied');
@@ -6270,9 +6271,9 @@ describe('checkConstraints — an enclosing assert is checked against a default 
     );
   });
 
-  // CD1: `assert constraint e : Eq { in a = L; }` over Eq's `a == 50.0` makes L 50 (decision 14), but no surface reads
-  // an assert typed by a constraint definition: L's default 1 was read, and `L == 50.0` refuted on all four.
-  it('reads no default an assert typed by an equation’s definition names, and says which assert (CD1)', async () => {
+  // CD1: `assert constraint e : Eq { in a = L; }` over Eq's `a == 50.0` makes L 50 (decision 14): TY1A reads the
+  // given-way default and the substituted equation at the feature level, so L is 50 and its readers decide.
+  it('reads the default an assert typed by an equation’s definition names (CD1)', async () => {
     const { model: m } = await loadModelText(`package CD1 {
       constraint def Eq { in a : ScalarValues::Real; a == 50.0 }
       part def Q {
@@ -6287,25 +6288,22 @@ describe('checkConstraints — an enclosing assert is checked against a default 
     }`);
     const checks = checkConstraints(m!);
     const c = (rel: string) => checks.find((x) => m!.qualifiedName(x.id) === rel)!;
-    expect([c('CD1::Q::cl').result, c('CD1::Q::cl').message]).toEqual([
-      'unknown',
-      'Could not evaluate: L is not read: its `default = 1.0` is named by `assert constraint e : Eq` in CD1::Q, whose equation this ' +
-        'tool does not read',
-    ]);
-    expect(c('CD1::topL').result).toBe('unknown');
-    // No design freedom to the numeric surface either: `L == 50.0` is not solved as a design equation.
+    expect([c('CD1::Q::cl').result, c('CD1::topL').result]).toEqual(['satisfied', 'satisfied']);
+    // The numeric surface reads it too, as a definition and not as a design freedom.
     const cl = checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === 'CD1::Q::cl')!;
-    expect([cl.result, cl.imposed]).toEqual(['unknown', undefined]);
-    // An inequality defines nothing (U5): R's M keeps its default.
-    expect(c('CD1::R::cm').result).toBe('satisfied');
+    expect([cl.result, cl.imposed]).toEqual(['satisfied', undefined]);
+    // An inequality typed body is read the same way (R's Le over M's default of 1: `1.0 <= 0.5` violated), and cm
+    // decides at that default.
+    expect([c('CD1::R::cm').result, c('CD1::R::f').result]).toEqual(['satisfied', 'violated']);
   });
 
   // CD13: a design relation that disagrees with the typed equation (`p.load == 5.0`, where L and so load are 50)
-  // was solved as a design equation over the given-way L, and c and c2 decided at load 5: the Solve view's false
-  // violation of c2 and false hold of c. And a typed assert away from the default it names — in a usage (cd9), with
-  // a dotted parameter (cd6), in a package (cd5), with a bound parameter (cd21), over a valueless feature (cd15) —
-  // read the default, or left the feature a design freedom, on every surface.
-  it('reads nothing an assert typed by an equation’s definition names, wherever it is written (CD13, cd5–cd15)', async () => {
+  // decides as written once the substituted equation is read: c F and c2 T at p.m2 = −40, cl F. A typed assert away
+  // from the default it names — in a usage (cd9), with a dotted parameter (cd6), in a package (cd5), with a bound
+  // parameter (cd21), over a valueless feature (cd15) — reads its substituted equation at the feature level too; a
+  // body that is no equation (cd23's conjunction) still defines nothing, and a reading the assert is not written for
+  // (cd4's Q beside q's assert) still abstains, in the sentence {@link typedAssertText} gives it.
+  it('reads what an assert typed by an equation’s definition names, wherever it is written (CD13, cd5–cd15)', async () => {
     const Eq = 'constraint def Eq { in a : ScalarValues::Real; a == 50.0 }';
     const load = async (text: string) => (await loadModelText(text)).model!;
     const rows = (m: Model, which: readonly string[]) => {
@@ -6334,10 +6332,10 @@ describe('checkConstraints — an enclosing assert is checked against a default 
       constraint top { q.p.m2 >= 0.0 }
     }`);
     expect(rows(cd13, ['CD13::Q::c', 'CD13::Q::c2', 'CD13::Q::cl', 'CD13::top'])).toEqual([
-      ['CD13::Q::c', 'unknown', 'unknown', false],
-      ['CD13::Q::c2', 'unknown', 'unknown', false],
-      ['CD13::Q::cl', 'unknown', 'unknown', false],
-      ['CD13::top', 'unknown', 'unknown', false],
+      ['CD13::Q::c', 'violated', 'violated', false],
+      ['CD13::Q::c2', 'satisfied', 'satisfied', false],
+      ['CD13::Q::cl', 'violated', 'violated', false],
+      ['CD13::top', 'violated', 'violated', false],
     ]);
     const cd9 = await load(`package CD9 {
       ${Eq}
@@ -6345,7 +6343,7 @@ describe('checkConstraints — an enclosing assert is checked against a default 
       part q : Q { assert constraint e : Eq { in a = L; } }
       constraint top { q.L == 50.0 }
     }`);
-    expect(rows(cd9, ['CD9::top'])).toEqual([['CD9::top', 'unknown', 'unknown', false]]);
+    expect(rows(cd9, ['CD9::top'])).toEqual([['CD9::top', 'satisfied', 'satisfied', false]]);
     const cd6 = await load(`package CD6 {
       ${Eq}
       part def P { attribute load : ScalarValues::Real default = 1.0; }
@@ -6353,7 +6351,7 @@ describe('checkConstraints — an enclosing assert is checked against a default 
       part q : Q;
       constraint top { q.p.load <= 10.0 }
     }`);
-    expect(rows(cd6, ['CD6::top'])).toEqual([['CD6::top', 'unknown', 'unknown', false]]);
+    expect(rows(cd6, ['CD6::top'])).toEqual([['CD6::top', 'violated', 'violated', false]]);
     const cd5 = await load(`package CD5 {
       ${Eq}
       part def Q { attribute L : ScalarValues::Real default = 1.0; }
@@ -6361,7 +6359,7 @@ describe('checkConstraints — an enclosing assert is checked against a default 
       assert constraint e : Eq { in a = q.L; }
       constraint top { q.L == 50.0 }
     }`);
-    expect(rows(cd5, ['CD5::top'])).toEqual([['CD5::top', 'unknown', 'unknown', false]]);
+    expect(rows(cd5, ['CD5::top'])).toEqual([['CD5::top', 'satisfied', 'satisfied', false]]);
     // A parameter bound rather than valued holds the feature it is bound to (cd21).
     const cd21 = await load(`package CD21 {
       ${Eq}
@@ -6369,14 +6367,16 @@ describe('checkConstraints — an enclosing assert is checked against a default 
       part q : Q;
       constraint top { q.L == 50.0 }
     }`);
-    expect(rows(cd21, ['CD21::top'])).toEqual([['CD21::top', 'unknown', 'unknown', false]]);
+    expect(rows(cd21, ['CD21::top'])).toEqual([['CD21::top', 'satisfied', 'satisfied', false]]);
     // A body that reads a parameter's feature (`x.load` over `in x = p`, or `bind x = p`) may define p's load (TP1,
     // TP5); so may a parameter value a constraint usage the assert specialises gives (TP2's `ea :> e0`). Each read
     // P's default 1 on all four surfaces, where p's load is 50 (the branch review of per-instance-rest).
-    for (const [name, eq, q] of [
-      ['TP1', 'constraint def Eq { in x : P; x.load == 50.0 }', 'assert constraint e : Eq { in x = p; }'],
-      ['TP5', 'constraint def Eq { in x : P; x.load == 50.0 }', 'assert constraint e : Eq { bind x = p; }'],
-      ['TP2', 'constraint def Eq { in x : ScalarValues::Real; x == 50.0 }', 'constraint e0 : Eq { in x = p.load; } assert constraint ea :> e0;'],
+    // TP5's `bind x = p` equates two parts, which this tool refuses (a relation carrying a structured value
+    // through a part-part binding is not read), so it stays a sound `?`; the other two decide.
+    for (const [name, eq, q, letters] of [
+      ['TP1', 'constraint def Eq { in x : P; x.load == 50.0 }', 'assert constraint e : Eq { in x = p; }', ['violated', 'violated']],
+      ['TP5', 'constraint def Eq { in x : P; x.load == 50.0 }', 'assert constraint e : Eq { bind x = p; }', ['unknown', 'unknown']],
+      ['TP2', 'constraint def Eq { in x : ScalarValues::Real; x == 50.0 }', 'constraint e0 : Eq { in x = p.load; } assert constraint ea :> e0;', ['violated', 'violated']],
     ] as const) {
       const tp = await load(`package ${name} {
         part def P { attribute load : ScalarValues::Real default = 1.0; }
@@ -6386,11 +6386,12 @@ describe('checkConstraints — an enclosing assert is checked against a default 
         constraint top { q.p.load <= 10.0 }
       }`);
       expect(rows(tp, [`${name}::Q::c`, `${name}::top`]), name).toEqual([
-        [`${name}::Q::c`, 'unknown', 'unknown', false],
-        [`${name}::top`, 'unknown', 'unknown', false],
+        [`${name}::Q::c`, letters[0], letters[0], false],
+        [`${name}::top`, letters[1], letters[1], false],
       ]);
     }
-    // An equation in a conjunction may define L too; an inequality alone defines nothing (U5), and M's default stands.
+    // A body that is no equation is no definition of the feature: the conjunction's L stays unread (it gives no value
+    // to read), while an inequality over M, whose value stands, decides.
     const cd23 = await load(`package CD23 {
       constraint def Eq { in a : ScalarValues::Real; a == 50.0 and a >= 0.0 }
       constraint def Le { in a : ScalarValues::Real; a >= 0.0 and a <= 100.0 }
@@ -6412,23 +6413,69 @@ describe('checkConstraints — an enclosing assert is checked against a default 
       part def Q { attribute L : ScalarValues::Real; assert constraint e : Eq { in a = L; } constraint cl { L == 5.0 } constraint c { L >= 10.0 } }
     }`);
     expect(rows(cd15, ['CD15::Q::cl', 'CD15::Q::c'])).toEqual([
-      ['CD15::Q::cl', 'unknown', 'unknown', false],
-      ['CD15::Q::c', 'unknown', 'unknown', false],
+      ['CD15::Q::cl', 'violated', 'violated', false],
+      ['CD15::Q::c', 'satisfied', 'satisfied', false],
     ]);
-    expect(checkConstraints(cd15).find((x) => cd15.qualifiedName(x.id) === 'CD15::Q::c')!.message).toBe(
-      'Could not evaluate: L has no value this tool reads: it is named by `assert constraint e : Eq` in CD15::Q, whose equation ' +
-        'this tool does not read',
+    // A reading the assert is not written for still abstains, and says where the equation is read (cd4: q's assert
+    // over Q's default, read in Q).
+    const cd4 = await load(`package CD4 {
+      ${Eq}
+      part def Q { attribute L : ScalarValues::Real default = 1.0; constraint cl { L == 50.0 } }
+      part q : Q { assert constraint e : Eq { in a = L; } }
+      constraint top { q.L == 50.0 }
+    }`);
+    expect(checkConstraints(cd4).find((x) => cd4.qualifiedName(x.id) === 'CD4::Q::cl')!.message).toBe(
+      'Could not evaluate: L is not read: its `default = 1.0` is named by `assert constraint e : Eq` in CD4::q, whose equation ' +
+        'this tool reads in the instance its parameters are valued in, and this reading is not that instance',
     );
   });
 
+  // A typed assert written in a DEFINITION is read in each instance of it, so `not that instance` would be false: the
+  // reading that is not carried is the inherited feature's, and the sentence names it (MIN2, the reviewer's probe).
+  it('names the inherited feature a definition-owned typed assert does not carry to (CD8/MIN2)', async () => {
+    const m = (await loadModelText(`package MIN2 {
+      constraint def Eq { in a : Real; a == 50.0 }
+      part def Q0 { attribute L : Real default = 1.0; }
+      part def Q :> Q0 { assert constraint e : Eq { in a = L; } }
+      part q : Q;
+      constraint top { q.L == 50.0 }
+    }`)).model!;
+    const top = checkConstraints(m).find((x) => m.qualifiedName(x.id) === 'MIN2::top')!;
+    expect(top.result).toBe('unknown');
+    expect(top.message).toContain('reads in each instance of MIN2::Q');
+    expect(top.message).toContain('does not carry it to `L`');
+    expect(top.message).not.toContain('not that instance');
+    const inst = checkConstraints(m).find((x) => m.qualifiedName(x.id) === 'MIN2::Q::e')!.instances!.find(
+      (i) => (i.instance ?? m.qualifiedName(i.contextId)) === 'MIN2::q',
+    )!;
+    expect(inst.result).toBe('unknown');
+    expect(inst.message).toContain('reads in each instance of MIN2::Q');
+    expect(inst.message).not.toContain('not that instance');
+  });
+
+  // A typed usage's `bind` value whose far end is not below the usage's owner is spelled qualified, never as its bare
+  // effective name: a same-named feature in the usage's scope must not win and turn a satisfied row into a false F.
+  it('reads a typed usage’s bound value through its qualified name, not a shadowing feature', async () => {
+    const m = (await loadModelText(`package TB {
+      attribute force : Real = 2500.0;
+      constraint def Newton { in f : Real; f == 2500.0 }
+      part car { attribute force : Real = 1000.0; constraint nl : Newton; bind nl.f = TB::force; }
+    }`)).model!;
+    const check = checkConstraints(m).find((x) => m.qualifiedName(x.id) === 'TB::car::nl')!;
+    expect(check.result).toBe('satisfied');
+    const num = checkConstraintsNumeric(m).find((r) => m.qualifiedName(r.id) === 'TB::car::nl')!;
+    expect([num.result, num.imposed]).toEqual(['satisfied', undefined]);
+  });
+
   // a5 S4: a PLAIN `constraint nl : Newton { in f = force; … }` states the body with the parameters' values, as the assert
-  // does, and filed no row on any surface: 2500 against 1000 * 2 was silent (tp1, g5d). It files its own row now, a check
-  // this tool does not make, and holds nothing back (it is no axiom).
-  it('files a row for a plain constraint typed by a constraint definition, and holds no other row back (S4)', async () => {
+  // does, and filed no row on any surface: 2500 against 1000 * 2 was silent (tp1, g5d). TY1A files its own row and reads
+  // it (violated at 2500/2000); the proof surfaces still refuse the typed body (TY2's half) and hold no other row back.
+  it('files a row for a plain constraint typed by a constraint definition, and reads it (S4)', async () => {
     const newton = 'constraint def Newton { in f : Real; in m : Real; in a : Real; f == m * a }';
     const attrs = 'attribute mass : Real = 1000.0; attribute accel : Real = 2.0; attribute force : Real = 2500.0;';
+    // The body is read (above), so the proof-lane sentence says so: only this lane leaves it unread (TY2's half).
     const sentence = (name: string) =>
-      `\`${name}\` is typed by the constraint definition \`Newton\`, whose body this tool does not read with the parameters' values`;
+      `\`${name}\` is typed by the constraint definition \`Newton\`, whose body the check and the numeric surface read with the parameters' values; the proof lane files no relation of it`;
     const load = async (text: string) => (await loadModelText(text)).model!;
     for (const [tag, usage, qn] of [
       ['SA', 'part car { ' + attrs + ' constraint nl : Newton { in f = force; in m = mass; in a = accel; } }', 'SA::car::nl'],
@@ -6437,9 +6484,10 @@ describe('checkConstraints — an enclosing assert is checked against a default 
     ] as const) {
       const m = await load(`package ${tag} { ${newton} ${usage} constraint k { car.force == 2500.0 } }`);
       const check = checkConstraints(m).find((c) => m.qualifiedName(c.id) === qn)!;
-      expect([tag, check.result, check.message], tag).toEqual([tag, 'unknown', `Could not evaluate: ${sentence('nl')}`]);
+      const decided = 'Constraint violated: force == (mass * accel) (nl : Newton, with f = force, m = mass, a = accel)';
+      expect([tag, check.result, check.message], tag).toEqual([tag, 'violated', decided]);
       const num = checkConstraintsNumeric(m).find((r) => m.qualifiedName(r.id) === qn)!;
-      expect([tag, num.result, num.reason], tag).toEqual([tag, 'unknown', sentence('nl')]);
+      expect([tag, num.result, num.reason], tag).toEqual([tag, 'violated', undefined]);
       // On the proof surfaces it is an obligation that cannot be encoded, not an axiom: no other row waits on it.
       const rows = obligationsOf(m).filter((o) => o.element.qualifiedName === qn);
       expect(rows.map((o) => [o.role, o.source, o.encodable]), tag).toEqual([
@@ -6452,12 +6500,12 @@ describe('checkConstraints — an enclosing assert is checked against a default 
     const unnamed = await load(`package SU { ${newton} part car { ${attrs} constraint : Newton { in f = force; in m = mass; in a = accel; } } }`);
     const unnamedRow = obligationsOf(unnamed).find((o) => o.role === 'obligation' && o.encodable !== true && /^This /.test((o.encodable as { detail: string }).detail));
     expect((unnamedRow!.encodable as { detail: string }).detail).toBe(
-      "This constraint is typed by the constraint definition `Newton`, whose body this tool does not read with the parameters' values",
+      "This constraint is typed by the constraint definition `Newton`, whose body the check and the numeric surface read with the parameters' values; the proof lane files no relation of it",
     );
     // A parameter-free body is as unread (g5d); an asserted one keeps its axiom.
     const g5d = await load('package G5D { attribute x : Real = 3.0; constraint def K { x >= 1.0 } constraint c : K; assert constraint e : K; constraint t { x == 3.0 } }');
     const row = (q: string) => checkConstraints(g5d).find((c) => g5d.qualifiedName(c.id) === q)!;
-    expect(row('G5D::c').result).toBe('unknown');
+    expect(row('G5D::c').result).toBe('satisfied');
     expect(obligationsOf(g5d).find((o) => o.element.qualifiedName === 'G5D::c')).toMatchObject({ role: 'obligation', status: 'not-encodable' });
     expect(obligationsOf(g5d).find((o) => o.element.qualifiedName === 'G5D::e')).toMatchObject({ role: 'axiom', source: 'assert' });
     // Nothing else files: a body of its own is read as written, a usage that subsets a usage with a body is the row that

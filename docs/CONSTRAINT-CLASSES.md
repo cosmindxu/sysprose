@@ -43,8 +43,8 @@ A fence has its own three states: `fenced` when a test pins each layer it is pro
 Where the printed classes stand now:
 
 - `experimental`: `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `text-as-real`, `partial-context`, `bind-equality`, `asserted-fact`, `per-instance`.
-- `tested`: `lira`, `nra-div/pinned`.
-- `differential-tested`: `lra`, `units`, `stated-value`, `defining-equation`, `requirement-clause`.
+- `tested`: `lra`, `lira`, `nra-div/pinned`.
+- `differential-tested`: `units`, `stated-value`, `defining-equation`, `requirement-clause`.
 - `fenced`: `fence/no-formal-clause`, `fence/unresolved-name`, `fence/dimension-clash`, `fence/offset-arithmetic`, `fence/refused-derivation`, `fence/non-numeric-operand`.
 - `fenced-defect`: `fence/unsupported-operator`.
 - `unpinned`: `fence/unparseable`, `fence/unit-unresolved`.
@@ -57,20 +57,20 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `ground` | 1 | 1 | 1 | 0 | 4 (4) | 0 | none | `experimental` |
 | `bool` | 54 | 3 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `lra` | 486 | 72 | 2 | 6 | 783 (347) | 0 | none | `differential-tested` |
+| `lra` | 486 | 72 | 2 | 6 | 783 (347) | 2 | none | `tested` |
 | `lira` | 15 | 13 | 1 | 1 | 0 (0) | 0 | none | `tested` |
 | `nra-poly/pinned` | 6 | 1 | 1 | 0 | 2 (2) | 0 | none | `experimental` |
 | `nra-poly/free` | 1 | 1 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `nra-div/pinned` | 17 | 9 | 1 | 1 | 8 (6) | 0 | none | `tested` |
 | `units` | 100 | 40 | 2 | 5 | 28 (15) | 0 | none | `differential-tested` |
 | `text-as-real` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
-| `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
+| `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 2 | none | `experimental` |
 | `stated-value` | 311 | 78 | 1 | 7 | 737 (314) | 0 | none | `differential-tested` |
 | `defining-equation` | 16 | 14 | 1 | 2 | 69 (42) | 0 | none | `differential-tested` |
 | `bind-equality` | 9 | 5 | 1 | 0 | 237 (141) | 0 | none | `experimental` |
 | `asserted-fact` | 28 | 8 | 1 | 0 | 31 (18) | 0 | none | `experimental` |
 | `requirement-clause` | 236 | 61 | 1 | 7 | 458 (272) | 0 | none | `differential-tested` |
-| `per-instance` | 1 | 1 | 1 | 0 | 327 (167) | 0 | none | `experimental` |
+| `per-instance` | 1 | 1 | 1 | 0 | 327 (167) | 2 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
 | `fence/unresolved-name` | 3 | 3 | 2 | — | — | — | none | `fenced` |
@@ -107,7 +107,7 @@ What z3 is asked: the `set-logic` the relation’s own bytes need. A relation th
 
 - **Encodes.** Comparisons and `+ - *` with at most one symbol-carrying operand, and `/` by a literal.
 - **Logic.** `QF_LRA`.
-- **Level of `lra`.** `differential-tested` (first unmet: a battery of 200 cells, have none).
+- **Level of `lra`.** `tested` (first unmet: no row against its hand-computed answer, have 2).
 - **Limits.**
   - Division by the literal zero is `unsupported-operator`, `not-evaluable`, not forgivable.
   - A numeral is the written decimal (`0.1` is `(/ 1.0 10.0)`); beyond 15 significant digits, the double’s own rational.
