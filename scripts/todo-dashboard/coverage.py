@@ -18,9 +18,12 @@ States are only set where a document *measures* it:
   - TXT rows: parsed = the construct occurs in the 637-model corpus (the corpus test
     proves parse conformance for every corpus model); semantics/decision stay
     `unmeasured` (only the constraint lane measures them today).
-  - GRAPH/API/KERML rows: `unmeasured` unless a known note applies (the app renders
-    17 views; the API/OSLC PSMs have their own conformance tests — recorded as notes,
-    not folded into the percentages).
+  - GRAPH rows: rendered = an E2E spec in `test/e2e/` asserts the view kind's panel
+    (`measure_known` names the spec and the assertion).
+  - API rows: decided = a conformance test in `test/conformance/` asserts the service
+    group's endpoint contract (`measure_known` names the test and the endpoints). A group
+    whose endpoints this build does not ship stays `unmeasured` (`measure_known` says why).
+  - KERML rows: `unmeasured` (no test pins the metaclass itself).
 
 The two headers:
   construct coverage = corpus-weighted share of rows whose state is parsed/decided/rendered
@@ -169,16 +172,106 @@ def build_universe():
             rows[-1]['weight'] = 0
     areas.append('Constraints & parametrics')
 
-    # Area notes from the conformance scorecard (recorded, not folded in)
+    # Area notes from the conformance scorecard (recorded beside the states)
     notes = {
-        'Graphical notation': 'the app renders 17 views (e2e); each system view kind is exercised, not measured here',
-        'API & services': 'API/OSLC PSMs have conformance tests (CONFORMANCE §3-4); not folded into the percentages',
+        'Graphical notation': 'the app\'s 17 views include the 11 §4.1 kinds; each is '
+                              'rendered where an E2E spec asserts its panel (test/e2e/)',
+        'API & services': 'the §5.7 groups are decided where the API conformance tests assert '
+                          'their contracts (CONFORMANCE §3); the "Other" group\'s POST /transform '
+                          'and /validate are not shipped here, so it stays unmeasured; the OSLC '
+                          'PSM has its own suite (CONFORMANCE §4, test/conformance/oslc-conformance.test.ts)',
     }
     data = {'meta': {'generated': '', 'sources': ['docs/02-omg-standard-reference.md', 'docs/CONFORMANCE.md',
-                                                    'docs/CONSTRAINT-CLASSES.md', 'corpus (637 models)'],
+                                                    'docs/CONSTRAINT-CLASSES.md', 'corpus (637 models)',
+                                                    'test/conformance/', 'test/e2e/'],
                      'areas': areas, 'notes': notes},
             'rows': rows}
+    measure_known(rows)
     return data
+
+
+# The GRAPH and API rows' mechanical evidence, keyed by row id. A row appears only where
+# an existing test asserts the thing: an API group is `decided` only where a conformance
+# test validates its endpoints, a view kind `rendered` only where an E2E spec asserts its
+# panel. A row with no entry here stays `unmeasured`; no evidence is invented.
+KNOWN = {
+    # ── API & services: docs/CONFORMANCE.md §3 (test/conformance/api-contract.test.ts) ──
+    'API:projects': ('decided', 'test/conformance/api-contract.test.ts',
+                     'GET /api/projects and /api/projects/{id} validate against Project; '
+                     'project PUT rename + DELETE lifecycle (201/200/204/404)'),
+    'API:branches': ('decided', 'test/conformance/api-contract.test.ts',
+                     'GET .../branches validates against Branch[]; branch DELETE (204), '
+                     'default-branch DELETE (409)'),
+    'API:tags': ('decided', 'test/conformance/api-contract.test.ts',
+                 'GET .../tags is routed by the OpenAPI-coverage sweep; tag create + DELETE (204) '
+                 'lifecycle'),
+    'API:commits': ('decided', 'test/conformance/api-contract.test.ts',
+                    'GET .../commits validates against Commit[]; POST .../commits returns 201 with an @id'),
+    'API:elements-read-at-a-commit': ('decided', 'test/conformance/api-contract.test.ts',
+                                      'elements page validates against ElementsPage, one element against '
+                                      'Element, relationships against RelationshipsResult; the ?type= filter '
+                                      'returns only that type'),
+    'API:queries': ('decided', 'test/conformance/api-contract.test.ts',
+                    'POST /api/queries validates against QueryResult; stored-query CRUD + results '
+                    'lifecycle validates against StoredQuery/QueryResult'),
+
+    # ── Graphical notation: docs/02-omg-standard-reference.md §4.1 (test/e2e/) ──
+    'GRAPH:general-view-definition-view': ('rendered', 'test/e2e/diagram-notation.spec.ts',
+                                           'general-view nodes draw their SysML notation (adornments, '
+                                           'derived names, compartments, port symbols)'),
+    'GRAPH:interconnection-view-internal-view': ('rendered', 'test/e2e/interface-tags-subject.spec.ts',
+                                                 'an interface is drawn port to port, on the ports the parts '
+                                                 'have through their type'),
+    'GRAPH:action-flow-view-activity': ('rendered', 'test/e2e/diagram-control-nodes.spec.ts',
+                                        'every control-node kind draws its prescribed flow symbol'),
+    'GRAPH:state-transition-view': ('rendered', 'test/e2e/palette-per-view.spec.ts',
+                                    'the state view renders a StateUsage node and its TransitionUsage is '
+                                    'wired between the chosen endpoints'),
+    'GRAPH:sequence-view': ('rendered', 'test/e2e/diagram-tables-content.spec.ts',
+                            'one lifeline per participant and one message per succession'),
+    'GRAPH:requirement-view': ('rendered', 'test/e2e/diagram-edges.spec.ts',
+                               'an edge renders in the requirement view (the palette spec wires a Satisfy)'),
+    'GRAPH:case-analysis-view': ('rendered', 'test/e2e/diagram-views3.spec.ts, test/e2e/graph-analysis.spec.ts',
+                                 'the case view draws its React Flow canvas; the analysis view draws its '
+                                 'graph and DSM'),
+    'GRAPH:allocation-matrix': ('rendered', 'test/e2e/diagram-views2.spec.ts',
+                                'the dedicated allocation matrix table (matrix-view) is visible'),
+    'GRAPH:package-tree-browser-view': ('rendered', 'test/e2e/diagram-edges.spec.ts',
+                                        'an edge renders in the tree view (containment)'),
+    'GRAPH:grid-view': ('rendered', 'test/e2e/diagram-tables-content.spec.ts',
+                        'grid cells carry each element\'s real metaclass, type and value'),
+    'GRAPH:geometry-view': ('rendered', 'test/e2e/geometry3d.spec.ts',
+                            'the geometry view renders a real WebGL canvas and handles clicks'),
+}
+
+# Rows the universe defines but no test asserts, so they stay `unmeasured`; the note names
+# what is missing. Keeping them here (rather than in KNOWN) means no state is invented.
+UNMEASURED_NOTES = {
+    'API:other': '§5.7\'s "Other" group is POST /transform and POST /validate; this build ships '
+                 'neither (no such path in src/server/openapi.ts) and no conformance test asserts '
+                 'them, so the group stays unmeasured',
+}
+
+
+def measure_known(rows):
+    """Set the states a test *measures* (see KNOWN); leave the rest unmeasured.
+
+    A stale KNOWN or UNMEASURED_NOTES id (no such row) is a hard error: an entry that
+    silently stopped applying would let the page regress with nothing noticing. A row
+    with no KNOWN entry is reported, not invented.
+    """
+    by_id = {r['id']: r for r in rows}
+    stale = [k for k in (*KNOWN, *UNMEASURED_NOTES) if k not in by_id]
+    if stale:
+        raise SystemExit(f'coverage.measure_known: ids with no row: {sorted(stale)}')
+    for rid, (state, evidence, note) in KNOWN.items():
+        r = by_id[rid]
+        r['state'], r['evidence'], r['note'] = state, evidence, note
+    for rid, note in UNMEASURED_NOTES.items():
+        by_id[rid]['note'] = note
+    unmeasured = [r['id'] for r in rows if r['kind'] in ('API', 'GRAPH') and r['state'] == 'unmeasured']
+    if unmeasured:
+        print(f'coverage: no asserting test yet, left unmeasured: {unmeasured}')
 
 
 def metrics(data):
@@ -204,15 +297,18 @@ def write_html(data, m):
     by_area = {}
     for r in data['rows']:
         by_area.setdefault(r['area'], []).append(r)
-    pill = {'parsed': 'read', 'decided': 'decided', 'partial': 'partial', 'refused': 'refused', 'unmeasured': 'unmeasured'}
+    pill = {'parsed': 'read', 'decided': 'decided', 'rendered': 'rendered', 'partial': 'partial',
+            'refused': 'refused', 'unmeasured': 'unmeasured'}
     body_rows = []
     for area, rs in by_area.items():
-        done = sum(1 for r in rs if r['state'] in ('parsed', 'decided'))
+        measured = sum(1 for r in rs if r['state'] != 'unmeasured')
         body_rows.append(f'<tr class="area"><td colspan="5"><b>{area}</b> — {len(rs)} rows, '
-                         f'{done} with parse/decide evidence, {sum(1 for r in rs if r["state"] == "unmeasured")} unmeasured</td></tr>')
+                         f'{measured} with measured evidence, {sum(1 for r in rs if r["state"] == "unmeasured")} unmeasured</td></tr>')
         for r in rs:
             st = pill.get(r['state'], r['state'])
-            ev = r['evidence'] or r['note'] or ''
+            ev = r['evidence'] or ''
+            if r['note'] and r['note'] != r['evidence']:
+                ev = f'{ev}<br><span class="sub">{r["note"]}</span>' if ev else r['note']
             body_rows.append(f'<tr><td class="n">{r["kind"]}</td><td>{r["name"]}</td>'
                              f'<td><span class="pill {r["state"]}">{st}</span></td>'
                              f'<td class="n">{r["weight"] or "—"}</td><td class="ev">{ev}</td></tr>')
@@ -229,9 +325,10 @@ th{{font-size:12.5px;color:#6e6a63;font-weight:600}} td.n,th.n{{text-align:right
 tr.area td{{background:#fcfbf8;padding-top:10px;border-bottom:1px solid #e8e5dc}}
 .pill{{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11.5px;font-weight:600}}
 .pill.parsed{{background:#e7f4e8;color:#1e6b24}} .pill.decided{{background:#dff3e2;color:#14532d}}
+.pill.rendered{{background:#e6f0fb;color:#1d4ed8}}
 .pill.partial{{background:#fff4e5;color:#a3560b}} .pill.refused{{background:#f2f0ff;color:#5925dc}}
 .pill.unmeasured{{background:#f4f2ee;color:#6e6a63}}
-.ev{{color:#6e6a63;font-size:12.5px}}
+.ev{{color:#6e6a63;font-size:12.5px}} .sub{{color:#8a857c}}
 .note{{background:#fff;border:1px solid #e8e5dc;border-radius:8px;padding:14px 16px;margin-top:16px;color:#3d3a35;font-size:13.5px}}
 </style></head><body>
 <h1>SysML v2 coverage</h1>
@@ -240,7 +337,7 @@ The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> me
 <b>{m['unmeasured']}</b> unmeasured. <a href="standalone.html">← back to the dashboard</a></p>
 <div class="cards">
   <div class="card"><div class="k">Conscript coverage (weighted)</div><div class="v">{m['construct_coverage']}%</div>
-    <div class="k">of the measured rows, corpus-weighted: parsed / decided over measured</div></div>
+    <div class="k">of the measured rows, corpus-weighted: parsed / decided / rendered over measured</div></div>
   <div class="card"><div class="k">Decision coverage (constraint lane)</div><div class="v">{m['decision_coverage']}%</div>
     <div class="k">{m['decision_decided']} of {m['decision_rows']} measured constraint classes are decided (level ≥ tested)</div></div>
   <div class="card"><div class="k">Wrong-statement findings</div><div class="v">{m['false']}</div>
@@ -256,9 +353,13 @@ The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> me
 (<i>docs/CONSTRAINT-CLASSES.md</i>). A TXT row is <i>read</i> when the corpus uses the construct
 (parse conformance proven by <i>corpus.test.ts</i>); a CON row is <i>decided</i> when its class level is
 <i>differential-tested</i> or <i>tested</i>, <i>partial</i> when <i>experimental</i>, <i>refused</i> when
-<i>fenced</i>/<i>unpinned</i>. Weights are corpus usage (TXT) or counted rows (CON). GRAPH/API/KERML rows are
-unmeasured here; the app's 17 rendered views and the API/OSLC PSMs have their own tests (not folded into the
-percentages). Phase 2 replaces the unmeasured rows with pinned probes across the four surfaces.</div>
+<i>fenced</i>/<i>unpinned</i>; a GRAPH row is <i>rendered</i> where an E2E spec asserts the view kind's
+panel (<i>test/e2e/</i>); an API row is <i>decided</i> where a conformance test asserts the group's
+endpoints (<i>test/conformance/</i>, CONFORMANCE §3–4). Weights are corpus usage (TXT) or counted rows
+(CON). KERML rows stay unmeasured here: no test pins the metaclass itself, and an API group whose
+endpoints this build does not ship stays unmeasured too (§5.7's <i>Other</i>: POST /transform and
+/validate). The app's 17 views include the 11 §4.1 view kinds. Phase 2 replaces the remaining
+unmeasured rows with pinned probes across the four surfaces.</div>
 </body></html>"""
     open(OUT_HTML, 'w', encoding='utf-8').write(html)
 
