@@ -1563,23 +1563,36 @@ tagged `[O1 …]` are what its steps and reviews left open.
       site. [review 2026-10-14 F-C2] Awaits user decision U16 (do the Google setup when
       convenient).
 
-- [ ] **The `parallel` keyword is read as the state definition's name, and its regions are walked as
-      separate machines with no sign of it.** SysML v2 Part 1 §7.18 gives `state def X parallel { … }`
-      (grammar `isParallel ?= 'parallel'`), but `sysml.langium` has no `parallel` keyword: in
+- [ ] **Parallel states per SysML v2 (§7.18.2, §8.4.14) — MANDATORY: the tool must conform to the spec.**
+      Today `sysml.langium` has no `parallel` keyword (spec grammar `isParallel ?= 'parallel'`): in
       `state def Modes parallel { state nav {…} state comms {…} }` the word `parallel` becomes the
       definition's name (`P::Ctl::parallel::nav`), `Modes` is lost, no diagnostic is raised, and
-      `reach` prints "2 state machine(s), 2 walked to exhaustion" — byte-for-byte the output of the
-      same file without `parallel` (but for the name). The explorer's parallel refusal
-      (`explore.ts` `unsupportedConstructs`, `construct: 'parallel-regions'`) is reachable only
-      through the API, so from text it never fires. Wrong statements today: an element named
-      `parallel` that the model does not declare, and region-by-region claims on a machine whose
-      regions run concurrently (a guard or trigger that couples two regions is walked as if they
-      were independent). Fence first: parse `parallel` into `attrs.parallel` so the existing
-      refusal fires, and pin the probe below; interleaving the regions is a separate, later item.
-      Probe: `state def Modes parallel` with two regions, each `state off; state on; transition off
-      accept go then on;`. Done: the definition keeps its name, `reach`/`check-behaviour` report
-      `verification/behaviour-unsupported-construct` (parallel-regions) and no exhaustive claim, and
-      the 637-model differential stays exactly "631 identical, 6 differ". [mc-vs-bib 2026-11-18; wrong statement]
+      `reach` prints "2 state machine(s), 2 walked to exhaustion" — the same output as the file without
+      `parallel`. The explorer's refusal (`explore.ts` `unsupportedConstructs`, `parallel-regions`) is
+      reachable only through the API, and the interpreter CONCATENATES regions instead of performing
+      them concurrently. The spec: a parallel state's substates "are performed concurrently"; a
+      non-parallel state's substates are `exclusiveStates` (exactly one active after entry); no
+      transition may go between the substates of a parallel state (§7.18.3).
+      Two stages, both required. (1) FENCE, first (wrong statements today): parse `parallel` into
+      `isParallel`, keep the definition's name, and refuse parallel machines with
+      `verification/behaviour-unsupported-construct` and no exhaustive claim. (2) CONFORM: perform the
+      substates of a parallel state concurrently in the interpreter and explore every interleaving the
+      spec admits in the explorer (so `reach`/`check-behaviour` decide parallel machines), validate the
+      no-transition-between-concurrent-substates rule, and update the semantic profile's `regions`
+      field from "concatenated" to the spec reading. Probes: the spec's `VehicleStates parallel`
+      example (§7.18.2) and a two-region machine whose regions are coupled by a guard. Done: both
+      stages merged, the probes decided per the spec, the profile no longer declares a departure on
+      regions, and the 637-model differential reads exactly "631 identical, 6 differ" (or every move
+      ruled). [mc-vs-bib 2026-11-18; wrong statement; spec conformance mandatory 2026-11-19]
+
+- [ ] **The spec's own state-machine example does not parse: `entry; then off;` is an error.** SysML v2
+      Part 1 §7.18.3's `state def OnOff1 { entry; then off; state off; state on; transition off_on
+      first off then on; transition on_off first on then off; }`, verbatim, gives
+      `error parse/dangling-then` ("'then off' has nothing to follow") plus a `split-declaration`
+      warning on `entry;`, and `stats` reports 0 relationships. The entry-then succession is how the
+      spec names a machine's initial state. Done: the §7.18 examples (OnOff1, OnOff2, VehicleStates)
+      parse with no diagnostics, the initial state is read as the entry succession's target, and a
+      test pins each example verbatim. [mc-vs-bib 2026-11-19; spec conformance mandatory]
 
 - [ ] **Say that the PSSM Clause 9 oracle was not built, or build a scored subset.** `docs/04` cites
       `omg-pssm-1.0-2019` Clause 9 as "a UML/fUML oracle for the conformance scorecard" for
