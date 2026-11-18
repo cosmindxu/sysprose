@@ -221,7 +221,7 @@ headings.
       that may read through it (h5-ppcall, h5-r8expr), which needs the calc's result evaluated as
       a part or a structured value; (3) a `satisfy R by p1` beside `requirement r1 : R { subject s
       = p1; }`, where both subjects stand for one instance: r1's literal and SMT rows abstain with
-      "the numeric surface never gathered this relation" (SAT2). [O9 S1]
+      "the check never gathered this relation" (SAT2). [O9 S1]
       Ruled permanent 2026-11-05 (the rollup 'Abstentions left (parallel machines and Simulate)'
       item (6)): (2), a call as a part's value; (1) and (3) stay open.
 - [ ] **Name an unnamed nested redefinition's context row alike on every surface.** A context that
@@ -379,10 +379,12 @@ headings.
       0.002, chains of 20 to 60 links, and a 100-link chain to sink 2.0; fix: polish the Newton
       point before the joint test; no 637-corpus or v9 model is affected. A component of more than
       120 linked equations that holds a quotient or a power is not judged together and reads unknown
-      for that component throughout, even at a true root; for a chain of that size that has a root
-      the solve reports `converged false` (the app shows 'Solve: did not converge') while every row
-      still reads imposed and solveFeasible is feasible; the USER-GUIDE sentence is the only place
-      it is described, and no corpus or v9 model is hit. Item (f) also covers the chain shapes.
+      for that component throughout, even at a true root; CLOSED 2026-11-17 by a5-words W5: the
+      rows the cap withholds now name the cap ("a group of more than 120 equations linked through
+      their features is not judged together, and … is in it"), the head stays `converged false`,
+      and a row beside the group that reads only stated values keeps its imposed sentence; the
+      USER-GUIDE parenthetical that claimed a rooted chain "still reads imposed" is corrected at
+      merge. No corpus or v9 model is hit. Item (f) also covers the chain shapes.
       Probes: fence-numeric3-scratch/rchain10-2.0.sysml, rchain10-0.002.sysml, rchain20-2.0.sysml,
       rchain30-2.0.sysml, chain100-2.sysml, chain150-0.sysml (no root), review/big-chain-130.sysml.
        fence-numeric4: (a) CLOSED 2026-11-16 by a5-heads2 HD2: a bind end under an unread scope
@@ -481,8 +483,9 @@ headings.
       ('in W3' or 'in v', same ?/?/?/? cell;
       review-2026-10-14/wave3-probes/fence-readings/p2/o1.sysml); the tie sentence lists the
       equations in written order (review-2026-10-14/wave3-probes/fence-readings/p2/t2.sysml); `part
-      p1 :> p1` terminates and abstains but raises no specialization-cycle diagnostic, unlike p1 :>
-      p2 :> p1 (review-2026-10-14/wave3-probes/fence-readings/p2/cy3.sysml). Probes:
+      p1 :> p1` now raises `validation/specialization-cycle` (a self-`:>` names its own element;
+      CLOSED 2026-11-17 by a5-words W5), as `p1 :> p2 :> p1` already did
+      (review-2026-10-14/wave3-probes/fence-readings/p2/cy3.sysml). Probes:
       review-2026-10-14/wave3-probes/fence-readings/. [fence-readings]
       fence-loader: a name two or more levels below a user feature that goes through a library
       feature's members, past the first route, is no longer registered, and the bare names of
@@ -1396,6 +1399,106 @@ true values. What follows is what that branch and the review of it left open; en
       removed, 150 seeds, 59 cells; fence-order-scratch/gen-unsorted.mts and vo.mts). It is sorted
       but not stable across loads, not a wrong answer, and pre-existing; a stable order would need a
       text-order sort key in validate.ts. [fence-order review]
+- [ ] **Coverage universe: fold the API/OSLC PSMs and the 17 rendered views into the matrix.**
+      `docs/CONFORMANCE.md` §3–4 already test the API and OSLC PSMs, and the E2E suite renders all
+      17 views, but `coverage-universe.json` lists the 7 API service groups and the 11 view kinds as
+      `unmeasured`. Map each group/kind to its existing test, set its state (`decided`/`rendered`)
+      with the evidence link, and keep the percentages honest: an API group is `decided` only where
+      a test asserts its contract, a view kind `rendered` only where an E2E spec asserts its panels.
+      Done: the 18 rows are measured with evidence, the page's "unmeasured" count drops by 18, and
+      the two headers are recomputed. [coverage-universe; CU-1]
+
+- [ ] **Coverage universe: measure the read/determine column for the textual areas the corpus uses.**
+      The 14 textual constructs are `parsed` (corpus parse conformance) but their semantic read is
+      unmeasured — only the constraint lane has a decision column. For each area, pick one corpus
+      model (or write a small pinned probe) that exercises it, run the four surfaces
+      (`sysml-check`, literal, numeric, SMT) and record whether the construct reaches a row and its
+      sentence, with the probe file as evidence. Start with parts/attributes, ports, interfaces,
+      states, requirements and allocation; leave actions/occurrences/metadata until their surfaces
+      exist. Done: each `TXT` row carries `read` or `partial` with a probe, and the "read" claim is
+      no longer parse-only. [coverage-universe; CU-2]
+
+- [ ] **Coverage universe: the normative clause list, not the illustrative doc tables.**
+      Phase 1 derived its rows from `docs/02-omg-standard-reference.md` (which is an engineering
+      summary — its §2.2 table yielded 22 of the 26 metaclass rows, and §3.2 is a snippet catalog).
+      Build the real universe: KerML §8–9 clauses, SysML v2 textual §7 clauses, graphical clauses
+      and the API/services clauses, each with a stable id (`KERML:Element`, `TXT:constraint-usage`,
+      `GRAPH:interconnection`, `API:commits`), the clause number, and the construct text. Keep the
+      existing rows as aliases so the matrix does not jump. Done: every area has clause-numbered
+      rows, a coverage script regenerates them, and the extraction gaps are closed.
+      [coverage-universe; CU-3]
+
+- [ ] **Coverage universe: probe the KerML kernel rows.** The 22 KerML metaclasses are what every
+      semantic read stands on (classification, featuring, type intersection, membership/imports,
+      specialization). No per-metaclass state exists. For each, write a minimal pinned model where
+      the construct must matter (a classification/featuring/type-intersection case, an import, a
+      specialization chain) and record what the tool reads/determines on the four surfaces; a
+      construct the tool ignores is `unread` with that evidence. Done: the KERML rows carry states
+      (or an explicit "no probe possible yet" note), and any `unread` finding is filed as its own
+      item. [coverage-universe; CU-4]
+
+- [ ] **Coverage universe: scope ruling for analysis cases, trade studies and optimisation.**
+      SysML v2 leaves analysis cases, trade studies and optimisation to analysis procedures, not to
+      decidable checks, so they cannot become covered rows in the same sense. Write the scope ruling
+      (in/out, why, what would be measured if they are out) into the coverage page and the plan;
+      then add the `verify`/`refine` lane's documented claims (`docs/CONFORMANCE.md` §8, the
+      declared deviation and the verdict slot) as rows with their own states. Done: the page lists
+      the declined scope with the reason and the `verify`/`refine` rows are measured or explicitly
+      deferred. [coverage-universe; CU-5]
+
+- [ ] **Coverage universe: per-area wrong-statement counts beside the coverage.** A high coverage
+      percentage must not hide a bad area. Add, per area, the count of open wrong-statement
+      findings whose rows touch that area (the dashboard's FALSE tier and the class register's
+      "rows against" are the inputs), show it beside each area's row count, and keep soundness out
+      of the percentage. Done: each area row shows its false count; the coverage page states the
+      per-area rule. [coverage-universe; CU-6]
+
+- [ ] **Coverage universe: a CI drift gate.** The coverage datasets are regenerated by
+      `refresh.py` but nothing asserts they do not regress. Add a check (like the docs-counts
+      guards) that regenerates `coverage.py` output and fails when an area loses a measured row, a
+      row's state drops (decided→partial→refused), the unmeasured count rises without a reason, or
+      the false count rises. Run it in the gate and record the numbers in TEST-REPORT like the class
+      facts. Done: the guard is green on the current tree and fails on a planted regression.
+      [coverage-universe; CU-7]
+
+- [ ] **Coverage universe: state the weighting policy.** The two headers mix corpus usage (TXT) and
+      counted rows (CON). Write the policy down and report at least two variants (equal-weight and
+      corpus/generator-weighted) so no single percentage hides the choice; keep the generators'
+      model space (the 1 100-model sweeps) as the weight source where it exists. Done: the page
+      shows both variants and names the weights per row. [coverage-universe; CU-8]
+
+- [ ] **Coverage universe: trends and evidence links.** The coverage page is a snapshot with no
+      history and only partial evidence links. Add a per-merge trend (like the timeline: measured
+      rows, decided classes, false count) and a link from every row to its probe/test/corpus file.
+      Done: the page has a small trend chart and every measured row links its evidence.
+      [coverage-universe; CU-9]
+
+- [ ] **Coverage universe: declined scope, spec version pinning and ownership.** Record the OMG
+      spec revision the universe is built against (the 2025 adoption and the reference OpenAPI
+      version in `docs/02`), the areas deliberately declined (see CU-5), and who refreshes the
+      universe when the spec or the docs' tables change. Done: the coverage page's meta block names
+      the spec version, the declined areas and the refresh procedure; the handover carries the same.
+      [coverage-universe; CU-10]
+
+- [ ] **Read a typed or asserted body's dotted, derived and per-instance values (TY1 follow-up).**
+      TY1 stopped under its STOP RULE (b): the positional pairing works (`tp1` F/F/F/F, `tp2`, `tp3`,
+      `tpr` refused with the positional sentence, `XS2` byte-identical), but nineteen pinned
+      `name-cd*`/`name-tp*` rows stay `?` because the typed equation never reaches the feature-level
+      dotted/derived/per-instance machinery: `equationsOf`/`equationsByName` index the substituted
+      equation under the usage, but `enclosingAsserts`/`assertDefinitionsAt` (empty
+      `replaceableDefaults`, decision 14 amended), `feature()`/`chainDefinition` for dotted names and
+      the instance builder's `assertsOf` do not read it; a generic `q.L` is not instantiated per
+      instance; and the given-way sentence ("whose equation this tool does not read") would be FALSE
+      once the body is read. The decisive control is an UNTYPED defining assert over the same shape
+      (`dv1.sysml`), which already refuses the same rows per instance; so this is a derivation gap,
+      not a TY1 bug. Fix the derivation and the three sentence sites (`givenWayCause`,
+      `typedAssertText`, `declaredWithout`) in one change; then re-run TY1's body-reading half on top
+      of the saved TY1 partial (`a5-typed-ty1-scratch/ty1-partial.diff`, 742 lines) and re-pin the
+      named families. Done: the named rows reach their refs (or a recorded, sound `?` with a true
+      sentence), the given-way sentence no longer claims an unread equation, the 637-model
+      differential stays exactly "631 identical, 6 differ" with the six ids, v9 has no DIFFERS, and
+      the branch gate is green. [typed-usage; TY1 follow-up; a5-typed TY1]
+
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
 From the reviews of the behaviour lane (reach and check-behaviour in the palette) and of the ux

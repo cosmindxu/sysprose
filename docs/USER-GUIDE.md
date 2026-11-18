@@ -842,7 +842,7 @@ Two names worth separating:
   beside it, and a power that rounds to 0 (`y == 2.0 ^ x` at `x` of -1e19) is a plateau, never a root.
   **The limit of that: a point the correction cannot be read at (a slope that cannot be read) is judged by each equation alone, and a
   group of more than 120 equations linked through their features that holds a quotient or a power is not judged together: the solve
-  reports that it did not converge (though a chain of that size that has a root still reads imposed), and a point that misses one of
+  reports that it did not converge and the rows it withholds name the cap (a row beside the group that reads only stated values keeps its imposed sentence), and a point that misses one of
   its equations still reads *unknown*.** Two stated values that differ by more than 1e-8 of their size but by less than the gate
   (`x == 1.0000001` beside `x == 1.0`) are read as disagreeing, not as equal. A
   pin within the gate of a flat equation but off its root (`x == 999773.0` beside `1.0 / x == 0.000001`) is

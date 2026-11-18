@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **5681 passed / 0 failed / 0 skipped** across **159 files** + **238 E2E** across **84 spec files** = **5919 green** (measured 2026-11-17) |
+| Full automated suite | **5692 passed / 0 failed / 0 skipped** across **159 files** + **238 E2E** across **84 spec files** = **5930 green** (measured 2026-11-18) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -587,7 +587,7 @@ refutation). A goal that is unsat when negated with no context at all is still
 `proved` and is FLAGGED as a tautology, because `x == x` is not evidence about a
 design. Every `sat` witness is substituted back through the tool's own
 evaluator before it is printed, and with nothing freed it must also read as
-`violated` on the numeric surface; a witness that fails either gate is
+`violated` on the check; a witness that fails either gate is
 `inconclusive: witness not confirmed`, never a violation. A counterexample found
 under `--free` is `design-admitted` — exit 2, never exit 1 — because a `=` value
 is a binding the model states.
@@ -1581,7 +1581,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (5681 pass / 0 skip, 159 files)
+# Full unit + integration + conformance suite (5692 pass / 0 skip, 159 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)
