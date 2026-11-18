@@ -2183,8 +2183,8 @@ def Eq { in a; a == 50.0 }`) is read by the check and the numeric surface where 
 redefines the definition's parameter at its position — by `:>>` or by carrying its name — and is given a value:
 the check judges the substituted equation (here `L == 50.0`) and reports it satisfied or violated (`e : Eq, with
 a = L`), and the numeric surface reads it alike. `verify` and `obligations` still carry no reading of it: its own
-obligation is `unread-definition` (*`e` is typed by the constraint definition `Eq`, whose body this tool does not
-read with the parameters' values*), and the literal and SMT engines judge no relation of it as an assertion, since
+obligation is `unread-definition` (*`e` is typed by the constraint definition `Eq`, whose body the check and the
+numeric surface read with the parameters' values; the proof lane files no relation of it*), and the literal and SMT engines judge no relation of it as an assertion, since
 it may contradict a value the model writes with `=`; reading it as an obligation is TY2's half. Where a parameter's
 name and its position disagree, no surface reads the usage, and the row says so.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
@@ -2269,7 +2269,7 @@ read in q1: every reading of the pair — J, K, q1's p's x, the assert's own row
 assertion replaces: the assert holds in that instance too, and this tool does
 not read it there, so the model may contradict itself unreported …*), and
 `verify` exits 2.
-A plain `constraint nl : Eq { in a = L; }`, with no `assert`, is read as a check by the check and the numeric surface where every parameter redefines the definition's parameter at its position and is given a value: the check reports it satisfied or violated (`nl : Eq, with a = L`) and the numeric surface reads it alike. `verify` and `obligations` still file its own row `unread-definition` (*`nl` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*, `verification/not-evaluable`, which `--allow-inconclusive` does not forgive), and it holds no other row back, since nothing is asserted. A requirement set that holds one reads *inconclusive* on `consistency` (exit 2), since the proof lane carries no relation it did not read.
+A plain `constraint nl : Eq { in a = L; }`, with no `assert`, is read as a check by the check and the numeric surface where every parameter redefines the definition's parameter at its position and is given a value: the check reports it satisfied or violated (`nl : Eq, with a = L`) and the numeric surface reads it alike. `verify` and `obligations` still file its own row `unread-definition` (*`nl` is typed by the constraint definition `Eq`, whose body the check and the numeric surface read with the parameters' values; the proof lane files no relation of it*, `verification/not-evaluable`, which `--allow-inconclusive` does not forgive), and it holds no other row back, since nothing is asserted. A requirement set that holds one reads *inconclusive* on `consistency` (exit 2), since the proof lane carries no relation it did not read.
 
 **Two asserted equations that disagree.** A feature declared without a value
 that two asserted equations define with two different values — `assert

@@ -6473,8 +6473,9 @@ describe('checkConstraints — an enclosing assert is checked against a default 
   it('files a row for a plain constraint typed by a constraint definition, and reads it (S4)', async () => {
     const newton = 'constraint def Newton { in f : Real; in m : Real; in a : Real; f == m * a }';
     const attrs = 'attribute mass : Real = 1000.0; attribute accel : Real = 2.0; attribute force : Real = 2500.0;';
+    // The body is read (above), so the proof-lane sentence says so: only this lane leaves it unread (TY2's half).
     const sentence = (name: string) =>
-      `\`${name}\` is typed by the constraint definition \`Newton\`, whose body this tool does not read with the parameters' values`;
+      `\`${name}\` is typed by the constraint definition \`Newton\`, whose body the check and the numeric surface read with the parameters' values; the proof lane files no relation of it`;
     const load = async (text: string) => (await loadModelText(text)).model!;
     for (const [tag, usage, qn] of [
       ['SA', 'part car { ' + attrs + ' constraint nl : Newton { in f = force; in m = mass; in a = accel; } }', 'SA::car::nl'],
@@ -6499,7 +6500,7 @@ describe('checkConstraints — an enclosing assert is checked against a default 
     const unnamed = await load(`package SU { ${newton} part car { ${attrs} constraint : Newton { in f = force; in m = mass; in a = accel; } } }`);
     const unnamedRow = obligationsOf(unnamed).find((o) => o.role === 'obligation' && o.encodable !== true && /^This /.test((o.encodable as { detail: string }).detail));
     expect((unnamedRow!.encodable as { detail: string }).detail).toBe(
-      "This constraint is typed by the constraint definition `Newton`, whose body this tool does not read with the parameters' values",
+      "This constraint is typed by the constraint definition `Newton`, whose body the check and the numeric surface read with the parameters' values; the proof lane files no relation of it",
     );
     // A parameter-free body is as unread (g5d); an asserted one keeps its axiom.
     const g5d = await load('package G5D { attribute x : Real = 3.0; constraint def K { x >= 1.0 } constraint c : K; assert constraint e : K; constraint t { x == 3.0 } }');

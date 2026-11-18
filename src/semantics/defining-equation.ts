@@ -10533,8 +10533,10 @@ const NO_DEFAULTS: ReadonlySet<ElementId> = new Set();
  * value it is there, LP1, SLD) — so that an opt-in tag that lets an assertion
  * adjust a written number, held until a model needs one (TODO.md), would
  * answer here alone. Typed asserts
- * are another matter: no surface reads their equation, so a `default` one may
- * define is read nowhere ({@link typedAssertHolding}).
+ * are another matter: where {@link typedAssertReads} the check and the numeric
+ * surface read the substituted equation, so a `default` one defines is read
+ * there; only the proof lane leaves it unread, until TY2 files it
+ * ({@link typedAssertHolding}).
  */
 export function replaceableDefaults(_model: Model): ReadonlySet<ElementId> {
   return NO_DEFAULTS;
@@ -10822,8 +10824,9 @@ export function typedAssertHolding(model: Model, f: ElementRecord): ElementRecor
 /**
  * Is `f` itself a feature an assert typed by an equation's definition may
  * define ({@link typedAssertHolding})? The numeric surface reads such a
- * feature as no design freedom: the model states what it is, and nothing here
- * reads the equation that does.
+ * feature as no design freedom: the model states what it is, and the check and
+ * the numeric surface read the equation that does where {@link
+ * typedAssertReads}; only the proof lane leaves it unread, until TY2 files it.
  */
 export function typedAssertNames(model: Model, f: ElementRecord): boolean {
   return assertHeldIndex(model).typedBy.has(f.id);
@@ -10869,15 +10872,17 @@ export function typedAssertsName(model: Model): boolean {
   return assertHeldIndex(model).typedBy.size > 0;
 }
 
-/**
- * The sentence an assert or a plain constraint typed by a constraint definition files as its own row where this tool
- * does not read the definition's body with the values its parameters are given (A4): it filed no row at all before,
- * an assert no surface mentioned, beside which literal and SMT read `Z <= 10.0` T over `in a = Z`, `Z = 3.0`, where
- * `a == 50.0` contradicts Z. `undefined` for any other element: one with a body of its own is read as written, and one
- * whose types state no body asserts nothing this tool sees. {@link expandTypedConstraint} reads the body where its
- * parameters pair positionally; a refusal there keeps this same sentence, byte for byte.
- */
-export function unreadTypedBodySentence(model: Model, el: ElementRecord): string | undefined {
+/** The label, kind and type name a typed assert's or plain constraint's body sentence names. */
+interface TypedBodySubject {
+  /** `` `e` ``, `This constraint` or `This assert`. */
+  label: string;
+  /** `typed by the constraint definition` or `typed through`. */
+  kind: string;
+  typeName: string;
+}
+
+/** {@link TypedBodySubject} for `el`, or `undefined` where no constraint definition supplies a body it lacks. */
+function typedBodySubject(model: Model, el: ElementRecord): TypedBodySubject | undefined {
   const role = el.attrs.requirementRole;
   if (el.eClass !== 'ConstraintUsage' || (role !== 'assert' && role !== undefined) || el.attrs.isLibrary === true) return undefined;
   if (typeof el.attrs.expression === 'string' && el.attrs.expression.trim() !== '') return undefined;
@@ -10889,7 +10894,30 @@ export function unreadTypedBodySentence(model: Model, el: ElementRecord): string
   const name = el.declaredName ?? el.declaredShortName;
   const typeName = def.declaredName ?? def.declaredShortName ?? 'an unnamed definition';
   const kind = def.eClass === 'ConstraintDefinition' ? 'typed by the constraint definition' : 'typed through';
-  return `${name !== undefined ? `\`${name}\`` : role === undefined ? 'This constraint' : 'This assert'} is ${kind} \`${typeName}\`, whose body this tool does not read with the parameters' values`;
+  return { label: name !== undefined ? `\`${name}\`` : role === undefined ? 'This constraint' : 'This assert', kind, typeName };
+}
+
+/** The sentence a genuine unread-body refusal files: this tool reads no body of it. */
+function unreadTypedBodyText(subject: TypedBodySubject): string {
+  return `${subject.label} is ${subject.kind} \`${subject.typeName}\`, whose body this tool does not read with the parameters' values`;
+}
+
+/**
+ * The sentence an assert or a plain constraint typed by a constraint definition files as its own row: where
+ * {@link expandTypedConstraint} reads the definition's body with the values its parameters are given (TY1), the body is
+ * read — the check and the numeric surface judge it, and only the proof lane files no relation of it (TY2), so the
+ * sentence says that lane's limit; a genuine refusal keeps the sentence that this tool reads no body of it, byte for
+ * byte. `undefined` for any other element: one with a body of its own is read as written, and one whose types state no
+ * body asserts nothing this tool sees.
+ */
+export function unreadTypedBodySentence(model: Model, el: ElementRecord): string | undefined {
+  const subject = typedBodySubject(model, el);
+  if (subject === undefined) return undefined;
+  const rel = typedConstraintRelation(model, el);
+  if (rel !== undefined && !('refused' in rel)) {
+    return `${subject.label} is ${subject.kind} \`${subject.typeName}\`, whose body the check and the numeric surface read with the parameters' values; the proof lane files no relation of it`;
+  }
+  return unreadTypedBodyText(subject);
 }
 
 /** A typed constraint usage's body, with the values its parameters are given substituted by position (TY1). */
@@ -10994,7 +11022,11 @@ function pathBelow(model: Model, ancestorId: ElementId, id: ElementId): string |
   return q.slice(a.length + 2).split('::').map(keySegment).join('.');
 }
 
-/** The value `p` is given, as the text the usage's scope spells the value feature in (or the value as written). */
+/**
+ * The value `p` is given, as the text the usage's scope spells the value feature in (or the value as written, its unit
+ * beside it — {@link writtenValue}: `in x = 1000.0 [g]` states a mass, and the substituted relation must carry the
+ * dimension or it reads a different claim).
+ */
 function typedValueTextOf(model: Model, usage: ElementRecord, p: ElementRecord, deep: boolean): string | undefined {
   const written = p.attrs.value;
   if (written !== undefined && written !== null) {
@@ -11004,7 +11036,7 @@ function typedValueTextOf(model: Model, usage: ElementRecord, p: ElementRecord, 
     // against `Lim`'s 1), or one a binding joins to a differing value — is unbound, and the refusal keeps the S4
     // sentence byte for byte (the corpus reads XS2 nowhere, and a reading here would move its verdict).
     if (deep && sharedDefinitions(model).contradiction(p) !== undefined) return undefined;
-    return typeof written === 'string' ? written : String(written);
+    return writtenValue(p);
   }
   const bound = typedBindingPartnerOf(model, p);
   if (bound === undefined) return undefined;
@@ -11185,8 +11217,14 @@ function typedExpandUncached(model: Model, usage: ElementRecord, deep: boolean):
   if (typeof own === 'string' && own.trim() !== '') return null;
   const body = typedConstraintBodyOf(model, usage);
   if (body === undefined) return null;
+  // A genuine refusal, so the sentence is the unread one; asking {@link unreadTypedBodySentence} here would ask this
+  // expansion whether it reads the body it is refusing.
+  const subject = typedBodySubject(model, usage);
   const refused = (): { refused: string } => ({
-    refused: unreadTypedBodySentence(model, usage) ?? `\`${usage.declaredName ?? 'this constraint'}\` is typed by a constraint definition, whose body this tool does not read with the parameters' values`,
+    refused:
+      subject !== undefined
+        ? unreadTypedBodyText(subject)
+        : `\`${usage.declaredName ?? 'this constraint'}\` is typed by a constraint definition, whose body this tool does not read with the parameters' values`,
   });
 
   const bodyText = body.attrs.expression;

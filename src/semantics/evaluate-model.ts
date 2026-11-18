@@ -1654,7 +1654,9 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
           out.push({ id: el.id, ownerId: el.ownerId, expression: '', result: 'unknown', message: `Could not evaluate: ${typed.refused}` });
           continue;
         }
-        const judged = judgeConstraint(model, el, typed.text, pass);
+        // The substituted text is the relation, so the unit-aware reader must see it as the element's body too: it
+        // reads `attrs.expression`, and with the usage's own empty one every `[unit]` value's reading was `empty`.
+        const judged = judgeConstraint(model, { ...el, attrs: { ...el.attrs, expression: typed.text } }, typed.text, pass);
         const message = judged.result === 'unknown' ? judged.message : `${judged.message} (${typed.clause})`;
         const check: ConstraintCheck = {
           id: el.id,
