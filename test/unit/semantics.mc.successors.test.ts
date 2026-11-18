@@ -1218,6 +1218,14 @@ const COVER_FILES = [
  */
 const RECOVERY_FILES = ['test/fixtures/verification/models/recovery-composite.sysml'];
 
+/**
+ * The machine CU-2 added: the states-and-transitions coverage probe under
+ * `scripts/todo-dashboard/probes/`. Named apart for the same reason as the
+ * lists above — it is a probe, not a fixture the model-checking lane owns,
+ * and the census counts every `.sysml` file in the tree.
+ */
+const PROBE_FILES = ['scripts/todo-dashboard/probes/states-transitions.sysml'];
+
 describe('every machine in the tree, walked', () => {
   const walked: Walked[] = [];
 
@@ -1237,7 +1245,7 @@ describe('every machine in the tree, walked', () => {
     }
   }, 300_000);
 
-  it('finds the eleven machines that were here, plus eight from one commit, three from the next, three from the trap commit, four from the modality, two from `cover` and one from `recovery`', () => {
+  it('finds the eleven machines that were here, plus eight from one commit, three from the next, three from the trap commit, four from the modality, two from `cover`, one from `recovery` and one from the coverage probe', () => {
     const added = walked.filter((w) => ADDED_FILES.includes(w.file));
     expect(added).toHaveLength(8);
     const components = walked.filter((w) => COMPONENT_FILES.includes(w.file));
@@ -1250,8 +1258,10 @@ describe('every machine in the tree, walked', () => {
     expect(covers).toHaveLength(2);
     const recoveries = walked.filter((w) => RECOVERY_FILES.includes(w.file));
     expect(recoveries).toHaveLength(1);
+    const probes = walked.filter((w) => PROBE_FILES.includes(w.file));
+    expect(probes).toHaveLength(1);
     expect(
-      walked.length - added.length - components.length - traps.length - modality.length - covers.length - recoveries.length,
+      walked.length - added.length - components.length - traps.length - modality.length - covers.length - recoveries.length - probes.length,
       'the tree gained or lost a machine',
     ).toBe(11);
   });

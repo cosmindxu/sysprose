@@ -15,9 +15,14 @@ Phase 1 (this script) builds the **universe definition** and reports what is mea
 States are only set where a document *measures* it:
   - CON rows: the class register's level (differential-tested / tested / experimental /
     fenced / unpinned) -> decided / partial / refused.
-  - TXT rows: parsed = the construct occurs in the 637-model corpus (the corpus test
-    proves parse conformance for every corpus model); semantics/decision stay
-    `unmeasured` (only the constraint lane measures them today).
+  - TXT rows: read / partial from a pinned probe under `scripts/todo-dashboard/probes/`,
+    run on the four decision surfaces (`checkConstraints`, `checkConstraintsNumeric`,
+    `verifyModel --engine literal` and `--engine smt`; `probes/run.ts` is the reporter).
+    `read` = the construct reaches a row a surface decides and the evidence quotes the row
+    and its sentence; `partial` = only some shapes reach a row, or the construct parses
+    and is rendered/traced but no decision row reads it. The corpus weight is still the
+    usage count, and corpus.test.ts still proves parse conformance; that is no longer the
+    read claim (`measure_txt` holds every TXT row to a probe, and each probe to a file).
   - GRAPH rows: rendered = an E2E spec in `test/e2e/` asserts the view kind's panel
     (`measure_known` names the spec and the assertion).
   - API rows: decided = a conformance test in `test/conformance/` asserts the service
@@ -26,7 +31,7 @@ States are only set where a document *measures* it:
   - KERML rows: `unmeasured` (no test pins the metaclass itself).
 
 The two headers:
-  construct coverage = corpus-weighted share of rows whose state is parsed/decided/rendered
+  construct coverage = corpus-weighted share of rows whose state is read/parsed/decided/rendered
   decision coverage  = share of measured CON rows the solver decides (level >= tested)
 
 They are deliberately NOT a single "percent of all SysML": the denominators are stated on
@@ -174,6 +179,10 @@ def build_universe():
 
     # Area notes from the conformance scorecard (recorded beside the states)
     notes = {
+        'Textual notation': 'each TXT row is read or partial from a pinned probe under '
+                            'scripts/todo-dashboard/probes/ (reported by probes/run.ts over the four '
+                            'decision surfaces); a construct that files no row, or only a structural read, '
+                            'says so and is partial, never read',
         'Graphical notation': 'the app\'s 17 views include the 11 §4.1 kinds; each is '
                               'rendered where an E2E spec asserts its panel (test/e2e/)',
         'API & services': 'the §5.7 groups are decided where the API conformance tests assert '
@@ -183,11 +192,106 @@ def build_universe():
     }
     data = {'meta': {'generated': '', 'sources': ['docs/02-omg-standard-reference.md', 'docs/CONFORMANCE.md',
                                                     'docs/CONSTRAINT-CLASSES.md', 'corpus (637 models)',
-                                                    'test/conformance/', 'test/e2e/'],
+                                                    'test/conformance/', 'test/e2e/', 'scripts/todo-dashboard/probes/'],
                      'areas': areas, 'notes': notes},
             'rows': rows}
+    measure_txt(rows)
     measure_known(rows)
     return data
+
+
+# The TXT rows' probe evidence, keyed by row id. Each entry names the pinned
+# model under `scripts/todo-dashboard/probes/` and the row(s) the four surfaces
+# (`probes/run.ts`) read over it. `read` is only for a construct that reaches a
+# row a surface decides; a construct that files no row, or whose only reads are
+# structural (a direction, a connector, an annotation, a transition graph), is
+# `partial` and the sentence says what is missing. The path is checked to exist,
+# so a renamed probe fails the build rather than leaving stale evidence. Eight of
+# these probes reconstruct shapes recorded when CU-2 was drafted (the header of
+# each says so; the two that needed a read added say so); the other six are
+# constructed here. A `partial` whose sentence begins "the construct itself reaches
+# no row" means the surfaces read nothing of the construct, not that some shapes are decided.
+TXT_PROBES = {
+    'TXT:packages-imports': ('read', 'scripts/todo-dashboard/probes/packages-imports.sysml',
+                             '`Use::SizeLimit::«ConstraintUsage»` reads `a.w.size <= a.limit`, '
+                             'satisfied on the check, numeric, literal and SMT surfaces; `Widget` resolves '
+                             'only through `import Base::*`, so the import is on the read path'),
+    'TXT:parts-attributes': ('read', 'scripts/todo-dashboard/probes/parts-attributes.sysml',
+                             '`ProbePartsAttributes::MassCeiling::«ConstraintUsage»` reads '
+                             '`v.mass <= 2000.0` through a part-typed usage, satisfied on all four surfaces'),
+    'TXT:items': ('read', 'scripts/todo-dashboard/probes/items.sysml',
+                  '`ProbeItems::FuelCeiling::«ConstraintUsage»` reads `v.fuel.mass <= 5.0` over an item '
+                  'usage, satisfied on all four surfaces'),
+    'TXT:ports-direction': ('partial', 'scripts/todo-dashboard/probes/ports-direction.sysml',
+                            'a port usage is a feature, and `ProbePorts::FlowCeiling::«ConstraintUsage»` '
+                            'reads its member value (`e.fuelOut.flowRate <= 15.0`, satisfied on all four '
+                            'surfaces), but the `out` direction is structural and no surface reads it'),
+    'TXT:interfaces-connections': ('partial', 'scripts/todo-dashboard/probes/interfaces-connections.sysml',
+                                   'the source port\'s member value reaches a row (`a.source.tx.rate <= '
+                                   '10.0`, satisfied on all four surfaces); the `connection` itself files no '
+                                   'row — a bare connect is an equality only under '
+                                   '`--connections-as-equalities`'),
+    'TXT:actions-control-nodes': ('partial', 'scripts/todo-dashboard/probes/actions-control-nodes.sysml',
+                                  "the action definition's attribute reaches a row (`x.rate <= x.limit`, "
+                                  'satisfied on all four surfaces); `first`/`then` control nodes file no row '
+                                  '— the model-checking lane owns them'),
+    'TXT:states-transitions': ('partial', 'scripts/todo-dashboard/probes/states-transitions.sysml',
+                               "a state definition's attribute reaches a row (`v.modes.load <= v.limit`, "
+                               'satisfied on all four surfaces); the transition graph files no row — the '
+                               'model-checking lane owns it'),
+    'TXT:calculations-constraints': ('partial', 'scripts/todo-dashboard/probes/calculations-constraints.sysml',
+                                     'the asserted constraint usage is read over its parameter bound to the '
+                                     'design: the check reads `vehicle.mass <= 2000` and reports `Constraint '
+                                     'satisfied (MassOk : MassCeiling, with v = vehicle)`, and the numeric '
+                                     'surface agrees; the literal and SMT surfaces file no obligation for it, '
+                                     'and no `calc` definition or usage is probed'),
+    'TXT:requirements': ('read', 'scripts/todo-dashboard/probes/requirements.sysml',
+                         '`ProbeRequirements::massCeiling::«ConstraintUsage»` reads `v.mass <= 2000.0` '
+                         'through the requirement subject, satisfied on all four surfaces'),
+    'TXT:allocation': ('partial', 'scripts/todo-dashboard/probes/allocation.sysml',
+                       'the construct itself reaches no row: `allocate Supply::volts to Load::volts` files no '
+                       "row on any surface; the neighbouring `LoadVolts` is decided at the load's own value "
+                       '(`l.volts >= 20.0`, `3 vs 20`)'),
+    'TXT:views-viewpoints-rendering': ('partial', 'scripts/todo-dashboard/probes/views.sysml',
+                                       'the construct itself reaches no row: `view` and `viewpoint` parse '
+                                       '(9 elements) and file no decision row on any surface; the GRAPH rows '
+                                       'carry the rendering evidence'),
+    'TXT:enumerations': ('partial', 'scripts/todo-dashboard/probes/enumerations.sysml',
+                         'the construct itself reaches no row, every surface refuses it: `Mode::on` — the check reports "Could not evaluate: the body names '
+                         '`Mode::on`, which this lane reads only where the feature states an `=` literal", '
+                         'and the literal and SMT engines abstain with the unresolved-name sentence'),
+    'TXT:occurrences': ('partial', 'scripts/todo-dashboard/probes/occurrences.sysml',
+                        '`Occurrences::DurationLimit::«ConstraintUsage»` reads `t.duration <= t.limit` '
+                        'over an occurrence usage, satisfied on all four surfaces; an attribute read only — '
+                        'lifetime, time slices and snapshots are not read'),
+    'TXT:metadata': ('partial', 'scripts/todo-dashboard/probes/metadata.sysml',
+                     'the construct itself reaches no row: the part\'s own `s.mass <= s.limit` is read, but the '
+                     '`@Safety` metadata usage is an annotation no decision surface reads'),
+}
+
+
+def measure_txt(rows):
+    """Apply the TXT probes; every TXT row must carry one, and every probe must exist.
+
+    This is the read claim's mechanical half: a missing probe, a stale row id or a
+    probe file that was renamed is a hard error, and a TXT row with no entry can never
+    keep the old parse-only `parsed` state by default. The corpus `note` (usage count
+    and corpus.test.ts parse evidence) is kept beside the probe sentence.
+    """
+    by_id = {r['id']: r for r in rows}
+    txt = [r['id'] for r in rows if r['kind'] == 'TXT']
+    stale = [k for k in TXT_PROBES if k not in by_id]
+    if stale:
+        raise SystemExit(f'coverage.measure_txt: ids with no row: {sorted(stale)}')
+    missing = [rid for rid in txt if rid not in TXT_PROBES]
+    if missing:
+        raise SystemExit(f'coverage.measure_txt: TXT rows with no probe: {sorted(missing)}')
+    for rid, (state, probe, sentence) in TXT_PROBES.items():
+        if not os.path.exists(os.path.join(REPO, probe)):
+            raise SystemExit(f'coverage.measure_txt: probe file missing: {probe}')
+        r = by_id[rid]
+        r['state'] = state
+        r['evidence'] = f'{state} (probe {probe}): {sentence}'
 
 
 # The GRAPH and API rows' mechanical evidence, keyed by row id. A row appears only where
@@ -278,7 +382,7 @@ def metrics(data):
     rows = data['rows']
     measured = [r for r in rows if r['state'] != 'unmeasured']
     w_measured = sum(max(1, r['weight']) for r in measured)
-    w_cov = sum(max(1, r['weight']) for r in measured if r['state'] in ('parsed', 'decided', 'rendered'))
+    w_cov = sum(max(1, r['weight']) for r in measured if r['state'] in ('read', 'parsed', 'decided', 'rendered'))
     con = [r for r in rows if r['kind'] == 'CON' and r['state'] != 'unmeasured']
     con_decided = [r for r in con if r['state'] == 'decided']
     return {
@@ -297,7 +401,7 @@ def write_html(data, m):
     by_area = {}
     for r in data['rows']:
         by_area.setdefault(r['area'], []).append(r)
-    pill = {'parsed': 'read', 'decided': 'decided', 'rendered': 'rendered', 'partial': 'partial',
+    pill = {'read': 'read', 'parsed': 'parsed', 'decided': 'decided', 'rendered': 'rendered', 'partial': 'partial',
             'refused': 'refused', 'unmeasured': 'unmeasured'}
     body_rows = []
     for area, rs in by_area.items():
@@ -324,7 +428,7 @@ table{{border-collapse:collapse;width:100%}} th,td{{text-align:left;padding:5px 
 th{{font-size:12.5px;color:#6e6a63;font-weight:600}} td.n,th.n{{text-align:right;white-space:nowrap}}
 tr.area td{{background:#fcfbf8;padding-top:10px;border-bottom:1px solid #e8e5dc}}
 .pill{{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11.5px;font-weight:600}}
-.pill.parsed{{background:#e7f4e8;color:#1e6b24}} .pill.decided{{background:#dff3e2;color:#14532d}}
+.pill.read{{background:#e7f4e8;color:#1e6b24}} .pill.parsed{{background:#eef6ee;color:#3d6b41}} .pill.decided{{background:#dff3e2;color:#14532d}}
 .pill.rendered{{background:#e6f0fb;color:#1d4ed8}}
 .pill.partial{{background:#fff4e5;color:#a3560b}} .pill.refused{{background:#f2f0ff;color:#5925dc}}
 .pill.unmeasured{{background:#f4f2ee;color:#6e6a63}}
@@ -336,30 +440,32 @@ tr.area td{{background:#fcfbf8;padding-top:10px;border-bottom:1px solid #e8e5dc}
 The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> measured,
 <b>{m['unmeasured']}</b> unmeasured. <a href="standalone.html">← back to the dashboard</a></p>
 <div class="cards">
-  <div class="card"><div class="k">Conscript coverage (weighted)</div><div class="v">{m['construct_coverage']}%</div>
-    <div class="k">of the measured rows, corpus-weighted: parsed / decided / rendered over measured</div></div>
+  <div class="card"><div class="k">Construct coverage (weighted)</div><div class="v">{m['construct_coverage']}%</div>
+    <div class="k">of the measured rows, corpus-weighted: read / parsed / decided / rendered over measured</div></div>
   <div class="card"><div class="k">Decision coverage (constraint lane)</div><div class="v">{m['decision_coverage']}%</div>
     <div class="k">{m['decision_decided']} of {m['decision_rows']} measured constraint classes are decided (level ≥ tested)</div></div>
   <div class="card"><div class="k">Wrong-statement findings</div><div class="v">{m['false']}</div>
     <div class="k">soundness is reported beside coverage, never folded in</div></div>
   <div class="card"><div class="k">Unmeasured</div><div class="v">{m['unmeasured']}</div>
-    <div class="k">rows with no mechanical evidence yet (phase 2 fills these with pinned probes)</div></div>
+    <div class="k">rows with no mechanical evidence yet (pinned probes fill them as they land)</div></div>
 </div>
 <table>
 <thead><tr><th class="n">Kind</th><th>Construct / class</th><th>State</th><th class="n">Weight</th><th>Evidence</th></tr></thead>
 <tbody>{''.join(body_rows)}</tbody></table>
 <div class="note"><b>How this was computed.</b> Rows come from <i>02-omg-standard-reference</i> (§2.2 metaclasses,
 §3.2 textual areas, §4.1 view kinds, §5.7 API groups) and the class register
-(<i>docs/CONSTRAINT-CLASSES.md</i>). A TXT row is <i>read</i> when the corpus uses the construct
-(parse conformance proven by <i>corpus.test.ts</i>); a CON row is <i>decided</i> when its class level is
+(<i>docs/CONSTRAINT-CLASSES.md</i>). A TXT row is <i>read</i> where a pinned probe
+(<i>scripts/todo-dashboard/probes/</i>, run by <i>probes/run.ts</i> over the four decision surfaces) reaches a
+row and quotes its sentence — the corpus usage count and <i>corpus.test.ts</i>'s parse evidence are kept beside
+it, not substituted for it; a construct that files no row or only a structural read is <i>partial</i>, and a <i>partial</i> row is measured but is not in the construct-coverage numerator, so a row that was only parsed before drops out of it. A CON
+row is <i>decided</i> when its class level is
 <i>differential-tested</i> or <i>tested</i>, <i>partial</i> when <i>experimental</i>, <i>refused</i> when
 <i>fenced</i>/<i>unpinned</i>; a GRAPH row is <i>rendered</i> where an E2E spec asserts the view kind's
 panel (<i>test/e2e/</i>); an API row is <i>decided</i> where a conformance test asserts the group's
 endpoints (<i>test/conformance/</i>, CONFORMANCE §3–4). Weights are corpus usage (TXT) or counted rows
 (CON). KERML rows stay unmeasured here: no test pins the metaclass itself, and an API group whose
 endpoints this build does not ship stays unmeasured too (§5.7's <i>Other</i>: POST /transform and
-/validate). The app's 17 views include the 11 §4.1 view kinds. Phase 2 replaces the remaining
-unmeasured rows with pinned probes across the four surfaces.</div>
+/validate). The app's 17 views include the 11 §4.1 view kinds. Pinned probes fill the remaining unmeasured rows as they land.</div>
 </body></html>"""
     open(OUT_HTML, 'w', encoding='utf-8').write(html)
 
