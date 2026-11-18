@@ -1,14 +1,39 @@
 {
  "meta": {
-  "generated": "2026-11-19T00:14:19+01:00",
+  "generated": "2026-11-19T00:33:41+01:00",
   "sources": [
-   "docs/02-omg-standard-reference.md",
-   "docs/CONFORMANCE.md",
+   "scripts/todo-dashboard/coverage-universe-source.json",
    "docs/CONSTRAINT-CLASSES.md",
    "corpus (637 models)",
    "test/conformance/",
    "test/e2e/",
    "scripts/todo-dashboard/probes/"
+  ],
+  "standards": [
+   {
+    "kind": "KERML",
+    "document": "OMG Kernel Modeling Language (KerML) 1.0, formal/2026-03-01",
+    "file": "omg-kerml-1.0-2026__Kernel-Modeling-Language-KerML-Version-1-0.pdf",
+    "clauses": "8.3 abstract syntax (8.3.2 root, 8.3.3 core, 8.3.4 kernel). \u00a78.2 concrete syntax and \u00a78.4 semantics are read for the clause text; \u00a79 model libraries are the pinned stdlib (src/library/std/manifest.json), not construct rows here."
+   },
+   {
+    "kind": "TXT",
+    "document": "OMG Systems Modeling Language (SysML) v2.0 Part 1 Language, 2026",
+    "file": "omg-sysml-2.0-part1-2026__OMG-Systems-Modeling-Language-SysML-Version-2-0-Part-1-Language.pdf",
+    "clauses": "7 language description (the textual notation's construct clauses), 8.2.2 textual notation EBNF and 8.2.3 graphical notation."
+   },
+   {
+    "kind": "GRAPH",
+    "document": "OMG Systems Modeling Language (SysML) v2.0 Part 1 Language, 2026",
+    "file": "omg-sysml-2.0-part1-2026__OMG-Systems-Modeling-Language-SysML-Version-2-0-Part-1-Language.pdf",
+    "clauses": "8.2.3 graphical notation and 9.2.20 Standard View Definitions (Table 34 maps each standard view definition to its graphical clause)."
+   },
+   {
+    "kind": "API",
+    "document": "OMG Systems Modeling API and Services 1.0, 2026",
+    "file": "omg-systems-modeling-api-1.0-2026__Systems-Modeling-Application-Programming-Interface-API-and-Services.pdf",
+    "clauses": "7.2 API services (PIM) and 8.1.3 REST/HTTP PSM endpoint mapping."
+   }
   ],
   "areas": [
    "KerML kernel",
@@ -18,9 +43,10 @@
    "Constraints & parametrics"
   ],
   "notes": {
+   "KerML kernel": "the 26 metaclass rows are the KerML 8.3 abstract-syntax metaclasses this tool stands on; where SysML v2 Part 1 \u00a77 defines the same construct, its textual clause is attached beside the KerML clause (and one row, ItemFlow, cites KerML Flow, not a SysML abstract-syntax clause). The four annotation primitives the earlier 02 \u00a72.2 extraction dropped are rows here (8.3.2.3.3\u20138.3.2.3.6). No test pins a metaclass itself, so the rows stay unmeasured (CU-4 is their probe)",
    "Textual notation": "each TXT row is read or partial from a pinned probe under scripts/todo-dashboard/probes/ (reported by probes/run.ts over the four decision surfaces); a construct that files no row, or only a structural read, says so and is partial, never read",
-   "Graphical notation": "the app's 17 views include the 11 \u00a74.1 kinds; each is rendered where an E2E spec asserts its panel (test/e2e/)",
-   "API & services": "the \u00a75.7 groups are decided where the API conformance tests assert their contracts (CONFORMANCE \u00a73); the \"Other\" group's POST /transform and /validate are not shipped here, so it stays unmeasured; the OSLC PSM has its own suite (CONFORMANCE \u00a74, test/conformance/oslc-conformance.test.ts)"
+   "Graphical notation": "the 11 view rows are the app's views; each is rendered where an E2E spec asserts its panel (test/e2e/), and its clause is the SysML v2 Part 1 Standard View Definition (9.2.20) and graphical clause (8.2.3) it renders",
+   "API & services": "the service groups are decided where the API conformance tests assert their contracts (CONFORMANCE \u00a73); the \"Other\" group's POST /transform and /validate are not shipped here and have no clause in the API and Services specification, so it stays unmeasured; the OSLC PSM has its own suite (CONFORMANCE \u00a74, test/conformance/oslc-conformance.test.ts)"
   }
  },
  "rows": [
@@ -29,594 +55,1468 @@
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Element",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.2.1.2; SysML v2 Part 1 7.2.2",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Element",
+    "SysML:Elements"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Element",
+     "clause": "KerML 8.3.2.1.2",
+     "construct": "Element \u2014 the root of every modeling construct; carries identity, an optional name or short name, and ownership."
+    },
+    {
+     "id": "SysML:Elements",
+     "clause": "SysML v2 Part 1 7.2.2",
+     "construct": "Elements \u2014 the SysML textual construct for every model element: element IDs and alias IDs, names and short names, and the leading kind keyword (7.2.1 overview)."
+    }
+   ]
   },
   {
    "id": "KERML:relationship",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Relationship",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.2.1.3; SysML v2 Part 1 7.2.3; SysML v2 Part 1 7.3.2",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Relationship",
+    "SysML:Relationships",
+    "SysML:Dependencies"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Relationship",
+     "clause": "KerML 8.3.2.1.3",
+     "construct": "Relationship \u2014 an Element relating a source and a target end; itself an Element, so it can be named, owned and annotated."
+    },
+    {
+     "id": "SysML:Relationships",
+     "clause": "SysML v2 Part 1 7.2.3",
+     "construct": "Relationships \u2014 the SysML textual notation for related elements, owning relationships and the deletion rules they imply."
+    },
+    {
+     "id": "SysML:Dependencies",
+     "clause": "SysML v2 Part 1 7.3.2",
+     "construct": "Dependencies \u2014 `dependency from <client> to <supplier>`, a relationship asserting that the client relies on the supplier (7.3.1 overview)."
+    }
+   ]
   },
   {
    "id": "KERML:namespace",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Namespace",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.2.4.5",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Namespace"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Namespace",
+     "clause": "KerML 8.3.2.4.5",
+     "construct": "Namespace \u2014 an Element that contains members through memberships and exposes them by name; supports name resolution and imports."
+    }
+   ]
   },
   {
    "id": "KERML:membership-owningmembership",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Membership / OwningMembership",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.2.4.3; KerML 8.3.2.4.8",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Membership",
+    "KERML:OwningMembership"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Membership",
+     "clause": "KerML 8.3.2.4.3",
+     "construct": "Membership \u2014 the reified link between a Namespace and a member element, with visibility."
+    },
+    {
+     "id": "KERML:OwningMembership",
+     "clause": "KerML 8.3.2.4.8",
+     "construct": "OwningMembership \u2014 a Membership that additionally asserts composite ownership of its member."
+    }
+   ]
   },
   {
    "id": "KERML:featuremembership",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "FeatureMembership",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.1.6",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:FeatureMembership"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:FeatureMembership",
+     "clause": "KerML 8.3.3.1.6",
+     "construct": "FeatureMembership \u2014 an OwningMembership specialized for a feature: a type owns a feature."
+    }
+   ]
   },
   {
    "id": "KERML:import-membershipimport-namespaceimport",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Import (MembershipImport, NamespaceImport)",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.2.4.2; KerML 8.3.2.4.4; KerML 8.3.2.4.6",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Import",
+    "KERML:MembershipImport",
+    "KERML:NamespaceImport"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Import",
+     "clause": "KerML 8.3.2.4.2",
+     "construct": "Import \u2014 a relationship bringing names from another namespace into scope, public or private."
+    },
+    {
+     "id": "KERML:MembershipImport",
+     "clause": "KerML 8.3.2.4.4",
+     "construct": "MembershipImport \u2014 an Import of a specific membership from another namespace."
+    },
+    {
+     "id": "KERML:NamespaceImport",
+     "clause": "KerML 8.3.2.4.6",
+     "construct": "NamespaceImport \u2014 an Import of the members of another namespace, recursive where stated (`::**`)."
+    }
+   ]
   },
   {
    "id": "KERML:type",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Type",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.1.10",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Type"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Type",
+     "clause": "KerML 8.3.3.1.10",
+     "construct": "Type \u2014 anything that classifies: the abstract supertype of Classifier and Feature, owning features, specializations and multiplicity."
+    }
+   ]
   },
   {
    "id": "KERML:classifier",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Classifier",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.2.2; SysML v2 Part 1 7.6.2",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Classifier",
+    "SysML:Definitions"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Classifier",
+     "clause": "KerML 8.3.3.2.2",
+     "construct": "Classifier \u2014 a Type that classifies things directly."
+    },
+    {
+     "id": "SysML:Definitions",
+     "clause": "SysML v2 Part 1 7.6.2",
+     "construct": "Definitions \u2014 `<kind> def <name>`: a Classifier declared with a kind keyword, optional `specializes`/`:>` subclassifications, and a namespace body."
+    }
+   ]
   },
   {
    "id": "KERML:feature",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Feature",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.3.4; SysML v2 Part 1 7.6.3; SysML v2 Part 1 7.6.4; SysML v2 Part 1 7.6.6",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Feature",
+    "SysML:Usages",
+    "SysML:ReferenceUsages",
+    "SysML:FeatureChains"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Feature",
+     "clause": "KerML 8.3.3.3.4",
+     "construct": "Feature \u2014 a Type that classifies values in the context of another type; has a featuring type and a type, with ordered multiplicity-bounded values."
+    },
+    {
+     "id": "SysML:Usages",
+     "clause": "SysML v2 Part 1 7.6.3",
+     "construct": "Usages \u2014 `<kind> <name> : <Type>`: a Feature declared with a kind keyword, a type and an optional body, the reuse pattern of every SysML usage."
+    },
+    {
+     "id": "SysML:ReferenceUsages",
+     "clause": "SysML v2 Part 1 7.6.4",
+     "construct": "Reference usages \u2014 a usage declared with no kind keyword (or `ref`), referential by definition."
+    },
+    {
+     "id": "SysML:FeatureChains",
+     "clause": "SysML v2 Part 1 7.6.6",
+     "construct": "Feature chains \u2014 a dotted path of usages recording the intermediate features, not just a qualified name."
+    }
+   ]
   },
   {
    "id": "KERML:specialization",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Specialization",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.1.8",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Specialization"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Specialization",
+     "clause": "KerML 8.3.3.1.8",
+     "construct": "Specialization \u2014 the general subsetting relationship: instances of the specific type are a subset of the general type's instances."
+    }
+   ]
   },
   {
    "id": "KERML:subclassification",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Subclassification",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.2.3",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Subclassification"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Subclassification",
+     "clause": "KerML 8.3.3.2.3",
+     "construct": "Subclassification \u2014 a Specialization between classifiers (textual `:>` or `specializes`)."
+    }
+   ]
   },
   {
    "id": "KERML:featuretyping",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "FeatureTyping",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.3.7",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:FeatureTyping"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:FeatureTyping",
+     "clause": "KerML 8.3.3.3.7",
+     "construct": "FeatureTyping \u2014 relates a Feature to the Type that types it (textual `:`)."
+    }
+   ]
   },
   {
    "id": "KERML:subsetting",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Subsetting",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.3.10",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Subsetting"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Subsetting",
+     "clause": "KerML 8.3.3.3.10",
+     "construct": "Subsetting \u2014 a Specialization between features: one feature's values are a subset of another's (textual `:>`)."
+    }
+   ]
   },
   {
    "id": "KERML:redefinition",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Redefinition",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.3.8",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Redefinition"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Redefinition",
+     "clause": "KerML 8.3.3.3.8",
+     "construct": "Redefinition \u2014 a Subsetting that replaces an inherited feature, keeping its value set but changing name, type, multiplicity or value (textual `:>>`)."
+    }
+   ]
   },
   {
    "id": "KERML:conjugation",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Conjugation",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.1.2",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Conjugation"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Conjugation",
+     "clause": "KerML 8.3.3.1.2",
+     "construct": "Conjugation \u2014 produces a conjugated type with input and output directions reversed (textual `~`)."
+    }
+   ]
   },
   {
    "id": "KERML:multiplicity-multiplicityrange",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Multiplicity (MultiplicityRange)",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.3.1.9; KerML 8.3.4.11.2",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Multiplicity",
+    "KERML:MultiplicityRange"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Multiplicity",
+     "clause": "KerML 8.3.3.1.9",
+     "construct": "Multiplicity \u2014 a bound on a feature's value count."
+    },
+    {
+     "id": "KERML:MultiplicityRange",
+     "clause": "KerML 8.3.4.11.2",
+     "construct": "MultiplicityRange \u2014 the lower and upper bound of a multiplicity (textual `[lo..hi]`, `[n]`, `[*]`)."
+    }
+   ]
   },
   {
    "id": "KERML:class-structure-datatype",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Class, Structure, DataType",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.4.2.2; KerML 8.3.4.3.2; KerML 8.3.4.1.2",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Class",
+    "KERML:Structure",
+    "KERML:DataType"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Class",
+     "clause": "KerML 8.3.4.2.2",
+     "construct": "Class \u2014 a Classifier whose instances are identity-bearing objects."
+    },
+    {
+     "id": "KERML:Structure",
+     "clause": "KerML 8.3.4.3.2",
+     "construct": "Structure \u2014 a Class whose instances are composite structures."
+    },
+    {
+     "id": "KERML:DataType",
+     "clause": "KerML 8.3.4.1.2",
+     "construct": "DataType \u2014 a Classifier whose instances are pure data values."
+    }
+   ]
   },
   {
    "id": "KERML:association-connector",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Association, Connector",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.4.4.2; KerML 8.3.4.5.3",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Association",
+    "KERML:Connector"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Association",
+     "clause": "KerML 8.3.4.4.2",
+     "construct": "Association \u2014 a Classifier typed relationship between features."
+    },
+    {
+     "id": "KERML:Connector",
+     "clause": "KerML 8.3.4.5.3",
+     "construct": "Connector \u2014 a feature whose values are links between its ends; the basis of connections and interfaces."
+    }
+   ]
   },
   {
    "id": "KERML:behavior-step-function",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Behavior, Step, Function",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.4.6.2; KerML 8.3.4.6.3; KerML 8.3.4.7.4",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Behavior",
+    "KERML:Step",
+    "KERML:Function"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Behavior",
+     "clause": "KerML 8.3.4.6.2",
+     "construct": "Behavior \u2014 a Class that classifies performances."
+    },
+    {
+     "id": "KERML:Step",
+     "clause": "KerML 8.3.4.6.3",
+     "construct": "Step \u2014 a Feature that is a usage of a Behavior."
+    },
+    {
+     "id": "KERML:Function",
+     "clause": "KerML 8.3.4.7.4",
+     "construct": "Function \u2014 a Behavior with a result parameter: a value-returning behavior."
+    }
+   ]
   },
   {
    "id": "KERML:expression-subtypes",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Expression (+ subtypes)",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.4.7.3",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Expression"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Expression",
+     "clause": "KerML 8.3.4.7.3",
+     "construct": "Expression \u2014 a Step that is computable; its subtypes (8.3.4.8.1\u201318) include literal, operator, invocation, feature-reference, constructor and collect expressions, the basis of calc and constraint bodies."
+    }
+   ]
   },
   {
    "id": "KERML:succession-itemflow",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Succession, ItemFlow",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.4.5.4; KerML 8.3.4.9.2; SysML v2 Part 1 7.16.2",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Succession",
+    "KERML:Flow",
+    "SysML:Flows"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Succession",
+     "clause": "KerML 8.3.4.5.4",
+     "construct": "Succession \u2014 a Connector that orders its ends in time (control flow)."
+    },
+    {
+     "id": "KERML:Flow",
+     "clause": "KerML 8.3.4.9.2",
+     "construct": "Flow (ItemFlow) \u2014 a Step that transfers values or items from one feature to another (object flow); SuccessionFlow (8.3.4.9.6) orders them in time."
+    },
+    {
+     "id": "SysML:Flows",
+     "clause": "SysML v2 Part 1 7.16.2",
+     "construct": "Flow definitions and usages \u2014 `flow def`, and `flow`/`message`/`succession flow` usages; messages declare their payload with `of`."
+    }
+   ]
   },
   {
    "id": "KERML:package-metaclass-metadatafeature",
    "area": "KerML kernel",
    "kind": "KERML",
    "name": "Package, Metaclass, MetadataFeature",
-   "source": "02-omg-standard-reference \u00a72.2",
+   "source": "KerML 8.3.4.13.4; KerML 8.3.4.12.2; KerML 8.3.4.12.3",
    "note": "",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Package",
+    "KERML:Metaclass",
+    "KERML:MetadataFeature"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Package",
+     "clause": "KerML 8.3.4.13.4",
+     "construct": "Package \u2014 a Namespace that owns its members as a library or model package."
+    },
+    {
+     "id": "KERML:Metaclass",
+     "clause": "KerML 8.3.4.12.2",
+     "construct": "Metaclass \u2014 a Structure that classifies metadata features."
+    },
+    {
+     "id": "KERML:MetadataFeature",
+     "clause": "KerML 8.3.4.12.3",
+     "construct": "MetadataFeature \u2014 a feature that is a metadata instance of a Metaclass."
+    }
+   ]
+  },
+  {
+   "id": "KERML:annotation",
+   "area": "KerML kernel",
+   "kind": "KERML",
+   "name": "Annotation",
+   "source": "KerML 8.3.2.3.3; SysML v2 Part 1 7.4.1",
+   "note": "",
+   "state": "unmeasured",
+   "evidence": "",
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Annotation",
+    "SysML:Annotations"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Annotation",
+     "clause": "KerML 8.3.2.3.3",
+     "construct": "Annotation \u2014 the reified relationship applying an annotating element to its annotated element."
+    },
+    {
+     "id": "SysML:Annotations",
+     "clause": "SysML v2 Part 1 7.4.1",
+     "construct": "Annotations \u2014 the SysML notation attaching a comment, documentation or textual representation to one or more model elements."
+    }
+   ]
+  },
+  {
+   "id": "KERML:comment",
+   "area": "KerML kernel",
+   "kind": "KERML",
+   "name": "Comment",
+   "source": "KerML 8.3.2.3.4; SysML v2 Part 1 7.4.2",
+   "note": "",
+   "state": "unmeasured",
+   "evidence": "",
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Comment",
+    "SysML:Comments"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Comment",
+     "clause": "KerML 8.3.2.3.4",
+     "construct": "Comment \u2014 an annotating element carrying body text for a model element."
+    },
+    {
+     "id": "SysML:Comments",
+     "clause": "SysML v2 Part 1 7.4.2",
+     "construct": "Comments \u2014 `comment <name> /* \u2026 */`, a comment that may be named and is a member of its namespace."
+    }
+   ]
+  },
+  {
+   "id": "KERML:documentation",
+   "area": "KerML kernel",
+   "kind": "KERML",
+   "name": "Documentation",
+   "source": "KerML 8.3.2.3.5; SysML v2 Part 1 7.4.2",
+   "note": "",
+   "state": "unmeasured",
+   "evidence": "",
+   "weight": 0,
+   "clause_ids": [
+    "KERML:Documentation",
+    "SysML:Documentation"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:Documentation",
+     "clause": "KerML 8.3.2.3.5",
+     "construct": "Documentation \u2014 a Comment whose body is the documentation of its annotated element."
+    },
+    {
+     "id": "SysML:Documentation",
+     "clause": "SysML v2 Part 1 7.4.2",
+     "construct": "Documentation \u2014 `doc /* \u2026 */`, a comment that documents its single owning element."
+    }
+   ]
+  },
+  {
+   "id": "KERML:textual-representation",
+   "area": "KerML kernel",
+   "kind": "KERML",
+   "name": "TextualRepresentation",
+   "source": "KerML 8.3.2.3.6; SysML v2 Part 1 7.4.3",
+   "note": "",
+   "state": "unmeasured",
+   "evidence": "",
+   "weight": 0,
+   "clause_ids": [
+    "KERML:TextualRepresentation",
+    "SysML:TextualRepresentation"
+   ],
+   "clauses": [
+    {
+     "id": "KERML:TextualRepresentation",
+     "clause": "KerML 8.3.2.3.6",
+     "construct": "TextualRepresentation \u2014 an annotating element carrying a textual rendering of its annotated element in a stated language."
+    },
+    {
+     "id": "SysML:TextualRepresentation",
+     "clause": "SysML v2 Part 1 7.4.3",
+     "construct": "TextualRepresentation \u2014 a textual body in a named language (the `rep` notation) rendered as an annotation of its element."
+    }
+   ]
   },
   {
    "id": "TXT:packages-imports",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Packages & imports",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.5; SysML v2 Part 1 7.5.3",
    "note": "used by 637 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "read",
    "evidence": "read (probe scripts/todo-dashboard/probes/packages-imports.sysml): `Use::SizeLimit::\u00abConstraintUsage\u00bb` reads `a.w.size <= a.limit`, satisfied on the check, numeric, literal and SMT surfaces; `Widget` resolves only through `import Base::*`, so the import is on the read path",
-   "weight": 637
+   "weight": 637,
+   "clause_ids": [
+    "TXT:namespaces",
+    "TXT:imports"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:namespaces",
+     "clause": "SysML v2 Part 1 7.5",
+     "construct": "Namespaces and packages: package definitions and usages, owned members and aliases (7.5.1\u20137.5.2)."
+    },
+    {
+     "id": "TXT:imports",
+     "clause": "SysML v2 Part 1 7.5.3",
+     "construct": "Imports \u2014 public/private, membership and namespace (recursive `::**`) imports, with import filtering (7.5.4)."
+    }
+   ]
   },
   {
    "id": "TXT:parts-attributes",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Parts & attributes",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.7; SysML v2 Part 1 7.11",
    "note": "used by 632 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "read",
    "evidence": "read (probe scripts/todo-dashboard/probes/parts-attributes.sysml): `ProbePartsAttributes::MassCeiling::\u00abConstraintUsage\u00bb` reads `v.mass <= 2000.0` through a part-typed usage, satisfied on all four surfaces",
-   "weight": 632
+   "weight": 632,
+   "clause_ids": [
+    "TXT:attributes",
+    "TXT:parts"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:attributes",
+     "clause": "SysML v2 Part 1 7.7",
+     "construct": "Attributes \u2014 attribute definitions (DataTypes) and attribute usages with types and values."
+    },
+    {
+     "id": "TXT:parts",
+     "clause": "SysML v2 Part 1 7.11",
+     "construct": "Parts \u2014 part definitions and part usages, composite features owned by a definition or usage."
+    }
+   ]
   },
   {
    "id": "TXT:items",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Items",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.10",
    "note": "used by 5 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "read",
    "evidence": "read (probe scripts/todo-dashboard/probes/items.sysml): `ProbeItems::FuelCeiling::\u00abConstraintUsage\u00bb` reads `v.fuel.mass <= 5.0` over an item usage, satisfied on all four surfaces",
-   "weight": 5
+   "weight": 5,
+   "clause_ids": [
+    "TXT:items"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:items",
+     "clause": "SysML v2 Part 1 7.10",
+     "construct": "Items \u2014 item definitions and item usages: things that flow or are conserved."
+    }
+   ]
   },
   {
    "id": "TXT:ports-direction",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Ports & direction",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.12",
    "note": "used by 101 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/ports-direction.sysml): a port usage is a feature, and `ProbePorts::FlowCeiling::\u00abConstraintUsage\u00bb` reads its member value (`e.fuelOut.flowRate <= 15.0`, satisfied on all four surfaces), but the `out` direction is structural and no surface reads it",
-   "weight": 101
+   "weight": 101,
+   "clause_ids": [
+    "TXT:ports"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:ports",
+     "clause": "SysML v2 Part 1 7.12",
+     "construct": "Ports \u2014 port definitions and usages with direction (`in`/`out`/`inout`) and conjugation (7.12.3)."
+    }
+   ]
   },
   {
    "id": "TXT:interfaces-connections",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Interfaces & connections",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.13; SysML v2 Part 1 7.14",
    "note": "used by 20 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/interfaces-connections.sysml): the source port's member value reaches a row (`a.source.tx.rate <= 10.0`, satisfied on all four surfaces); the `connection` itself files no row \u2014 a bare connect is an equality only under `--connections-as-equalities`",
-   "weight": 20
+   "weight": 20,
+   "clause_ids": [
+    "TXT:connections",
+    "TXT:interfaces"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:connections",
+     "clause": "SysML v2 Part 1 7.13",
+     "construct": "Connections \u2014 connection definitions and usages, bindings as usages, feature values and successions as usages (7.13.2\u20137.13.5)."
+    },
+    {
+     "id": "TXT:interfaces",
+     "clause": "SysML v2 Part 1 7.14",
+     "construct": "Interfaces \u2014 interface definitions and usages, the port-to-port connection contract."
+    }
+   ]
   },
   {
    "id": "TXT:actions-control-nodes",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Actions & control nodes",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.17; SysML v2 Part 1 7.17.3",
    "note": "used by 32 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/actions-control-nodes.sysml): the action definition's attribute reaches a row (`x.rate <= x.limit`, satisfied on all four surfaces); `first`/`then` control nodes file no row \u2014 the model-checking lane owns them",
-   "weight": 32
+   "weight": 32,
+   "clause_ids": [
+    "TXT:actions",
+    "TXT:control-nodes"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:actions",
+     "clause": "SysML v2 Part 1 7.17",
+     "construct": "Actions \u2014 action definitions and usages, parameters, succession shorthands and structured control."
+    },
+    {
+     "id": "TXT:control-nodes",
+     "clause": "SysML v2 Part 1 7.17.3",
+     "construct": "Control nodes \u2014 fork, join, merge, decision and the initial/final nodes."
+    }
+   ]
   },
   {
    "id": "TXT:states-transitions",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "States & transitions",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.18; SysML v2 Part 1 7.18.3",
    "note": "used by 50 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/states-transitions.sysml): a state definition's attribute reaches a row (`v.modes.load <= v.limit`, satisfied on all four surfaces); the transition graph files no row \u2014 the model-checking lane owns it",
-   "weight": 50
+   "weight": 50,
+   "clause_ids": [
+    "TXT:states",
+    "TXT:transitions"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:states",
+     "clause": "SysML v2 Part 1 7.18",
+     "construct": "States \u2014 state definitions and usages, entry/do/exit behaviors."
+    },
+    {
+     "id": "TXT:transitions",
+     "clause": "SysML v2 Part 1 7.18.3",
+     "construct": "Transition usages \u2014 trigger, guard and effect between states."
+    }
+   ]
   },
   {
    "id": "TXT:calculations-constraints",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Calculations & constraints",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.19.2; SysML v2 Part 1 7.20.2; SysML v2 Part 1 7.20.2; SysML v2 Part 1 7.20.3",
    "note": "used by 596 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/calculations-constraints.sysml): the asserted constraint usage is read over its parameter bound to the design: the check reads `vehicle.mass <= 2000` and reports `Constraint satisfied (MassOk : MassCeiling, with v = vehicle)`, and the numeric surface agrees; the literal and SMT surfaces file no obligation for it, and no `calc` definition or usage is probed",
-   "weight": 596
+   "weight": 596,
+   "clause_ids": [
+    "TXT:calculations",
+    "TXT:constraint-definition",
+    "TXT:constraint-usage",
+    "TXT:assert-constraint-usage"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:calculations",
+     "clause": "SysML v2 Part 1 7.19.2",
+     "construct": "Calculations \u2014 calculation definitions and usages with result expressions."
+    },
+    {
+     "id": "TXT:constraint-definition",
+     "clause": "SysML v2 Part 1 7.20.2",
+     "construct": "Constraint definitions and usages \u2014 a constraint definition is a Predicate; a constraint usage applies it."
+    },
+    {
+     "id": "TXT:constraint-usage",
+     "clause": "SysML v2 Part 1 7.20.2",
+     "construct": "Constraint usages \u2014 `constraint c : C { \u2026 }`, a Boolean expression with owned parameters."
+    },
+    {
+     "id": "TXT:assert-constraint-usage",
+     "clause": "SysML v2 Part 1 7.20.3",
+     "construct": "Assert constraint usages \u2014 `assert constraint { \u2026 }`, a constraint usage that must hold."
+    }
+   ]
   },
   {
    "id": "TXT:requirements",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Requirements",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.21",
    "note": "used by 389 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "read",
    "evidence": "read (probe scripts/todo-dashboard/probes/requirements.sysml): `ProbeRequirements::massCeiling::\u00abConstraintUsage\u00bb` reads `v.mass <= 2000.0` through the requirement subject, satisfied on all four surfaces",
-   "weight": 389
+   "weight": 389,
+   "clause_ids": [
+    "TXT:requirements"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:requirements",
+     "clause": "SysML v2 Part 1 7.21",
+     "construct": "Requirements \u2014 requirement definitions and usages with subject, require and assume, concerns, and satisfy requirement usages (7.21.4)."
+    }
+   ]
   },
   {
    "id": "TXT:allocation",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Allocation",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.15",
    "note": "used by 5 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/allocation.sysml): the construct itself reaches no row: `allocate Supply::volts to Load::volts` files no row on any surface; the neighbouring `LoadVolts` is decided at the load's own value (`l.volts >= 20.0`, `3 vs 20`)",
-   "weight": 5
+   "weight": 5,
+   "clause_ids": [
+    "TXT:allocations"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:allocations",
+     "clause": "SysML v2 Part 1 7.15",
+     "construct": "Allocations \u2014 allocation definitions and usages, the cross-cutting allocate mapping."
+    }
+   ]
   },
   {
    "id": "TXT:views-viewpoints-rendering",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Views, viewpoints, rendering",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.26",
    "note": "used by 0 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/views.sysml): the construct itself reaches no row: `view` and `viewpoint` parse (9 elements) and file no decision row on any surface; the GRAPH rows carry the rendering evidence",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "TXT:views"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:views",
+     "clause": "SysML v2 Part 1 7.26",
+     "construct": "Views and viewpoints \u2014 view and viewpoint definitions and usages, renderings, compartments and diagrams as view usages (7.26.5)."
+    }
+   ]
   },
   {
    "id": "TXT:enumerations",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Enumerations",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.8",
    "note": "used by 0 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/enumerations.sysml): the construct itself reaches no row, every surface refuses it: `Mode::on` \u2014 the check reports \"Could not evaluate: the body names `Mode::on`, which this lane reads only where the feature states an `=` literal\", and the literal and SMT engines abstain with the unresolved-name sentence",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "TXT:enumerations"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:enumerations",
+     "clause": "SysML v2 Part 1 7.8",
+     "construct": "Enumerations \u2014 enumeration definitions and usages with enumeration literals."
+    }
+   ]
   },
   {
    "id": "TXT:occurrences",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Occurrences",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.9",
    "note": "used by 0 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/occurrences.sysml): `Occurrences::DurationLimit::\u00abConstraintUsage\u00bb` reads `t.duration <= t.limit` over an occurrence usage, satisfied on all four surfaces; an attribute read only \u2014 lifetime, time slices and snapshots are not read",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "TXT:occurrences"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:occurrences",
+     "clause": "SysML v2 Part 1 7.9",
+     "construct": "Occurrences \u2014 occurrence definitions and usages, time slices and snapshots, individual and event occurrences (7.9.3\u20137.9.5)."
+    }
+   ]
   },
   {
    "id": "TXT:metadata",
    "area": "Textual notation",
    "kind": "TXT",
    "name": "Metadata",
-   "source": "02-omg-standard-reference \u00a73.2",
+   "source": "SysML v2 Part 1 7.27",
    "note": "used by 58 of 637 corpus models; parse conformance proven by corpus.test.ts",
    "state": "partial",
    "evidence": "partial (probe scripts/todo-dashboard/probes/metadata.sysml): the construct itself reaches no row: the part's own `s.mass <= s.limit` is read, but the `@Safety` metadata usage is an annotation no decision surface reads",
-   "weight": 58
+   "weight": 58,
+   "clause_ids": [
+    "TXT:metadata"
+   ],
+   "clauses": [
+    {
+     "id": "TXT:metadata",
+     "clause": "SysML v2 Part 1 7.27",
+     "construct": "Metadata \u2014 metadata definitions and usages, semantic metadata and user-defined keywords (7.27.2\u20137.27.4)."
+    }
+   ]
   },
   {
    "id": "GRAPH:general-view-definition-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "General view / Definition view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 8.2.3.5 (Table 34, 9.2.20.1)",
    "note": "general-view nodes draw their SysML notation (adornments, derived names, compartments, port symbols)",
    "state": "rendered",
    "evidence": "test/e2e/diagram-notation.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:general-view"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:general-view",
+     "clause": "SysML v2 Part 1 8.2.3.5 (Table 34, 9.2.20.1)",
+     "construct": "General View (gv) \u2014 the default compartment for a package; definitions and usages drawn as nodes and edges."
+    }
+   ]
   },
   {
    "id": "GRAPH:interconnection-view-internal-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Interconnection view / Internal view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 8.2.3.11 (Table 34, 9.2.20.1)",
    "note": "an interface is drawn port to port, on the ports the parts have through their type",
    "state": "rendered",
    "evidence": "test/e2e/interface-tags-subject.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:interconnection"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:interconnection",
+     "clause": "SysML v2 Part 1 8.2.3.11 (Table 34, 9.2.20.1)",
+     "construct": "Interconnection View (iv) \u2014 the default compartment for a part: nested parts, their ports and the connections between them."
+    }
+   ]
   },
   {
    "id": "GRAPH:action-flow-view-activity",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Action Flow view (Activity)",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 8.2.3.17 (Table 34, 9.2.20.1)",
    "note": "every control-node kind draws its prescribed flow symbol",
    "state": "rendered",
    "evidence": "test/e2e/diagram-control-nodes.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:action-flow"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:action-flow",
+     "clause": "SysML v2 Part 1 8.2.3.17 (Table 34, 9.2.20.1)",
+     "construct": "Action Flow View (afv) \u2014 the default compartment for an action: actions, parameters, control nodes and flows."
+    }
+   ]
   },
   {
    "id": "GRAPH:state-transition-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "State Transition view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 8.2.3.18 (Table 34, 9.2.20.1)",
    "note": "the state view renders a StateUsage node and its TransitionUsage is wired between the chosen endpoints",
    "state": "rendered",
    "evidence": "test/e2e/palette-per-view.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:state-transition"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:state-transition",
+     "clause": "SysML v2 Part 1 8.2.3.18 (Table 34, 9.2.20.1)",
+     "construct": "State Transition View (stv) \u2014 the default compartment for a state: states and the transitions between them."
+    }
+   ]
   },
   {
    "id": "GRAPH:sequence-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Sequence view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 8.2.3.9 (Table 34, 9.2.20.1)",
    "note": "one lifeline per participant and one message per succession",
    "state": "rendered",
    "evidence": "test/e2e/diagram-tables-content.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:sequence"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:sequence",
+     "clause": "SysML v2 Part 1 8.2.3.9 (Table 34, 9.2.20.1)",
+     "construct": "Sequence View (sv) \u2014 the default compartment for an occurrence: lifelines and time-ordered event occurrences (9.2.20.2.7)."
+    }
+   ]
   },
   {
    "id": "GRAPH:requirement-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Requirement view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 8.2.3.21; GeneralView filter 9.2.20.2.3",
    "note": "an edge renders in the requirement view (the palette spec wires a Satisfy)",
    "state": "rendered",
    "evidence": "test/e2e/diagram-edges.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:requirement"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:requirement",
+     "clause": "SysML v2 Part 1 8.2.3.21; GeneralView filter 9.2.20.2.3",
+     "construct": "Requirement view \u2014 the GeneralView filter over requirement definitions/usages and satisfy/derive/refine, drawn by the requirements graphical notation."
+    }
+   ]
   },
   {
    "id": "GRAPH:case-analysis-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Case / Analysis view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 8.2.3.22\u20138.2.3.24; SysML v2 Part 1 7.22.2; SysML v2 Part 1 7.23.2; SysML v2 Part 1 7.24.2; SysML v2 Part 1 7.25.2",
    "note": "the case view draws its React Flow canvas; the analysis view draws its graph and DSM",
    "state": "rendered",
    "evidence": "test/e2e/diagram-views3.spec.ts, test/e2e/graph-analysis.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:case-analysis",
+    "SysML:Cases",
+    "SysML:AnalysisCases",
+    "SysML:VerificationCases",
+    "SysML:UseCases"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:case-analysis",
+     "clause": "SysML v2 Part 1 8.2.3.22\u20138.2.3.24",
+     "construct": "Cases, analysis cases and verification cases \u2014 their graphical notation, including subjects, objectives and results."
+    },
+    {
+     "id": "SysML:Cases",
+     "clause": "SysML v2 Part 1 7.22.2",
+     "construct": "Case definitions and usages \u2014 `case def`/`case`, a calculation-like construct with a subject parameter, actor parameters and an objective."
+    },
+    {
+     "id": "SysML:AnalysisCases",
+     "clause": "SysML v2 Part 1 7.23.2",
+     "construct": "Analysis case definitions and usages \u2014 `analysis def`/`analysis`, a case whose objective concerns its analysis result."
+    },
+    {
+     "id": "SysML:VerificationCases",
+     "clause": "SysML v2 Part 1 7.24.2",
+     "construct": "Verification case definitions and usages \u2014 `verification def`/`verification`, a case whose result is a pass/fail/inconclusive/error verdict."
+    },
+    {
+     "id": "SysML:UseCases",
+     "clause": "SysML v2 Part 1 7.25.2",
+     "construct": "Use case definitions and usages \u2014 `use case def`/`use case`, a case with external actors and an include-use-case usage (7.25.3)."
+    }
+   ]
   },
   {
    "id": "GRAPH:allocation-matrix",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Allocation (matrix)",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 8.2.3.15",
    "note": "the dedicated allocation matrix table (matrix-view) is visible",
    "state": "rendered",
    "evidence": "test/e2e/diagram-views2.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:allocation"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:allocation",
+     "clause": "SysML v2 Part 1 8.2.3.15",
+     "construct": "Allocations graphical notation \u2014 the allocate mappings, typically rendered as a matrix or table."
+    }
+   ]
   },
   {
    "id": "GRAPH:package-tree-browser-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Package / tree (Browser) view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 9.2.20.2.2 (Table 34, 9.2.20.1)",
    "note": "an edge renders in the tree view (containment)",
    "state": "rendered",
    "evidence": "test/e2e/diagram-edges.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:browser-view"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:browser-view",
+     "clause": "SysML v2 Part 1 9.2.20.2.2 (Table 34, 9.2.20.1)",
+     "construct": "Browser View (bv) \u2014 the ownership/membership hierarchy from an exposed root, rendered as a collapsible tree."
+    }
+   ]
   },
   {
    "id": "GRAPH:grid-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Grid view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 9.2.20.2.5 (Table 34, 9.2.20.1)",
    "note": "grid cells carry each element's real metaclass, type and value",
    "state": "rendered",
    "evidence": "test/e2e/diagram-tables-content.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:grid-view"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:grid-view",
+     "clause": "SysML v2 Part 1 9.2.20.2.5 (Table 34, 9.2.20.1)",
+     "construct": "Grid View (grv) \u2014 exposed elements and relationships arranged in a rectangular grid; Table 34 names no graphical rendering clause for it."
+    }
+   ]
   },
   {
    "id": "GRAPH:geometry-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Geometry view",
-   "source": "02-omg-standard-reference \u00a74.1",
+   "source": "SysML v2 Part 1 9.2.20.2.4 (Table 34, 9.2.20.1)",
    "note": "the geometry view renders a real WebGL canvas and handles clicks",
    "state": "rendered",
    "evidence": "test/e2e/geometry3d.spec.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "GRAPH:geometry-view"
+   ],
+   "clauses": [
+    {
+     "id": "GRAPH:geometry-view",
+     "clause": "SysML v2 Part 1 9.2.20.2.4 (Table 34, 9.2.20.1)",
+     "construct": "Geometry View (gev) \u2014 a 2D/3D visualization of exposed spatial items; Table 34 names no graphical rendering clause for it."
+    }
+   ]
   },
   {
    "id": "API:projects",
    "area": "API & services",
    "kind": "API",
    "name": "Projects",
-   "source": "02-omg-standard-reference \u00a75.7",
+   "source": "API and Services 7.2.1; REST/HTTP PSM 8.1.3",
    "note": "GET /api/projects and /api/projects/{id} validate against Project; project PUT rename + DELETE lifecycle (201/200/204/404)",
    "state": "decided",
    "evidence": "test/conformance/api-contract.test.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "API:projects"
+   ],
+   "clauses": [
+    {
+     "id": "API:projects",
+     "clause": "API and Services 7.2.1; REST/HTTP PSM 8.1.3",
+     "construct": "ProjectService \u2014 create, read, update and delete projects."
+    }
+   ]
   },
   {
    "id": "API:branches",
    "area": "API & services",
    "kind": "API",
    "name": "Branches",
-   "source": "02-omg-standard-reference \u00a75.7",
+   "source": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
    "note": "GET .../branches validates against Branch[]; branch DELETE (204), default-branch DELETE (409)",
    "state": "decided",
    "evidence": "test/conformance/api-contract.test.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "API:branches"
+   ],
+   "clauses": [
+    {
+     "id": "API:branches",
+     "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
+     "construct": "ProjectDataVersioningService \u2014 branches and their lifecycle."
+    }
+   ]
   },
   {
    "id": "API:tags",
    "area": "API & services",
    "kind": "API",
    "name": "Tags",
-   "source": "02-omg-standard-reference \u00a75.7",
+   "source": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
    "note": "GET .../tags is routed by the OpenAPI-coverage sweep; tag create + DELETE (204) lifecycle",
    "state": "decided",
    "evidence": "test/conformance/api-contract.test.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "API:tags"
+   ],
+   "clauses": [
+    {
+     "id": "API:tags",
+     "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
+     "construct": "ProjectDataVersioningService \u2014 tags and their lifecycle."
+    }
+   ]
   },
   {
    "id": "API:commits",
    "area": "API & services",
    "kind": "API",
    "name": "Commits",
-   "source": "02-omg-standard-reference \u00a75.7",
+   "source": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
    "note": "GET .../commits validates against Commit[]; POST .../commits returns 201 with an @id",
    "state": "decided",
    "evidence": "test/conformance/api-contract.test.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "API:commits"
+   ],
+   "clauses": [
+    {
+     "id": "API:commits",
+     "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
+     "construct": "ProjectDataVersioningService \u2014 commits, the write path for model content."
+    }
+   ]
   },
   {
    "id": "API:elements-read-at-a-commit",
    "area": "API & services",
    "kind": "API",
    "name": "Elements (read at a commit)",
-   "source": "02-omg-standard-reference \u00a75.7",
+   "source": "API and Services 7.2.2; REST/HTTP PSM 8.1.3",
    "note": "elements page validates against ElementsPage, one element against Element, relationships against RelationshipsResult; the ?type= filter returns only that type",
    "state": "decided",
    "evidence": "test/conformance/api-contract.test.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "API:elements"
+   ],
+   "clauses": [
+    {
+     "id": "API:elements",
+     "clause": "API and Services 7.2.2; REST/HTTP PSM 8.1.3",
+     "construct": "ElementNavigationService \u2014 elements, roots and directional relationships read at a commit."
+    }
+   ]
   },
   {
    "id": "API:queries",
    "area": "API & services",
    "kind": "API",
    "name": "Queries",
-   "source": "02-omg-standard-reference \u00a75.7",
+   "source": "API and Services 7.2.4; REST/HTTP PSM 8.1.3",
    "note": "POST /api/queries validates against QueryResult; stored-query CRUD + results lifecycle validates against StoredQuery/QueryResult",
    "state": "decided",
    "evidence": "test/conformance/api-contract.test.ts",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [
+    "API:queries"
+   ],
+   "clauses": [
+    {
+     "id": "API:queries",
+     "clause": "API and Services 7.2.4; REST/HTTP PSM 8.1.3",
+     "construct": "QueryService \u2014 stored queries and query results."
+    }
+   ]
+  },
+  {
+   "id": "API:external-relationships",
+   "area": "API & services",
+   "kind": "API",
+   "name": "External relationships",
+   "source": "API and Services 7.2.5; REST/HTTP PSM 8.1.3",
+   "note": "the ExternalRelationshipService endpoints are not shipped in src/server/openapi.ts and no conformance test asserts them, so the service stays unmeasured",
+   "state": "unmeasured",
+   "evidence": "",
+   "weight": 0,
+   "clause_ids": [
+    "API:external-relationships"
+   ],
+   "clauses": [
+    {
+     "id": "API:external-relationships",
+     "clause": "API and Services 7.2.5; REST/HTTP PSM 8.1.3",
+     "construct": "ExternalRelationshipService \u2014 create, read and delete the relationships an element has to elements outside the project."
+    }
+   ]
+  },
+  {
+   "id": "API:project-usage",
+   "area": "API & services",
+   "kind": "API",
+   "name": "Project usages",
+   "source": "API and Services 7.2.6; REST/HTTP PSM 8.1.3",
+   "note": "the ProjectUsageService endpoints are not shipped in src/server/openapi.ts and no conformance test asserts them, so the service stays unmeasured",
+   "state": "unmeasured",
+   "evidence": "",
+   "weight": 0,
+   "clause_ids": [
+    "API:project-usage"
+   ],
+   "clauses": [
+    {
+     "id": "API:project-usage",
+     "clause": "API and Services 7.2.6; REST/HTTP PSM 8.1.3",
+     "construct": "ProjectUsageService \u2014 create, read and delete usages of one project's content by another project."
+    }
+   ]
   },
   {
    "id": "API:other",
    "area": "API & services",
    "kind": "API",
    "name": "Other",
-   "source": "02-omg-standard-reference \u00a75.7",
-   "note": "\u00a75.7's \"Other\" group is POST /transform and POST /validate; this build ships neither (no such path in src/server/openapi.ts) and no conformance test asserts them, so the group stays unmeasured",
+   "source": "",
+   "note": "No normative clause: 02-omg-standard-reference \u00a75.7's \"Other\" group is the reference server's POST /transform and POST /validate, which the API and Services specification does not define. The row is kept as an existing alias and stays unmeasured; no clause is invented for it; this build ships neither endpoint (no such path in src/server/openapi.ts) and no conformance test asserts them, so the group stays unmeasured",
    "state": "unmeasured",
    "evidence": "",
-   "weight": 0
+   "weight": 0,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:ground",
@@ -627,7 +1527,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 1",
-   "weight": 1
+   "weight": 1,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:bool",
@@ -638,7 +1540,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 54",
-   "weight": 54
+   "weight": 54,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:lra",
@@ -649,7 +1553,9 @@
    "note": "",
    "state": "decided",
    "evidence": "class level `tested`; counted facts: rows 486",
-   "weight": 486
+   "weight": 486,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:lira",
@@ -660,7 +1566,9 @@
    "note": "",
    "state": "decided",
    "evidence": "class level `tested`; counted facts: rows 15",
-   "weight": 15
+   "weight": 15,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:nra-poly-pinned",
@@ -671,7 +1579,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 6",
-   "weight": 6
+   "weight": 6,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:nra-poly-free",
@@ -682,7 +1592,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 1",
-   "weight": 1
+   "weight": 1,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:nra-div-pinned",
@@ -693,7 +1605,9 @@
    "note": "",
    "state": "decided",
    "evidence": "class level `tested`; counted facts: rows 17",
-   "weight": 17
+   "weight": 17,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:units",
@@ -704,7 +1618,9 @@
    "note": "",
    "state": "decided",
    "evidence": "class level `differential-tested`; counted facts: rows 100",
-   "weight": 100
+   "weight": 100,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:text-as-real",
@@ -715,7 +1631,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 2",
-   "weight": 2
+   "weight": 2,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:partial-context",
@@ -726,7 +1644,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 2",
-   "weight": 2
+   "weight": 2,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:stated-value",
@@ -737,7 +1657,9 @@
    "note": "",
    "state": "decided",
    "evidence": "class level `differential-tested`; counted facts: rows 311",
-   "weight": 311
+   "weight": 311,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:defining-equation",
@@ -748,7 +1670,9 @@
    "note": "",
    "state": "decided",
    "evidence": "class level `differential-tested`; counted facts: rows 16",
-   "weight": 16
+   "weight": 16,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:bind-equality",
@@ -759,7 +1683,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 9",
-   "weight": 9
+   "weight": 9,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:asserted-fact",
@@ -770,7 +1696,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 28",
-   "weight": 28
+   "weight": 28,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:requirement-clause",
@@ -781,7 +1709,9 @@
    "note": "",
    "state": "decided",
    "evidence": "class level `differential-tested`; counted facts: rows 236",
-   "weight": 236
+   "weight": 236,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:per-instance",
@@ -792,7 +1722,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `experimental`; counted facts: rows 1",
-   "weight": 1
+   "weight": 1,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-no-formal-clause",
@@ -803,7 +1735,9 @@
    "note": "",
    "state": "refused",
    "evidence": "class level `fenced`; counted facts: rows 40",
-   "weight": 40
+   "weight": 40,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-unparseable",
@@ -814,7 +1748,9 @@
    "note": "",
    "state": "refused",
    "evidence": "class level `unpinned`; counted facts: rows 1",
-   "weight": 1
+   "weight": 1,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-unresolved-name",
@@ -825,7 +1761,9 @@
    "note": "",
    "state": "refused",
    "evidence": "class level `fenced`; counted facts: rows 3",
-   "weight": 3
+   "weight": 3,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-unit-unresolved",
@@ -836,7 +1774,9 @@
    "note": "",
    "state": "refused",
    "evidence": "class level `unpinned`; counted facts: rows 1",
-   "weight": 1
+   "weight": 1,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-dimension-clash",
@@ -847,7 +1787,9 @@
    "note": "",
    "state": "refused",
    "evidence": "class level `fenced`; counted facts: rows 2",
-   "weight": 2
+   "weight": 2,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-offset-arithmetic",
@@ -858,7 +1800,9 @@
    "note": "",
    "state": "refused",
    "evidence": "class level `fenced`; counted facts: rows 3",
-   "weight": 3
+   "weight": 3,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-refused-derivation",
@@ -869,7 +1813,9 @@
    "note": "",
    "state": "refused",
    "evidence": "class level `fenced`; counted facts: rows 1",
-   "weight": 1
+   "weight": 1,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-unsupported-operator",
@@ -880,7 +1826,9 @@
    "note": "",
    "state": "partial",
    "evidence": "class level `fenced-defect`; counted facts: rows 6",
-   "weight": 6
+   "weight": 6,
+   "clause_ids": [],
+   "clauses": []
   },
   {
    "id": "CON:fence-non-numeric-operand",
@@ -891,13 +1839,15 @@
    "note": "",
    "state": "refused",
    "evidence": "class level `fenced`; counted facts: rows 4",
-   "weight": 4
+   "weight": 4,
+   "clause_ids": [],
+   "clauses": []
   }
  ],
  "metrics": {
-  "rows": 79,
+  "rows": 85,
   "measured": 56,
-  "unmeasured": 23,
+  "unmeasured": 29,
   "construct_coverage": 73.5,
   "decision_rows": 25,
   "decision_decided": 7,

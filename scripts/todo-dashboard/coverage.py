@@ -4,13 +4,22 @@ the tool measurably covers.
 
 Phase 1 (this script) builds the **universe definition** and reports what is measured:
 
-  coverage-universe.json  — rows from the authoritative docs:
-        KERML  the key abstract-syntax metaclasses (02-omg-standard-reference §2.2)
-        TXT    the textual-notation construct areas (§3.2)
-        GRAPH  the view/diagram kinds (§4.1)
-        API    the REST/OSLC service groups (§5.7)
+  coverage-universe.json  — rows from the normative clause inventory:
+        KERML  the key abstract-syntax metaclasses (KerML 8.3)
+        TXT    the textual-notation construct clauses (SysML v2 Part 1 §7)
+        GRAPH  the standard view definitions and their graphical clauses (§8.2.3, §9.2.20)
+        API    the REST service groups and their clauses (API and Services §7.2, §8.1.3)
         CON    the constraint/parametric classes (docs/CONSTRAINT-CLASSES.md)
   coverage.html           — the matrix page, two weighted headers and the denominators.
+
+The clause inventory lives in `coverage-universe-source.json` (the adopted
+2026 SysML v2 / KerML / API documents). Its `rows` are the matrix rows — the ids
+the dashboard has always used, kept as the stable aliases so re-keying the
+universe does not move the matrix — and its `clauses` name the normative clause
+behind each row: a stable id, the clause number and the construct text. A row
+with no normative clause is listed under `unclaused` with the reason; no clause
+is invented. This replaced the earlier scraping of the illustrative tables in
+`docs/02-omg-standard-reference.md` (§2.2 yielded 22 of the 26 metaclass rows).
 
 States are only set where a document *measures* it:
   - CON rows: the class register's level (differential-tested / tested / experimental /
@@ -47,6 +56,7 @@ REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
 DOC = os.path.join(REPO, 'docs')
 OUT_JSON = os.path.join(HERE, 'coverage-universe.json')
 OUT_HTML = os.path.join(HERE, 'coverage.html')
+SOURCE = os.path.join(HERE, 'coverage-universe-source.json')
 CORPUS = '/home/xcos/Work/sysprose-soundness-artifacts/gate-tools/corpus'
 
 
@@ -97,69 +107,77 @@ def corpus_usage(keywords):
     return hit, len(files)
 
 
+def load_source():
+    """Read and validate the normative clause inventory.
+
+    `rows` are the matrix rows, keyed by the id the dashboard has always used
+    (the stable alias). `clauses` attach normative clause ids to those rows.
+    Every row needs at least one clause or an `unclaused` note; every referenced
+    row must exist. A stale or duplicated entry is a hard error, so the universe
+    cannot silently lose a clause or acquire an invented one.
+    """
+    src = json.load(open(SOURCE, encoding='utf-8'))
+    by_id, order = {}, []
+    for r in src.get('rows', []):
+        if r['id'] in by_id:
+            raise SystemExit(f'coverage.load_source: duplicate row id {r["id"]}')
+        by_id[r['id']] = r
+        order.append(r['id'])
+    clauses_by_row, seen = {}, set()
+    for c in src.get('clauses', []):
+        if c['row'] not in by_id:
+            raise SystemExit(f'coverage.load_source: clause {c["id"]} names no row: {c["row"]}')
+        if c['id'] in seen:
+            raise SystemExit(f'coverage.load_source: duplicate clause id {c["id"]}')
+        seen.add(c['id'])
+        clauses_by_row.setdefault(c['row'], []).append(c)
+    unclaused = {}
+    for u in src.get('unclaused', []):
+        if u['row'] not in by_id:
+            raise SystemExit(f'coverage.load_source: unclaused entry names no row: {u["row"]}')
+        unclaused[u['row']] = u['note']
+    return src, by_id, order, clauses_by_row, unclaused
+
+
+def append_note(row, extra):
+    """Keep a source note (an `unclaused` reason) beside the mechanical one."""
+    base = row['note'].rstrip(' ;.')
+    row['note'] = f'{base}; {extra}' if base else extra
+
+
 def build_universe():
-    areas, rows = [], []
+    src, by_id, order, clauses_by_row, unclaused = load_source()
+    rows = []
 
-    def add(area, kind, name, source, note=''):
-        rows.append({'id': f'{kind}:{slug(name)}', 'area': area, 'kind': kind, 'name': name,
+    def add(row_id, area, kind, name, source, note=''):
+        rows.append({'id': row_id, 'area': area, 'kind': kind, 'name': name,
                      'source': source, 'note': note, 'state': 'unmeasured',
-                     'evidence': '', 'weight': 0})
+                     'evidence': '', 'weight': 0, 'clause_ids': [], 'clauses': []})
 
-    ref = read(os.path.join(DOC, '02-omg-standard-reference.md'))
-    conf = read(os.path.join(DOC, 'CONFORMANCE.md'))
-
-    # KERML metaclasses (§2.2)
-    for cells in table_rows(ref, '### 2.2 Key abstract-syntax metaclasses', '### 2.3'):
-        name = strip_md(cells[0])
-        if name and not name.startswith('('):
-            add('KerML kernel', 'KERML', name, '02-omg-standard-reference §2.2')
-    areas.append('KerML kernel')
-
-    # Textual notation construct areas (§3.2)
-    sec = ref[ref.find('### 3.2 Construct catalog'):ref.find('### 3.3')]
-    txt_keywords = {
-        'packages-imports': ['package ', 'import '],
-        'parts-attributes': ['part def', 'part ', 'attribute '],
-        'items': ['item def', 'item '],
-        'ports-direction': ['port def', 'port ', ' in ', ' out '],
-        'interfaces-connections': ['interface', 'connection', 'connect '],
-        'actions-control-nodes': ['action def', 'action ', 'fork', 'join'],
-        'states-transitions': ['state def', 'state ', 'transition'],
-        'calculations-constraints': ['calc def', 'calc ', 'constraint def', 'constraint ', 'assert'],
-        'requirements': ['requirement def', 'requirement ', 'satisfy', 'verify'],
-        'allocation': ['allocate', 'allocation'],
-        'views-viewpoints-rendering': ['view def', 'viewpoint'],
-        'enumerations': ['enum def', 'enum '],
-        'occurrences': ['occurrence def', 'occurrence '],
-        'metadata': ['metadata def', 'metadata ', '@'],
-    }
-    for m in re.finditer(r'^\*\*([^*]+)\*\*', sec, re.M):
-        name = m.group(1).strip()
-        r = add('Textual notation', 'TXT', name, '02-omg-standard-reference §3.2')
-        key = slug(name)
-        kws = txt_keywords.get(key, [])
-        if kws:
-            hit, total = corpus_usage(kws)
+    for row_id in order:
+        spec = by_id[row_id]
+        clauses = clauses_by_row.get(row_id, [])
+        if not clauses and row_id not in unclaused:
+            raise SystemExit(f'coverage: row {row_id} has no clause and no unclaused note')
+        add(row_id, spec['area'], spec['kind'], spec['name'],
+            '; '.join(c['clause'] for c in clauses), unclaused.get(row_id, ''))
+        rows[-1]['clause_ids'] = [c['id'] for c in clauses]
+        rows[-1]['clauses'] = [{'id': c['id'], 'clause': c['clause'], 'construct': c['construct']}
+                               for c in clauses]
+        if spec['kind'] == 'TXT':
+            hit, total = corpus_usage(spec.get('keywords', []))
             rows[-1]['weight'] = hit
-            rows[-1]['note'] = f'used by {hit} of {total} corpus models; parse conformance proven by corpus.test.ts'
-            rows[-1]['state'] = 'parsed'
-            rows[-1]['evidence'] = 'corpus.test.ts (637 models)'
-    areas.append('Textual notation')
+            append_note(rows[-1], f'used by {hit} of {total} corpus models; '
+                                   f'parse conformance proven by corpus.test.ts')
 
-    # Graphical view kinds (§4.1)
-    for cells in table_rows(ref, '### 4.1 View / diagram kinds', '### 4.2'):
-        name = strip_md(cells[0])
-        if name:
-            add('Graphical notation', 'GRAPH', name, '02-omg-standard-reference §4.1')
-    areas.append('Graphical notation')
+    areas = list(src.get('areas', []))
+    for area in areas:
+        if area == 'Constraints & parametrics':
+            continue
+        if not any(r['area'] == area and r['clause_ids'] for r in rows):
+            raise SystemExit(f'coverage: area {area!r} has no clause-numbered row')
 
-    # API & services groups (§5.7)
-    sec = ref[ref.find('### 5.7 Endpoint summary'):ref.find('### 5.8')]
-    for m in re.finditer(r'^\*\*([^*]+)\*\*', sec, re.M):
-        add('API & services', 'API', m.group(1).strip(), '02-omg-standard-reference §5.7')
-    areas.append('API & services')
-
-    # Constraint/parametric classes (the class register)
+    # Constraint/parametric classes (the class register — not a clause list)
     classes_doc = read(os.path.join(DOC, 'CONSTRAINT-CLASSES.md'))
     level_map = {'differential-tested': 'decided', 'tested': 'decided', 'experimental': 'partial',
                  'fenced': 'refused', 'unpinned': 'refused'}
@@ -168,31 +186,42 @@ def build_universe():
         level = strip_md(cells[-1])
         if not name or not re.match(r'^[a-z0-9][a-z0-9/_ -]*$', name):
             continue
-        r = add('Constraints & parametrics', 'CON', name, 'docs/CONSTRAINT-CLASSES.md (class register)')
+        add(f'CON:{slug(name)}', 'Constraints & parametrics', 'CON', name,
+            'docs/CONSTRAINT-CLASSES.md (class register)')
         rows[-1]['state'] = level_map.get(level, 'partial')
         rows[-1]['evidence'] = f'class level `{level}`; counted facts: rows {cells[1] if len(cells) > 1 else "?"}'
         try:
             rows[-1]['weight'] = int(cells[1])
         except Exception:
             rows[-1]['weight'] = 0
-    areas.append('Constraints & parametrics')
+    if 'Constraints & parametrics' not in areas:
+        areas.append('Constraints & parametrics')
 
     # Area notes from the conformance scorecard (recorded beside the states)
     notes = {
+        'KerML kernel': 'the 26 metaclass rows are the KerML 8.3 abstract-syntax metaclasses this tool '
+                        'stands on; where SysML v2 Part 1 §7 defines the same construct, its textual clause '
+                        'is attached beside the KerML clause (and one row, ItemFlow, cites KerML Flow, not a '
+                        'SysML abstract-syntax clause). The four annotation primitives the earlier 02 §2.2 '
+                        'extraction dropped are rows here (8.3.2.3.3–8.3.2.3.6). No test pins a metaclass '
+                        'itself, so the rows stay unmeasured (CU-4 is their probe)',
         'Textual notation': 'each TXT row is read or partial from a pinned probe under '
                             'scripts/todo-dashboard/probes/ (reported by probes/run.ts over the four '
                             'decision surfaces); a construct that files no row, or only a structural read, '
                             'says so and is partial, never read',
-        'Graphical notation': 'the app\'s 17 views include the 11 §4.1 kinds; each is '
-                              'rendered where an E2E spec asserts its panel (test/e2e/)',
-        'API & services': 'the §5.7 groups are decided where the API conformance tests assert '
+        'Graphical notation': 'the 11 view rows are the app\'s views; each is rendered where an E2E '
+                              'spec asserts its panel (test/e2e/), and its clause is the SysML v2 Part 1 '
+                              'Standard View Definition (9.2.20) and graphical clause (8.2.3) it renders',
+        'API & services': 'the service groups are decided where the API conformance tests assert '
                           'their contracts (CONFORMANCE §3); the "Other" group\'s POST /transform '
-                          'and /validate are not shipped here, so it stays unmeasured; the OSLC '
-                          'PSM has its own suite (CONFORMANCE §4, test/conformance/oslc-conformance.test.ts)',
+                          'and /validate are not shipped here and have no clause in the API and Services '
+                          'specification, so it stays unmeasured; the OSLC PSM has its own suite '
+                          '(CONFORMANCE §4, test/conformance/oslc-conformance.test.ts)',
     }
-    data = {'meta': {'generated': '', 'sources': ['docs/02-omg-standard-reference.md', 'docs/CONFORMANCE.md',
+    data = {'meta': {'generated': '', 'sources': ['scripts/todo-dashboard/coverage-universe-source.json',
                                                     'docs/CONSTRAINT-CLASSES.md', 'corpus (637 models)',
                                                     'test/conformance/', 'test/e2e/', 'scripts/todo-dashboard/probes/'],
+                     'standards': src.get('standards', []),
                      'areas': areas, 'notes': notes},
             'rows': rows}
     measure_txt(rows)
@@ -319,7 +348,7 @@ KNOWN = {
                     'POST /api/queries validates against QueryResult; stored-query CRUD + results '
                     'lifecycle validates against StoredQuery/QueryResult'),
 
-    # ── Graphical notation: docs/02-omg-standard-reference.md §4.1 (test/e2e/) ──
+    # ── Graphical notation: SysML v2 Part 1 §9.2.20/§8.2.3 standard views (test/e2e/) ──
     'GRAPH:general-view-definition-view': ('rendered', 'test/e2e/diagram-notation.spec.ts',
                                            'general-view nodes draw their SysML notation (adornments, '
                                            'derived names, compartments, port symbols)'),
@@ -351,9 +380,13 @@ KNOWN = {
 # Rows the universe defines but no test asserts, so they stay `unmeasured`; the note names
 # what is missing. Keeping them here (rather than in KNOWN) means no state is invented.
 UNMEASURED_NOTES = {
-    'API:other': '§5.7\'s "Other" group is POST /transform and POST /validate; this build ships '
-                 'neither (no such path in src/server/openapi.ts) and no conformance test asserts '
-                 'them, so the group stays unmeasured',
+    'API:other': 'this build ships neither endpoint (no such path in src/server/openapi.ts) and no '
+                 'conformance test asserts them, so the group stays unmeasured',
+    'API:external-relationships': 'the ExternalRelationshipService endpoints are not shipped in '
+                                  'src/server/openapi.ts and no conformance test asserts them, so the '
+                                  'service stays unmeasured',
+    'API:project-usage': 'the ProjectUsageService endpoints are not shipped in src/server/openapi.ts '
+                         'and no conformance test asserts them, so the service stays unmeasured',
 }
 
 
@@ -372,7 +405,7 @@ def measure_known(rows):
         r = by_id[rid]
         r['state'], r['evidence'], r['note'] = state, evidence, note
     for rid, note in UNMEASURED_NOTES.items():
-        by_id[rid]['note'] = note
+        append_note(by_id[rid], note)
     unmeasured = [r['id'] for r in rows if r['kind'] in ('API', 'GRAPH') and r['state'] == 'unmeasured']
     if unmeasured:
         print(f'coverage: no asserting test yet, left unmeasured: {unmeasured}')
@@ -406,14 +439,21 @@ def write_html(data, m):
     body_rows = []
     for area, rs in by_area.items():
         measured = sum(1 for r in rs if r['state'] != 'unmeasured')
-        body_rows.append(f'<tr class="area"><td colspan="5"><b>{area}</b> — {len(rs)} rows, '
+        body_rows.append(f'<tr class="area"><td colspan="6"><b>{area}</b> — {len(rs)} rows, '
                          f'{measured} with measured evidence, {sum(1 for r in rs if r["state"] == "unmeasured")} unmeasured</td></tr>')
         for r in rs:
             st = pill.get(r['state'], r['state'])
             ev = r['evidence'] or ''
             if r['note'] and r['note'] != r['evidence']:
                 ev = f'{ev}<br><span class="sub">{r["note"]}</span>' if ev else r['note']
-            body_rows.append(f'<tr><td class="n">{r["kind"]}</td><td>{r["name"]}</td>'
+            if r['clauses']:
+                cl = '<br>'.join(f'<span class="cid">{c["id"]}</span> '
+                                 f'<span class="cno">{c["clause"]}</span>' for c in r['clauses'])
+            elif r['kind'] == 'CON':
+                cl = '<span class="cno">class register</span>'
+            else:
+                cl = '<span class="cno">no normative clause</span>'
+            body_rows.append(f'<tr><td class="n">{r["kind"]}</td><td>{r["name"]}</td><td class="cl">{cl}</td>'
                              f'<td><span class="pill {r["state"]}">{st}</span></td>'
                              f'<td class="n">{r["weight"] or "—"}</td><td class="ev">{ev}</td></tr>')
     html = f"""<!doctype html>
@@ -433,6 +473,7 @@ tr.area td{{background:#fcfbf8;padding-top:10px;border-bottom:1px solid #e8e5dc}
 .pill.partial{{background:#fff4e5;color:#a3560b}} .pill.refused{{background:#f2f0ff;color:#5925dc}}
 .pill.unmeasured{{background:#f4f2ee;color:#6e6a63}}
 .ev{{color:#6e6a63;font-size:12.5px}} .sub{{color:#8a857c}}
+.cid{{font-weight:600;color:#3d3a35}} .cno{{color:#6e6a63;font-size:12.5px}}
 .note{{background:#fff;border:1px solid #e8e5dc;border-radius:8px;padding:14px 16px;margin-top:16px;color:#3d3a35;font-size:13.5px}}
 </style></head><body>
 <h1>SysML v2 coverage</h1>
@@ -450,11 +491,18 @@ The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> me
     <div class="k">rows with no mechanical evidence yet (pinned probes fill them as they land)</div></div>
 </div>
 <table>
-<thead><tr><th class="n">Kind</th><th>Construct / class</th><th>State</th><th class="n">Weight</th><th>Evidence</th></tr></thead>
+<thead><tr><th class="n">Kind</th><th>Construct / class</th><th>Clause</th><th>State</th><th class="n">Weight</th><th>Evidence</th></tr></thead>
 <tbody>{''.join(body_rows)}</tbody></table>
-<div class="note"><b>How this was computed.</b> Rows come from <i>02-omg-standard-reference</i> (§2.2 metaclasses,
-§3.2 textual areas, §4.1 view kinds, §5.7 API groups) and the class register
-(<i>docs/CONSTRAINT-CLASSES.md</i>). A TXT row is <i>read</i> where a pinned probe
+<div class="note"><b>How this was computed.</b> Rows come from
+<i>scripts/todo-dashboard/coverage-universe-source.json</i>, the normative clause inventory: KerML 8.3
+metaclasses, SysML v2 Part 1 §7 textual construct clauses, §8.2.3 / §9.2.20 standard view definitions,
+and the Systems Modeling API and Services §7.2 / §8.1.3 service clauses; the class register
+(<i>docs/CONSTRAINT-CLASSES.md</i>) supplies the CON rows. Each clause-bearing row cites its clause id and
+number in the <i>Clause</i> column; the CON rows name the class register, and an unclaused row says so. The
+row ids are the aliases the matrix has always used, so re-keying the universe to the clauses did not move a
+row's state. A row with no clause in the adopted documents (the <i>Other</i>
+API group's POST /transform and /validate; no rendering clause for the Grid and Geometry views) says so
+and is never given an invented clause. A TXT row is <i>read</i> where a pinned probe
 (<i>scripts/todo-dashboard/probes/</i>, run by <i>probes/run.ts</i> over the four decision surfaces) reaches a
 row and quotes its sentence — the corpus usage count and <i>corpus.test.ts</i>'s parse evidence are kept beside
 it, not substituted for it; a construct that files no row or only a structural read is <i>partial</i>, and a <i>partial</i> row is measured but is not in the construct-coverage numerator, so a row that was only parsed before drops out of it. A CON
@@ -464,8 +512,10 @@ row is <i>decided</i> when its class level is
 panel (<i>test/e2e/</i>); an API row is <i>decided</i> where a conformance test asserts the group's
 endpoints (<i>test/conformance/</i>, CONFORMANCE §3–4). Weights are corpus usage (TXT) or counted rows
 (CON). KERML rows stay unmeasured here: no test pins the metaclass itself, and an API group whose
-endpoints this build does not ship stays unmeasured too (§5.7's <i>Other</i>: POST /transform and
-/validate). The app's 17 views include the 11 §4.1 view kinds. Pinned probes fill the remaining unmeasured rows as they land.</div>
+endpoints this build does not ship stays unmeasured too (the <i>Other</i> group: POST /transform and
+/validate). The app's 17 views include the 11 standard view rows here; the four annotation primitives the
+earlier 02 §2.2 extraction dropped now have rows of their own. Pinned probes fill the remaining unmeasured
+rows as they land.</div>
 </body></html>"""
     open(OUT_HTML, 'w', encoding='utf-8').write(html)
 
