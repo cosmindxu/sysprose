@@ -209,9 +209,10 @@ def build_universe():
                             'scripts/todo-dashboard/probes/ (reported by probes/run.ts over the four '
                             'decision surfaces); a construct that files no row, or only a structural read, '
                             'says so and is partial, never read',
-        'Graphical notation': 'the 11 view rows are the app\'s views; each is rendered where an E2E '
-                              'spec asserts its panel (test/e2e/), and its clause is the SysML v2 Part 1 '
-                              'Standard View Definition (9.2.20) and graphical clause (8.2.3) it renders',
+        'Graphical notation': 'the 11 view rows cover 11 of the app\'s 17 views; each is rendered where '
+                              'an E2E spec asserts its panel (test/e2e/), and each cites a SysML v2 Part 1 '
+                              'Standard View Definition (9.2.20) and/or a graphical clause (8.2.3) where '
+                              'one exists',
         'API & services': 'the service groups are decided where the API conformance tests assert '
                           'their contracts (CONFORMANCE §3); the "Other" group\'s POST /transform '
                           'and /validate are not shipped here and have no clause in the API and Services '
@@ -501,7 +502,7 @@ and the Systems Modeling API and Services §7.2 / §8.1.3 service clauses; the c
 number in the <i>Clause</i> column; the CON rows name the class register, and an unclaused row says so. The
 row ids are the aliases the matrix has always used, so re-keying the universe to the clauses did not move a
 row's state. A row with no clause in the adopted documents (the <i>Other</i>
-API group's POST /transform and /validate; no rendering clause for the Grid and Geometry views) says so
+API group's POST /transform and /validate; no rendering clause for the Browser, Grid and Geometry views) says so
 and is never given an invented clause. A TXT row is <i>read</i> where a pinned probe
 (<i>scripts/todo-dashboard/probes/</i>, run by <i>probes/run.ts</i> over the four decision surfaces) reaches a
 row and quotes its sentence — the corpus usage count and <i>corpus.test.ts</i>'s parse evidence are kept beside

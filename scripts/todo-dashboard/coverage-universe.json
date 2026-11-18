@@ -1,6 +1,6 @@
 {
  "meta": {
-  "generated": "2026-11-19T00:33:41+01:00",
+  "generated": "2026-11-19T00:58:06+01:00",
   "sources": [
    "scripts/todo-dashboard/coverage-universe-source.json",
    "docs/CONSTRAINT-CLASSES.md",
@@ -45,7 +45,7 @@
   "notes": {
    "KerML kernel": "the 26 metaclass rows are the KerML 8.3 abstract-syntax metaclasses this tool stands on; where SysML v2 Part 1 \u00a77 defines the same construct, its textual clause is attached beside the KerML clause (and one row, ItemFlow, cites KerML Flow, not a SysML abstract-syntax clause). The four annotation primitives the earlier 02 \u00a72.2 extraction dropped are rows here (8.3.2.3.3\u20138.3.2.3.6). No test pins a metaclass itself, so the rows stay unmeasured (CU-4 is their probe)",
    "Textual notation": "each TXT row is read or partial from a pinned probe under scripts/todo-dashboard/probes/ (reported by probes/run.ts over the four decision surfaces); a construct that files no row, or only a structural read, says so and is partial, never read",
-   "Graphical notation": "the 11 view rows are the app's views; each is rendered where an E2E spec asserts its panel (test/e2e/), and its clause is the SysML v2 Part 1 Standard View Definition (9.2.20) and graphical clause (8.2.3) it renders",
+   "Graphical notation": "the 11 view rows cover 11 of the app's 17 views; each is rendered where an E2E spec asserts its panel (test/e2e/), and each cites a SysML v2 Part 1 Standard View Definition (9.2.20) and/or a graphical clause (8.2.3) where one exists",
    "API & services": "the service groups are decided where the API conformance tests assert their contracts (CONFORMANCE \u00a73); the \"Other\" group's POST /transform and /validate are not shipped here and have no clause in the API and Services specification, so it stays unmeasured; the OSLC PSM has its own suite (CONFORMANCE \u00a74, test/conformance/oslc-conformance.test.ts)"
   }
  },
