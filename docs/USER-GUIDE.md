@@ -2179,9 +2179,16 @@ relation. A bound on an Integer is carried alike, and a pair
 on one meets where it leaves a single whole number (`load >= 4.5` with `L <= 5.5`); a conjunction of bounds is read as
 its conjuncts. A bound in a unit, or on an `UnlimitedNatural` that no integral literal pins, is not carried, and the row says so. An
 assert typed by a constraint definition (`assert constraint e : Eq { in a = L; }` over `constraint
-def Eq { in a; a == 50.0 }`) is read by no surface. Its own row abstains on the check and the numeric surface (`unread-definition`: *`e` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*), and the literal and SMT engines read it as an assertion they cannot read, so every row they judge in that model abstains (*the model asserts …, which this tool cannot read*; *proof not claimed …*): the assertion may contradict a value the model writes with `=`.
+def Eq { in a; a == 50.0 }`) is read by the check and the numeric surface where every parameter of the usage
+redefines the definition's parameter at its position — by `:>>` or by carrying its name — and is given a value:
+the check judges the substituted equation (here `L == 50.0`) and reports it satisfied or violated (`e : Eq, with
+a = L`), and the numeric surface reads it alike. `verify` and `obligations` still carry no reading of it: its own
+obligation is `unread-definition` (*`e` is typed by the constraint definition `Eq`, whose body this tool does not
+read with the parameters' values*), and the literal and SMT engines judge no relation of it as an assertion, since
+it may contradict a value the model writes with `=`; reading it as an obligation is TY2's half. Where a parameter's
+name and its position disagree, no surface reads the usage, and the row says so.
 Where the definition's body holds an equation — alone, or in a conjunction (`a
-== 50.0 and a >= 0.0`) — what it may define is read nowhere: every feature a
+== 50.0 and a >= 0.0`) — a feature the substituted equation names but no reading carries stays unread: every feature a
 name in it reads — each value it gives a parameter, bare or dotted (`in a =
 p.load`), and each feature it binds one to (`bind a = L;`), resolved where the
 assert is written, in a definition, a usage or a package — or in a constraint
@@ -2191,14 +2198,15 @@ a parameter, reads: one that is no parameter, and one read through a parameter a
 what the parameter is given (`x.load` over `in x = p`, or `bind x = p`, is p's
 load; where the rest of the name is nothing of p's, every feature below p) — with
 what that feature redefines and what redefines it. This is a limit of the
-tool, not a rule — no assertion replaces a `default`, but this tool does not
-read the definition's equation to check it: a `default` among them is not read,
-by feature, in every instance (an assert written in `part q : Q` leaves Q's own
-rows *could not be evaluated* too), one with no value is no design freedom to
-the numeric surface, which solves no relation over it as a design equation, and
-a relation over either is *could not be evaluated* (*L is not read: its
+tool, not a rule — no assertion replaces a `default` — and it holds where a reading does not carry the
+substituted equation: a `default` named by an assert written in a usage is not read in the definition's own
+rows (an assert written in `part q : Q` leaves Q's own
+rows *could not be evaluated* too), a feature the definition inherits is not carried the equation its
+instances read (*L is not read: its
 `default = 1.0` is named by `assert constraint e : Eq` in Q, whose equation this
-tool does not read*). A value written
+tool reads in each instance of Q, and this reading does not carry it to `L`*), one with no value is no design freedom to
+the numeric surface, which solves no relation over it as a design equation, and
+a relation over either is *could not be evaluated*. A value written
 with `=` is read as written. Where it holds none (an inequality), the default stands, as
 beside an untyped inequality; and a feature with no value that such an assert
 constrains (`assert constraint ca : Cd { in x = L; }` over `x >= 0.0 and x <= 100.0`) is
@@ -2261,7 +2269,7 @@ read in q1: every reading of the pair — J, K, q1's p's x, the assert's own row
 assertion replaces: the assert holds in that instance too, and this tool does
 not read it there, so the model may contradict itself unreported …*), and
 `verify` exits 2.
-A plain `constraint nl : Eq { in a = L; }`, with no `assert`, is a check this tool does not make: it files the same row (*`nl` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*) on the check, the numeric surface, `verify` (`verification/not-evaluable`, which `--allow-inconclusive` does not forgive) and `obligations`, and it holds no other row back, since nothing is asserted. A requirement set that holds one reads *inconclusive* on `consistency` (exit 2), where it read *consistent* over a relation this tool did not read.
+A plain `constraint nl : Eq { in a = L; }`, with no `assert`, is read as a check by the check and the numeric surface where every parameter redefines the definition's parameter at its position and is given a value: the check reports it satisfied or violated (`nl : Eq, with a = L`) and the numeric surface reads it alike. `verify` and `obligations` still file its own row `unread-definition` (*`nl` is typed by the constraint definition `Eq`, whose body this tool does not read with the parameters' values*, `verification/not-evaluable`, which `--allow-inconclusive` does not forgive), and it holds no other row back, since nothing is asserted. A requirement set that holds one reads *inconclusive* on `consistency` (exit 2), since the proof lane carries no relation it did not read.
 
 **Two asserted equations that disagree.** A feature declared without a value
 that two asserted equations define with two different values — `assert

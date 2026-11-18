@@ -41,6 +41,8 @@ import {
   defaultGivesWayIn,
   defaultGivesWayTo,
   typedAssertHolding,
+  typedAssertNames,
+  typedConstraintRelation,
   bindsDifferingWrittenValues,
   bindsUndecidedWrittenValues,
   defaultStandsIn,
@@ -730,12 +732,32 @@ function valueDefinedByEquation(
   pass: ScalarPass,
 ): ScalarAnswer | undefined {
   if (name.includes('.')) return undefined;
-  const feature = pass.definitions.feature(contextId, name);
+  let feature = pass.definitions.feature(contextId, name);
+  // TY1: a `default` an asserted TYPED constraint usage names gives way to the substituted equation, and a value
+  // derived over the feature reads it from the enclosing scope that writes the equation (`m2` over `10.0 - load`,
+  // whose `load` reads Q's `L`). The name is lexical there, so the equation is looked up on the owner chain.
+  let written = contextId;
+  if (!feature) {
+    const lexical = pass.definitions.denote(contextId).get(name)?.feature;
+    if (lexical !== undefined && typedAssertNames(model, lexical)) {
+      for (let cur = model.get(contextId); cur && cur.ownerId != null; cur = model.get(cur.ownerId)) {
+        const owner = cur.ownerId;
+        if (pass.definitions.of(owner, name).length > 0) {
+          feature = lexical;
+          written = owner;
+          break;
+        }
+      }
+    }
+  }
   // Only a feature WITHOUT a value: one that writes a `default`, even one a binding made give way, keeps
   // what the binding gives it, and the assert is checked (decision 14 amended, `writesStandingDefault`).
   if (!feature || writesStandingDefault(model, feature)) return undefined;
   const candidates = pass.definitions.of(contextId, name);
   if (candidates.length === 0) {
+    if (written !== contextId) {
+      return defineIn(model, written, feature, name, pass.definitions.of(written, name), pass, true);
+    }
     const read = pass.definitions.definitionReadIn(contextId, name);
     if (!read) {
       // An enclosing context's asserted equation that defines it by its dotted
@@ -1624,9 +1646,35 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     const expr = el.attrs.expression;
     if (typeof expr !== 'string' || expr.trim() === '') {
+      // An assert or a plain constraint typed by a constraint definition and no body of its own states the
+      // definition's body with the values its parameters are given, by position (TY1): judge that relation here.
+      const typed = typedConstraintRelation(model, el);
+      if (typed !== undefined) {
+        if ('refused' in typed) {
+          out.push({ id: el.id, ownerId: el.ownerId, expression: '', result: 'unknown', message: `Could not evaluate: ${typed.refused}` });
+          continue;
+        }
+        const judged = judgeConstraint(model, el, typed.text, pass);
+        const message = judged.result === 'unknown' ? judged.message : `${judged.message} (${typed.clause})`;
+        const check: ConstraintCheck = {
+          id: el.id,
+          ownerId: el.ownerId,
+          expression: typed.text,
+          result: judged.result,
+          message,
+          ...(judged.tie ? { tie: true as const } : {}),
+          ...(judged.reads ? { reads: judged.reads } : {}),
+          ...(judged.sides ? { sides: judged.sides } : {}),
+        };
+        const groups = groupsByRelation.get(el.id) ?? [];
+        if (judged.gap) readThroughSpecialisers(model, el, typed.text, check, pass, groups);
+        readInContexts(model, el, typed.text, check, pass, groups);
+        out.push(check);
+        continue;
+      }
       // An assert typed by a constraint definition and no body of its own: its own row abstains (A4).
-      const typed = typedAssertRefusal(model, el);
-      if (typed !== undefined) out.push({ id: el.id, ownerId: el.ownerId, expression: '', result: 'unknown', message: `Could not evaluate: ${typed}` });
+      const unread = typedAssertRefusal(model, el);
+      if (unread !== undefined) out.push({ id: el.id, ownerId: el.ownerId, expression: '', result: 'unknown', message: `Could not evaluate: ${unread}` });
       continue;
     }
 
@@ -4971,8 +5019,9 @@ function inheritedCause(model: Model, el: ElementRecord, name: string, pass: Sca
  * default gives way to (`defaultGivesWayTo`): `T::L states \`default =
  * 2.0\`, which gives way to an asserted equation` (decision 14, before it was
  * amended), `T::L states \`default = 2.0\` and is not read: it is named by
- * \`assert constraint e : Eq\` in T, whose equation this tool does not read`
- * (an assert typed by an equation's definition, a limit of this tool), `p::load
+ * \`assert constraint e : Eq\` in T, whose equation this tool reads in the
+ * instance its parameters are valued in, and this reading is not that instance`
+ * (an assert typed by an equation's definition, read where the assert states it), `p::load
  * states \`default = 2.0\`, which gives way to BW4::Q's \`bind p.load = L\``
  * (BW4, a model with no assert, had been told of one), or `… which is not
  * read here`. It was said to be declared without one.
@@ -4983,7 +5032,7 @@ function declaredWithout(model: Model, feature: ElementRecord): string {
   const shown = typeof written.attrs.valueText === 'string' ? written.attrs.valueText : String(written.attrs.value);
   const states = `${shortName(model, feature)} states \`default = ${shown}\``;
   const to = defaultGivesWayTo(model, feature);
-  if (to?.to === 'typed') return `${states} and is not read: it is named by ${typedAssertText(model, to.assert)}`;
+  if (to?.to === 'typed') return `${states} and is not read: it is named by ${typedAssertText(model, to.assert, feature)}`;
   if (to?.to === 'assert') return `${states}, which gives way to an asserted equation`;
   if (to?.to === 'binding') return `${states}, which gives way to ${to.bindingId !== undefined ? bindingText(model, to.bindingId) : 'a `bind`'}`;
   return `${states}, which is not read here`;
@@ -5775,7 +5824,7 @@ function givenWayCause(model: Model, ownerId: ElementId, feature: ElementRecord,
   const written = chain.find((g) => g.attrs.value !== undefined && g.attrs.value !== null);
   if (written === undefined) {
     const typed = typedAssertHolding(model, feature);
-    return typed ? `${name} has no value this tool reads: it is named by ${typedAssertText(model, typed)}` : undefined;
+    return typed ? `${name} has no value this tool reads: it is named by ${typedAssertText(model, typed, feature)}` : undefined;
   }
   if (written.attrs.defaultValue !== true) return undefined;
   // Only a default an assertion may replace gives way to one (`replaceableDefaults`: none since decision 14 was
@@ -5794,23 +5843,46 @@ function givenWayCause(model: Model, ownerId: ElementId, feature: ElementRecord,
   const typed = typedAssertHolding(model, feature);
   if (typed) {
     const shown = typeof written.attrs.valueText === 'string' ? written.attrs.valueText : String(written.attrs.value);
-    return `${name} is not read: its \`default = ${shown}\` is named by ${typedAssertText(model, typed)}`;
+    return `${name} is not read: its \`default = ${shown}\` is named by ${typedAssertText(model, typed, feature)}`;
   }
   return undefined;
 }
 
 /**
  * An assert typed by a constraint definition whose body holds an equation, and
- * why the feature it names is not read ({@link typedAssertHolding}): ``
- * `assert constraint e : Eq` in CD1::Q, whose equation this tool does not read
- * ``. A limit of this tool, not a rule: no assertion replaces a `default`
- * (decision 14 amended 2026-10-22), but this tool does not read such an
- * equation to check it, so every reading of what it names abstains.
+ * why the feature it names is not read where it is read ({@link
+ * typedAssertHolding}): ``
+ * `assert constraint e : Eq` in CD6::Q, whose equation this tool reads in the
+ * instance its parameters are valued in, and this reading is not that instance
+ * `` for an assert written in a usage, and `` `assert constraint e : Eq` in
+ * CD8::Q, whose equation this tool reads in each instance of CD8::Q, and this
+ * reading does not carry it to `L` `` for one written in a definition whose
+ * named feature it inherits (the equation is read in every instance there, so
+ * `not that instance` would be false; the substitute is not carried to the
+ * inherited feature). No assertion replaces a `default` (decision 14 amended
+ * 2026-10-22), but a body this tool reads (TY1) gives the feature its value
+ * where the assert's parameters are valued. A body this tool REFUSES (a
+ * parameter and its position naming different parameters) is still not read
+ * anywhere.
  */
-function typedAssertText(model: Model, a: ElementRecord): string {
+function typedAssertText(model: Model, a: ElementRecord, feature: ElementRecord): string {
   const type = generalizationsOf(model, a.id).find((t) => t.attrs.isLibrary !== true && typeof t.attrs.expression === 'string');
   const spelled = `assert constraint ${effectiveNameOf(model, a) ?? ''}${type ? ` : ${effectiveNameOf(model, type) ?? ''}` : ''}`.replace('  ', ' ');
   const where = a.ownerId != null ? ` in ${effectiveQualifiedName(model, a.ownerId)}` : '';
+  const relation = typedConstraintRelation(model, a);
+  const body = relation !== undefined && !('refused' in relation) ? parseRelationBody(relation.text)?.node : undefined;
+  if (body?.kind === 'binary' && (body.op === '==' || body.op === '=')) {
+    // An assert written in a definition is read in every instance of it, so `not that instance` would be false: the
+    // substituted equation is read there, and this surface does not carry it to a feature the definition inherits.
+    const owner = a.ownerId != null ? model.get(a.ownerId) : undefined;
+    if (owner !== undefined && isDefinition(owner.eClass)) {
+      const inherited = feature.ownerId != null && feature.ownerId !== owner.id;
+      if (inherited) {
+        return `\`${spelled}\` in ${effectiveQualifiedName(model, owner.id)}, whose equation this tool reads in each instance of ${effectiveQualifiedName(model, owner.id)}, and this reading does not carry it to \`${effectiveNameOf(model, feature) ?? '?'}\``;
+      }
+    }
+    return `\`${spelled}\`${where}, whose equation this tool reads in the instance its parameters are valued in, and this reading is not that instance`;
+  }
   return `\`${spelled}\`${where}, whose equation this tool does not read`;
 }
 

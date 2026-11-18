@@ -266,7 +266,7 @@ export const CLASS_FACTS: ClassFacts = {
       "models": 72,
       "rows": 486,
       "tableAgree": 783,
-      "tableDisagree": 0,
+      "tableDisagree": 2,
       "tableProbes": 347
     },
     "nira/free": {
@@ -365,7 +365,7 @@ export const CLASS_FACTS: ClassFacts = {
       "models": 2,
       "rows": 2,
       "tableAgree": 0,
-      "tableDisagree": 0,
+      "tableDisagree": 2,
       "tableProbes": 0
     },
     "per-instance": {
@@ -376,7 +376,7 @@ export const CLASS_FACTS: ClassFacts = {
       "models": 1,
       "rows": 1,
       "tableAgree": 327,
-      "tableDisagree": 0,
+      "tableDisagree": 2,
       "tableProbes": 167
     },
     "requirement-clause": {
@@ -495,7 +495,7 @@ export const CLASS_FACTS: ClassFacts = {
   "digests": {
     "defects": "dfff9a82aa2e86dc90fbb0195ce5cef82cd38de0ca4172efabc72dd0879edf7d",
     "goldens": "41edb150097c0416aaabc977bf5f9c5ff2cf307814d3763b53fde91e805f94cc",
-    "probes": "3836d1e1b079704ea1b4f8839c55e185d6f9383760e542d0cd5d69c3f1af0b8a"
+    "probes": "164aef42b0f0b2ac017e970d67a7dfd0e6616f475b926d85189f4fd220f08537"
   },
   "fences": {
     "fence/collection-valued": {
@@ -585,7 +585,7 @@ export const CLASS_FACTS: ClassFacts = {
     }
   },
   "knownFalse": {
-    "entries": 0,
+    "entries": 2,
     "parsed": true,
     "unattributed": 0
   },

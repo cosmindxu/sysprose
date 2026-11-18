@@ -29,10 +29,10 @@
  */
 
 import { isUsage, type ElementId, type ElementRecord, type Model } from '@core/index';
-import { definedSideOf, hasStatedValue, sharedDefinitions, statedValueOf } from './defining-equation';
+import { definedSideOf, hasStatedValue, sharedDefinitions, statedValueOf, unreadTypedBodySentence } from './defining-equation';
 import { mapExpr, refText, type ExprNode } from './expr';
 import { resolveFullName } from './bind';
-import { generalizationsOf, redefinedClosure } from './inheritance';
+import { redefinedClosure } from './inheritance';
 import {
   declaredFacetsOf,
   derivationOf,
@@ -1070,18 +1070,7 @@ function collectVarIds(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>,
  * typed so files nothing yet.
  */
 export function typedAssertRefusal(model: Model, el: ElementRecord): string | undefined {
-  const role = el.attrs.requirementRole;
-  if (el.eClass !== 'ConstraintUsage' || (role !== 'assert' && role !== undefined) || el.attrs.isLibrary === true) return undefined;
-  if (typeof el.attrs.expression === 'string' && el.attrs.expression.trim() !== '') return undefined;
-  const bodied = (t: ElementRecord): boolean =>
-    t.attrs.isLibrary !== true && typeof t.attrs.expression === 'string' && t.attrs.expression.trim() !== '';
-  const types = generalizationsOf(model, el.id).filter(bodied);
-  const def = types.find((t) => t.eClass === 'ConstraintDefinition') ?? (role === undefined ? undefined : types[0]);
-  if (def === undefined) return undefined;
-  const name = el.declaredName ?? el.declaredShortName;
-  const typeName = def.declaredName ?? def.declaredShortName ?? 'an unnamed definition';
-  const kind = def.eClass === 'ConstraintDefinition' ? 'typed by the constraint definition' : 'typed through';
-  return `${name !== undefined ? `\`${name}\`` : role === undefined ? 'This constraint' : 'This assert'} is ${kind} \`${typeName}\`, whose body this tool does not read with the parameters' values`;
+  return unreadTypedBodySentence(model, el);
 }
 
 /** Name→id scope for a relation: its owner (subject) merged with itself. */

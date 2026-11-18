@@ -670,8 +670,9 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}, unrefu
     if (isNonNormativeStatement(model, el.id) || underNonNormativeStatement(model, el)) continue;
     const raw = el.attrs.expression;
     if (typeof raw !== 'string' || raw.trim() === '') {
-      // An assert typed by a constraint definition and no body of its own: an axiom this tool does not read (A4). A
-      // plain one is a check this tool does not make (a5 S4): an obligation, not an axiom, so it holds nothing back.
+      // An assert typed by a constraint definition and no body of its own: an axiom this lane does not read (A4). A
+      // plain one is read as a check by the check and the numeric surface (a5 S4/TY1A); on this lane it is an
+      // obligation, not an axiom, so it holds nothing back.
       const typed = typedAssertRefusal(model, el);
       if (typed === undefined) continue;
       const contract = owningContract(model, el, byId);

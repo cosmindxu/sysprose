@@ -125,8 +125,10 @@ import {
   typedAssertHeldAt,
   typedAssertHolding,
   typedAssertNames,
+  typedAssertReads,
   typedAssertsHoldOnly,
   typedAssertsName,
+  typedConstraintRelation,
   writesStandingDefault,
   usageOwnedRefusal,
   type InstanceAbstention,
@@ -693,7 +695,12 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
       // An asserted conjunction is read as its conjuncts, each the assert it
       // would be written alone ({@link assertConjuncts}); its own row is judged whole.
       const parts = assertConjuncts(model, el);
-      for (const rel of parts.length > 1 ? parts.map((p) => conjunctRecord(p)) : [el]) {
+      // TY1: a typed constraint usage states its definition's body with the values its parameters are given, by
+      // position — an asserted one is an axiom, a plain one a check (its body is gathered as a design equation, as
+      // any plain equality is). A refused pairing files no equation.
+      const typed = parts.length > 0 ? undefined : typedConstraintRelation(model, el);
+      const typedRel = typed !== undefined && !('refused' in typed) ? { ...el, attrs: { ...el.attrs, expression: typed.text } } : undefined;
+      for (const rel of parts.length > 1 ? parts.map((p) => conjunctRecord(p)) : [typedRel ?? el]) {
         // A calculation's value body refused is a value nothing reads; so is
         // what a refused asserted equation is the definition of.
         const eq = relationEquation(model, rel, memo, false, () => {
@@ -737,7 +744,7 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
       // nothing here reads the equation that does. Free, a plain `p.load ==
       // 5.0` was solved as a design equation over CD13's L, and Q's `p.m2 >=
       // 0.0` decided at that 5 where L is 50.
-      if (typedAssertNames(model, el)) {
+      if (typedAssertNames(model, el) && !typedAssertReads(model, el)) {
         unreadable.add(el.id);
         continue;
       }
@@ -1776,9 +1783,15 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       if (instance === definitions.instanceNameOf(holder.id)) continue;
       for (const c of model.children(holder.id)) {
         if (c.attrs.isLibrary === true) continue;
-        if (isAsserted(c) && typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '') {
+        // TY1: an asserted usage typed by a constraint definition states the definition's body with the values its
+        // parameters are given, by position — the instance's axiom, as its own written body would be (`e : Eq` over
+        // `in a = L` makes q's L 50, so a package row over `q.L` reads it, {@link typedConstraintRelation}).
+        const written = typeof c.attrs.expression === 'string' && c.attrs.expression.trim() !== '' ? c.attrs.expression : undefined;
+        const typed = written === undefined && isAsserted(c) ? typedConstraintRelation(model, c) : undefined;
+        const body = written ?? (typed !== undefined && !('refused' in typed) ? typed.text : undefined);
+        if (isAsserted(c) && body !== undefined) {
           // A general's body as the reader spells it: Q's `p.x` is q's `pp.x` over `part pp :>> p` ({@link respelledIn}).
-          const raw = holder.id === reader.id ? c.attrs.expression : respelledIn(model, definitions, reader.id, holder.id, c.attrs.expression);
+          const raw = holder.id === reader.id ? body : respelledIn(model, definitions, reader.id, holder.id, body);
           const whole: ElementRecord = { ...c, ownerId: reader.id, attrs: { ...c.attrs, expression: raw } };
           // An asserted conjunction's conjuncts, each as the assert it would be written alone ({@link assertConjuncts}).
           const parts = assertConjuncts(model, c);
@@ -1834,7 +1847,7 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       const source = (d ? definitions.valueRef(d)?.target : undefined) ?? (hasStatedValue(model, feature) ? feature : undefined);
       // What an assert typed by an equation's definition may define, here too:
       // no freedom, solved from nothing ({@link typedAssertNames}).
-      if (typedAssertHolding(model, source ?? feature) !== undefined) system.unreadable.add(key);
+      if (typedAssertHolding(model, source ?? feature) !== undefined && !typedAssertReads(model, source ?? feature)) system.unreadable.add(key);
       // Nor a feature a binding into a scope the page leaves unread joins: no value of its own, none it reads through that.
       if (!hasStatedValue(model, feature) && withheldBindings(model).ends.has(feature.id)) system.unreadable.add(key);
       // Nor a value written that such a binding joins to a scope the page leaves unread ({@link DefiningEquations.seedJoinedToUnread}).
@@ -6834,23 +6847,36 @@ function numericRows(
     return ownedExpanded.has(el.id);
   };
 
-  for (const el of model.all()) {
-    if (only && !only.has(el.id)) continue;
-    if (el.attrs.isLibrary === true) continue;
-    if (!RELATION_KINDS.has(el.eClass)) continue;
+  for (const original of model.all()) {
+    if (only && !only.has(original.id)) continue;
+    if (original.attrs.isLibrary === true) continue;
+    if (!RELATION_KINDS.has(original.eClass)) continue;
     // A `#prose` / `#prompt` relation has no verdict to report — the other
     // three surfaces are silent about it, and `analysisReport` lists every
     // `violated` row here as a warning in the same Problems panel.
-    if (isNonNormativeStatement(model, el.id)) continue;
-    const raw = el.attrs.expression;
-    if (typeof raw !== 'string' || raw.trim() === '') {
-      // An assert typed by a constraint definition and no body of its own: its own row abstains (A4).
-      const typed = typedAssertRefusal(model, el);
+    if (isNonNormativeStatement(model, original.id)) continue;
+    let el = original;
+    const written = original.attrs.expression;
+    if (typeof written !== 'string' || written.trim() === '') {
+      // An assert or a plain constraint typed by a constraint definition and no body of its own: TY1 judges the
+      // definition's body with the values its parameters are given, by position, as the check surface does.
+      const typed = typedConstraintRelation(model, original);
       if (typed !== undefined) {
-        out.push({ id: el.id, name: el.declaredName ?? '', raw: '', kind: 'boolean', result: 'unknown', slack: null, amount: 0, reason: typed });
+        if ('refused' in typed) {
+          out.push({ id: original.id, name: original.declaredName ?? '', raw: '', kind: 'boolean', result: 'unknown', slack: null, amount: 0, reason: typed.refused });
+          continue;
+        }
+        el = { ...original, attrs: { ...original.attrs, expression: typed.text } };
+      } else {
+        // An assert typed by a constraint definition and no body of its own: its own row abstains (A4).
+        const unread = typedAssertRefusal(model, original);
+        if (unread !== undefined) {
+          out.push({ id: original.id, name: original.declaredName ?? '', raw: '', kind: 'boolean', result: 'unknown', slack: null, amount: 0, reason: unread });
+        }
+        continue;
       }
-      continue;
     }
+    const raw = el.attrs.expression as string;
 
     // Parse for SHAPE only — a `[unit]` literal is lowered so a body like
     // `mass <= 2000 [kg]` is recognised as the inequality it is instead of

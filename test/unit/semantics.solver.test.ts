@@ -555,8 +555,8 @@ describe('checkConstraintsNumeric — a feature an assert typed by an inequality
 
 /*
  * a5 S4: a plain `constraint nl : Newton { in f = force; … }` filed no row on the numeric surface (tp1 read 2500 against
- * 1000 * 2 in silence). It files its own `unknown` row now, in the sentence the typed assert's row has, and the plain
- * constraints beside it are judged as before: it is no axiom and nothing is solved from it.
+ * 1000 * 2 in silence). TY1A files its own row and reads the substituted equation (`nl` is violated);
+ * the plain constraints beside it are judged as before: it is no axiom and nothing is solved from it.
  */
 describe('checkConstraintsNumeric — a plain constraint typed by a constraint definition', () => {
   const rows = async (usage: string) => {
@@ -570,18 +570,14 @@ describe('checkConstraintsNumeric — a plain constraint typed by a constraint d
     return byName;
   };
 
-  it('files an unknown row beside rows that read as before, whether the parameters are valued or bound', async () => {
+  it('reads the substituted equation beside rows that read as before, whether the parameters are valued or bound', async () => {
     for (const usage of [
       'constraint nl : Newton { in f = force; in m = mass; in a = accel; }',
       'constraint nl : Newton; bind nl.f = force; bind nl.m = mass; bind nl.a = accel;',
     ]) {
       const byName = await rows(usage);
       const nl = byName.get('TQ::car::nl')!;
-      expect([nl.result, nl.imposed ?? false, nl.reason]).toEqual([
-        'unknown',
-        false,
-        "`nl` is typed by the constraint definition `Newton`, whose body this tool does not read with the parameters' values",
-      ]);
+      expect([nl.result, nl.imposed ?? false, nl.reason]).toEqual(['violated', false, undefined]);
       expect([byName.get('TQ::k')!.result, byName.get('TQ::kf')!.result]).toEqual(['satisfied', 'violated']);
     }
   });
