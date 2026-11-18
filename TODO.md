@@ -1399,7 +1399,7 @@ true values. What follows is what that branch and the review of it left open; en
       removed, 150 seeds, 59 cells; fence-order-scratch/gen-unsorted.mts and vo.mts). It is sorted
       but not stable across loads, not a wrong answer, and pre-existing; a stable order would need a
       text-order sort key in validate.ts. [fence-order review]
-- [ ] **Coverage universe: fold the API/OSLC PSMs and the 17 rendered views into the matrix.**
+- [x] **Coverage universe: fold the API/OSLC PSMs and the 17 rendered views into the matrix.**
       `docs/CONFORMANCE.md` §3–4 already test the API and OSLC PSMs, and the E2E suite renders all
       17 views, but `coverage-universe.json` lists the 7 API service groups and the 11 view kinds as
       `unmeasured`. Map each group/kind to its existing test, set its state (`decided`/`rendered`)
@@ -1407,6 +1407,10 @@ true values. What follows is what that branch and the review of it left open; en
       a test asserts its contract, a view kind `rendered` only where an E2E spec asserts its panels.
       Done: the 18 rows are measured with evidence, the page's "unmeasured" count drops by 18, and
       the two headers are recomputed. [coverage-universe; CU-1]
+      CLOSED 2026-11-18 by a5-cu CU1 (merge 928adb7): 17 rows measured (6 API groups `decided`, 11
+      view kinds `rendered`, each with its test as evidence); `API:other` (§5.7 POST /transform and
+      /validate) stays `unmeasured` because this build ships neither and no test asserts them, so
+      the 18th row is not measured here. Measured 39→56, unmeasured 40→23, FALSE 0.
 
 - [ ] **Coverage universe: measure the read/determine column for the textual areas the corpus uses.**
       The 14 textual constructs are `parsed` (corpus parse conformance) but their semantic read is
@@ -1498,6 +1502,15 @@ true values. What follows is what that branch and the review of it left open; en
       sentence), the given-way sentence no longer claims an unread equation, the 637-model
       differential stays exactly "631 identical, 6 differ" with the six ids, v9 has no DIFFERS, and
       the branch gate is green. [typed-usage; TY1 follow-up; a5-typed TY1]
+      PART CLOSED 2026-11-18 by a5-typed TY1A (merge d055229): typed and asserted bodies are read at
+      feature level and the three sentence sites are lane-qualified (the "does not read" sentence
+      remains only for a genuine refusal). Ruling 2026-11-18: the step's sound letters widen beyond
+      the nineteen named rows to `mask-param MP::tc/MP::tx` literal `?→T` and `MP::V::holds` `?→T`
+      (`name-cd-eq` is within `name-cd*`), because the file-wide abstention could not be kept
+      without restoring the false "body not read" claim. STILL OPEN: re-run TY1's body-reading half
+      on top of TY1A and re-pin the named families. TY2 follow-up: TY1A's SAME_POINT_DEMOTED move
+      lowers the `lra` class from differential-tested to tested (knownFalse 0→2, tableDisagree +2);
+      it is a recorded measurement change, not a regression.
 
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
