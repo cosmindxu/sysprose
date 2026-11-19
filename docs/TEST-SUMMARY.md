@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5694 total — 5694 passed, 0 failed, 0 skipped
+- **Tests:** 5704 total — 5704 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -69,7 +69,7 @@
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
 | test/unit/core.model.test.ts | 33 | 0 | 0 |
-| test/unit/diagnostic-codes.test.ts | 15 | 0 | 0 |
+| test/unit/diagnostic-codes.test.ts | 16 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.exports.test.ts | 3 | 0 | 0 |
@@ -94,7 +94,7 @@
 | test/unit/graph-algorithms.test.ts | 19 | 0 | 0 |
 | test/unit/graph-analysis.test.ts | 19 | 0 | 0 |
 | test/unit/langium.direction.test.ts | 5 | 0 | 0 |
-| test/unit/langium.grammar.test.ts | 51 | 0 | 0 |
+| test/unit/langium.grammar.test.ts | 54 | 0 | 0 |
 | test/unit/library.load.test.ts | 13 | 0 | 0 |
 | test/unit/linked-model.test.ts | 15 | 0 | 0 |
 | test/unit/paste.test.ts | 7 | 0 | 0 |
@@ -126,7 +126,7 @@
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 92 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 128 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 130 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 40 | 0 | 0 |
@@ -159,7 +159,7 @@
 | test/unit/text.recovery-honesty.test.ts | 36 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 235 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 237 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 27 | 0 | 0 |
@@ -167,4 +167,4 @@
 | test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
-| test/unit/validation.rules.test.ts | 88 | 0 | 0 |
+| test/unit/validation.rules.test.ts | 90 | 0 | 0 |
