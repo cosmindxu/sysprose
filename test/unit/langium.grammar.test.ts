@@ -880,6 +880,44 @@ describe('Langium SysML grammar — `parallel` on an exhibit state and behind a 
   });
 });
 
+// A `/* … */` comment between a declaration's header and its `{` or `;` used to end the
+// declaration there: the braced body fell to the enclosing body's trailing expression slot
+// and vanished, with no diagnostic. The lexer now hides such a comment.
+describe('a block comment between a declaration header and its body', () => {
+  const names = (src: string) => {
+    const { model, diagnostics } = parseModel(src);
+    expect(diagnostics.filter((d) => d.severity === 'error'), src).toEqual([]);
+    return model.all().map((el) => el.declaredName).filter((n) => n);
+  };
+
+  it('keeps the body of a state definition (the reported shape)', () => {
+    expect(names('package P { part def Ctl { state def M /* c */ { state a; state b; transition t first a accept go then b; } } }'))
+      .toEqual(expect.arrayContaining(['M', 'a', 'b', 't']));
+  });
+
+  it.each([
+    ['a usage', 'package P { state x /* c */ { state a; } }', 'a'],
+    ['a definition', 'package P { part def A /* c */ { attribute m : Real; } }', 'm'],
+    ['after a specialization', 'package P { part def A; part def B :> A /* c */ { attribute m : Real; } part def Z; }', 'm'],
+    ['a // line comment', 'package P { state x // c\n { state a; } }', 'a'],
+    ['a comment that holds a brace', 'package P { state <M1> /* } */ { state a; } }', 'a'],
+    ['a comment holding `{`, then more members', 'package P { part def A /* { */ { attribute m : Real; } part def Z; }', 'm'],
+  ])('keeps the body: %s', (_label, src, inner) => {
+    expect(names(src)).toContain(inner);
+  });
+
+  it('keeps the next element after a comment before `;`', () => {
+    expect(names('package P { part def A /* c */ ; part def Z; }')).toEqual(expect.arrayContaining(['A', 'Z']));
+  });
+
+  it('leaves doc / comment bodies and free-standing comments as they were', () => {
+    const { model } = parseModel('package P { part def A { doc /* d */ attribute m : Real; } /* free */ comment C /* body */ part def Z; }');
+    // P, A, the doc, m, the free-standing comment, C, Z — the same seven as before the lexer rule.
+    expect(model.all().length).toBe(7);
+    expect(model.all().some((el) => el.declaredName === 'm')).toBe(true);
+  });
+});
+
 // The parser is built the first time something asks for it (Chevrotain's lookahead analysis,
 // about 1.3 s in a browser); `warmParser` lets a page pay that before the click that needs a
 // parse (`src/ui/parser-warmup.ts`, docs/UI-ROADMAP.md P3).
