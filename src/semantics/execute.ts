@@ -1007,6 +1007,22 @@ export function runStateMachine(
       'interpreter reads — so no start is guessed.';
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
+  // A composite state entered mid-run opens through the same reading of its own entry action; if that start is
+  // not read it would rest at the composite with no substate. Refuse the run, naming the composite.
+  const unreadComposite = view.descendants.find((e) => {
+    if (e.id === container.id || e.eClass === 'TransitionUsage') return false;
+    const sub = machineRegion(model, e.id);
+    const subs = sub.directStates(e.id);
+    return subs.length > 0 && entryStartUnreadOf(model, sub, subs);
+  });
+  if (unreadComposite) {
+    const unopened =
+      `${model.qualifiedName(container.id) || container.id} is not run: its state ` +
+      `\`${model.qualifiedName(unreadComposite.id) || unreadComposite.id}\` has an entry action that names where it opens ` +
+      '(SysML v2 §7.18.2), and not as the one unguarded succession into one of its own states that this ' +
+      'interpreter reads — so the run would rest at that state with no substate; no run is started and no start is guessed.';
+    return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
+  }
   const timeTriggered = machineRegion(model, container.id).descendants.find(
     (e) => typeof e.attrs.timeTrigger === 'string' && e.attrs.timeTrigger,
   );

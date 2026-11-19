@@ -131,6 +131,11 @@ export interface SimSample {
    * ({@link SimRefusal.stopsRun}).
    */
   refused?: SimRefusal;
+  /**
+   * Why the run did not start (`StateRunResult.unopened`): a start the interpreter does not read, or a clock it
+   * does not have. Absent when the run started. The sample then has no active state, and this says why.
+   */
+  unopened?: string;
 }
 
 /** One driving step: inject a named `event`, and/or `advance` the clock. */
@@ -318,6 +323,7 @@ export class SimulationSession {
       solved: {},
       solvedOk: true,
       ...(res.refused === undefined ? {} : { refused: this.refusalOf(res) }),
+      ...(res.unopened === undefined ? {} : { unopened: res.unopened }),
     };
     if (this.withSolve) {
       const { solved, ok } = this.solveSample(res.valueStore);
