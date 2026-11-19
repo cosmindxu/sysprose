@@ -918,6 +918,35 @@ describe('a block comment between a declaration header and its body', () => {
   });
 });
 
+// `parallel` is valid only on a state (SysML v2 §7.18.2). On any other statement it used to read
+// silently as a separate keyword-less usage named `parallel` that swallowed the body.
+describe('`parallel` on a statement that is not a state', () => {
+  const codes = (src: string) => parseModel(src).diagnostics.map((d) => d.code);
+
+  it.each([
+    'exhibit action ea parallel { action x; }',
+    'exhibit use case u parallel { }',
+    'perform action p parallel { action x; }',
+    'include use case u parallel { }',
+    'action a parallel { action x; }',
+    'part p parallel { part q; }',
+  ])('reports %s', (stmt) => {
+    expect(codes(`package P { part def V { ${stmt} } }`)).toEqual(['parse/parallel-not-on-state']);
+  });
+
+  it.each([
+    'attribute parallel : Real;',
+    'part parallel;',
+    'state parallel;',
+    'exhibit state parallel { state a; }',
+    'state s parallel { state a; }',
+    'exhibit state es parallel { }',
+    "state <M> parallel { state a; }",
+  ])('does not report %s', (stmt) => {
+    expect(codes(`package P { part def V { ${stmt} } }`)).toEqual([]);
+  });
+});
+
 // The parser is built the first time something asks for it (Chevrotain's lookahead analysis,
 // about 1.3 s in a browser); `warmParser` lets a page pay that before the click that needs a
 // parse (`src/ui/parser-warmup.ts`, docs/UI-ROADMAP.md P3).
