@@ -1471,6 +1471,66 @@
    "false": 6,
    "construct_coverage": 73.5,
    "decision_coverage": 28.0
+  },
+  {
+   "idx": 120,
+   "day": "2026-11-19",
+   "sha": "ccb21bb",
+   "subject": "a5-cu CU8: weighting policy",
+   "source": "coverage-snapshot",
+   "snapshot": "ccb21bb",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 6,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 121,
+   "day": "2026-11-19",
+   "sha": "92c5289",
+   "subject": "a5-cu CU9: trends and evidence links",
+   "source": "coverage-snapshot",
+   "snapshot": "92c5289",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 6,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 122,
+   "day": "2026-11-19",
+   "sha": "3a740db",
+   "subject": "a5-cu-689: review fixes (trend note, README rows, a truncated history is an error, per-area count wording)",
+   "source": "coverage-snapshot",
+   "snapshot": "3a740db",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 6,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 123,
+   "day": "2026-11-19",
+   "sha": "4a9d6a3",
+   "subject": "a5-cu-689: Fable review fixes (register wrong-statement defects counted, equal-size variants, n/a for an empty denominator, class names only as code or in the tag, ignored files rejected)",
+   "source": "coverage-snapshot",
+   "snapshot": "4a9d6a3",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 7,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
   }
  ]
 }
