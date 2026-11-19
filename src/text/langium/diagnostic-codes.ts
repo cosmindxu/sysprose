@@ -156,6 +156,14 @@ const CODES = [
   },
 
   {
+    code: 'mapper/state-form-unread',
+    source: 'mapper',
+    severity: 'error',
+    when: 'A state body holds a SysML v2 §7.18 form that parses but that neither the walk nor the interpreter runs, so it is refused rather than read as a different statement: the target-transition shorthand (`state off; accept TurnOn via commPort then on;`, `state off; if c then on;`, OnOff5/6), an action written in place of an entry, do or exit body (`entry assign x := 1;`, `do send X to Y;`), a guarded `if c then X;` outside an entry succession, or `exhibit A::B :> C;`, an exhibit of a state by a qualified name. The statement (with the `then X;` that completes a shorthand) is not mapped; nothing is guessed from it. (`entry; if c then off;` is read, as a guarded succession from the entry action, and the machine is refused by the walk and the interpreter over the guard.)',
+    hint: 'The statement is not read. Write a target transition in the long form, `transition first off accept TurnOn via commPort then on;`, an action in an entry/do/exit body (`entry action a { assign x := 1; }`), an exhibit as `exhibit state s :> C;`; the load stays degraded and the checks abstain until you do.',
+  },
+
+  {
     code: 'parse/dangling-then',
     source: 'mapper',
     severity: 'error',

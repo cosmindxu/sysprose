@@ -248,10 +248,16 @@ EffectClause infers EffectClause:
 // ─────────────────── state behaviours & control nodes ────────────────
 
 StateBehavior infers StateBehavior:
-    kind=('entry' | 'do' | 'exit') ('action')? (name=Name)?
+    kind=('entry' | 'do' | 'exit')
+    // `entry action initial;` (SysML v2 §7.18.2): after `action`, `initial` is the action's NAME (it is otherwise a
+    // control-node keyword, which read here as a second member and dropped the name). Only after `action`.
+    ('action' (name=Name | name='initial')? | (name=Name)?)
     (specializations+=Specialization | multiplicity+=Multiplicity)*
     (valueOp=ValueOp value=Expression)?
-    (body=Body | ';')?;
+    // `entry assign x := 1;` / `do send X to Y;`: an action statement written in place of a body. The notation takes
+    // it as the behaviour's own action; it is read and REFUSED by the mapper (it used to split into a nameless
+    // behaviour plus a loose action statement, silently).
+    (body=Body | ';' | inline=BehaviorStmt)?;
 
 ControlNode infers ControlNode:
     kind=('fork' | 'join' | 'merge' | 'decide' | 'initial' | 'done') (name=Name)?
@@ -264,6 +270,8 @@ ControlNode infers ControlNode:
 BehaviorStmt infers BehaviorStmt:
     (succession=('first' | 'then'))?
     (visibility=Visibility)?
+    // `abstract exhibit state x;` (SysML v2 §7.18.2: an exhibit state usage takes the usage prefix).
+    (isAbstract?='abstract')?
     ( kind=('accept' | 'send' | 'assign' | 'perform' | 'include' | 'terminate')
       ('action' | 'state' | 'use' 'case')?
       ('<' shortName=Name '>')?
@@ -289,7 +297,7 @@ BehaviorStmt infers BehaviorStmt:
     | kind='exhibit'
       (exhibitState?='state')?
       ('<' shortName=Name '>')?
-      ( name=Name BehaviorStmtRest ( isParallel?='parallel' body=Body | body=Body | ';' )?
+      ( name=Name (('::' | '.') chain+=RefName)* BehaviorStmtRest ( isParallel?='parallel' body=Body | body=Body | ';' )?
       | BehaviorStmtRest (body=Body | ';')? )
     );
 
@@ -318,7 +326,7 @@ LoopStmt infers LoopStmt:
 // `if c { … } (else { … })?`  (member-level IfActionUsage)
 IfStmt infers IfStmt:
     (succession=('first' | 'then'))?
-    'if' cond=Expression (body=Body | target=QualifiedName ';'?)
+    'if' cond=Expression (body=Body | 'then' thenTarget=QualifiedName ';'? | target=QualifiedName ';'?)
     ('else' (elseBody=Body | elseTarget=QualifiedName ';'?))?;
 
 // ─────────────────────── requirement clauses ─────────────────────────

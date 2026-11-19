@@ -435,10 +435,12 @@ export function isArgument(item: unknown): item is Argument {
 }
 
 export interface BehaviorStmt extends langium.AstNode {
-    readonly $container: Body | Namespace | RequirementClause;
+    readonly $container: Body | Namespace | RequirementClause | StateBehavior;
     readonly $type: 'BehaviorStmt';
     body?: Body;
+    chain: Array<RefName>;
     exhibitState: boolean;
+    isAbstract: boolean;
     isParallel: boolean;
     kind: 'accept' | 'assign' | 'exhibit' | 'include' | 'perform' | 'send' | 'terminate';
     multiplicity: Array<Multiplicity>;
@@ -780,6 +782,7 @@ export interface IfStmt extends langium.AstNode {
     elseTarget?: QualifiedName;
     succession?: 'first' | 'then';
     target?: QualifiedName;
+    thenTarget?: QualifiedName;
 }
 
 export const IfStmt = 'IfStmt';
@@ -1074,9 +1077,10 @@ export interface StateBehavior extends langium.AstNode {
     readonly $container: Body | Namespace | RequirementClause;
     readonly $type: 'StateBehavior';
     body?: Body;
+    inline?: BehaviorStmt;
     kind: 'do' | 'entry' | 'exit';
     multiplicity: Array<Multiplicity>;
-    name?: Name;
+    name?: 'initial' | Name;
     specializations: Array<Specialization>;
     value?: Expression;
     valueOp?: ValueOp;
@@ -1394,7 +1398,9 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     name: BehaviorStmt,
                     properties: [
                         { name: 'body' },
+                        { name: 'chain', defaultValue: [] },
                         { name: 'exhibitState', defaultValue: false },
+                        { name: 'isAbstract', defaultValue: false },
                         { name: 'isParallel', defaultValue: false },
                         { name: 'kind' },
                         { name: 'multiplicity', defaultValue: [] },
@@ -1651,7 +1657,8 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'elseBody' },
                         { name: 'elseTarget' },
                         { name: 'succession' },
-                        { name: 'target' }
+                        { name: 'target' },
+                        { name: 'thenTarget' }
                     ]
                 };
             }
@@ -1856,6 +1863,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     name: StateBehavior,
                     properties: [
                         { name: 'body' },
+                        { name: 'inline' },
                         { name: 'kind' },
                         { name: 'multiplicity', defaultValue: [] },
                         { name: 'name' },

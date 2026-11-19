@@ -871,7 +871,7 @@ export function unitLexeme(unit: string): string {
 
 /** accept / send / assign / perform / exhibit / include / terminate action. */
 function behaviorLine(model: Model, el: ElementRecord, indent: number): string {
-  const parts = [...successionPrefix(el), String(el.attrs.actionKind)];
+  const parts = [...successionPrefix(el), ...(el.attrs.isAbstract === true ? ['abstract'] : []), String(el.attrs.actionKind)];
   // `exhibit state es parallel { … }`: the grammar reads `parallel` after `exhibit` only behind a name or a short
   // name, and `exhibit state` is the spec's spelling of the usage that carries one (SysML v2 §7.18.4).
   const parallel = el.attrs.actionKind === 'exhibit' ? parallelSuffix(el) : [];
@@ -1282,7 +1282,10 @@ function successionLine(model: Model, el: ElementRecord, pad: string): string {
   // `entry; then off;` — the succession from a state's entry action to the state it opens in (SysML v2 §7.18.2) is
   // written as the bare `then` straight after that entry action, which is where the mapper reads it back from; the
   // entry action need not have a name.
-  if (isEntryThen(model, el)) return `${pad}then ${endpoint(model, el, 'target')};`;
+  if (isEntryThen(model, el)) {
+    const g = typeof el.attrs.guard === 'string' && el.attrs.guard ? el.attrs.guard : undefined;
+    return `${pad}${g !== undefined ? `if ${g} ` : ''}then ${endpoint(model, el, 'target')};`;
+  }
   return `${pad}succession first ${endpoint(model, el, 'source')} then ${endpoint(model, el, 'target')};`;
 }
 

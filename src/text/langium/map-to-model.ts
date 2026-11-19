@@ -745,6 +745,29 @@ class Mapper {
    */
   private readonly pendingEntry = new Map<ElementId | null, ElementId>();
 
+  /** Owners whose last member was a refused target-transition `accept …` / `if …`: the `then X;` after it is refused too. */
+  private readonly refusedTargetThen = new Set<ElementId | null>();
+
+  /** Refuse a SysML v2 §7.18 state form that is read but not interpreted (`mapper/state-form-unread`). */
+  private refuseStateForm(node: AstNode, what: string): void {
+    const code = 'mapper/state-form-unread';
+    this.diagnostics.push({
+      message: `${what} is a SysML v2 §7.18 form this tool does not interpret, so it is not read.`,
+      ...posOf(node),
+      severity: 'error',
+      source: 'mapper',
+      code,
+      found: what,
+      hint: renderHint(code, { found: what }),
+      ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+    });
+  }
+
+  private isStateOwner(ownerId: ElementId | null): boolean {
+    const c = ownerId != null ? this.model.get(ownerId)?.eClass : undefined;
+    return c === 'StateDefinition' || c === 'StateUsage' || c === 'ExhibitStateUsage';
+  }
+
   /**
    * Warnings about an unresolved SPECIALIZATION reference, paired with the
    * element and attribute that still hold the unresolved name.
@@ -1737,7 +1760,9 @@ class Mapper {
   }
 
   private mapMemberInner(node: Member, ownerId: ElementId | null): void {
-    if (node.$type !== 'FirstThen' || (node as FirstThen).source !== undefined) this.pendingEntry.delete(ownerId);
+    const guardedEntryThen = node.$type === 'IfStmt' && (node as IfStmt).thenTarget !== undefined && this.pendingEntry.has(ownerId);
+    if (!guardedEntryThen && (node.$type !== 'FirstThen' || (node as FirstThen).source !== undefined)) this.pendingEntry.delete(ownerId);
+    if (node.$type !== 'FirstThen' && !(node.$type === 'BehaviorStmt' || node.$type === 'IfStmt')) this.refusedTargetThen.delete(ownerId);
     switch (node.$type) {
       case 'Doc':
         return this.mapDoc(node as Doc, ownerId);
@@ -1830,6 +1855,7 @@ class Mapper {
       case 'FirstThen': {
         const ft = node as FirstThen;
         if (!ft.target) return;
+        if (ft.source === undefined && this.refusedTargetThen.delete(ownerId)) return; // the refused `accept … then X;`
         const entry = ft.source === undefined ? this.pendingEntry.get(ownerId) : undefined;
         if (entry !== undefined) {
           // `entry; then off;` — the succession from the entry action to the state it opens in (SysML v2 §7.18.2).
@@ -2124,6 +2150,29 @@ class Mapper {
 
   /** `if c { … } (else { … })?` → an IfActionUsage with a guard condition. */
   private mapIfStmt(node: IfStmt, ownerId: ElementId | null): void {
+    if (node.thenTarget !== undefined) {
+      // `entry; if c then off;` (SysML v2 §7.18.2): a GUARDED succession from the entry action. It is kept with its
+      // guard, which the start reading and the walk both refuse (a conditional start is not a start they take).
+      const entry = this.pendingEntry.get(ownerId);
+      if (entry !== undefined) {
+        const edge = this.create('Succession', {
+          ownerId: ownerId ?? undefined,
+          source: [entry],
+          target: [],
+          attrs: { targetRef: node.thenTarget, entryTransition: true, guard: exprText(node.cond) },
+        });
+        this.deferEnds(edge.id, undefined, node.thenTarget, node, 'ref/unresolved-reference', (r) => `Unresolved reference '${r}'`);
+        return;
+      }
+      this.refuseStateForm(
+        node,
+        this.isStateOwner(ownerId)
+          ? `the target-transition shorthand \`if ${exprText(node.cond)} then ${node.thenTarget}\``
+          : `\`if ${exprText(node.cond)} then ${node.thenTarget}\` outside a state body`,
+      );
+      if (this.isStateOwner(ownerId)) this.refusedTargetThen.add(ownerId);
+      return;
+    }
     const attrs: Record<string, AttrValue> = { condition: exprText(node.cond) };
     if (node.target) attrs.thenTarget = node.target;
     if (node.elseTarget) attrs.elseTarget = node.elseTarget;
@@ -2136,8 +2185,21 @@ class Mapper {
 
   /** accept / send / assign / perform / exhibit / include / terminate action. */
   private mapBehaviorStmt(node: BehaviorStmt, ownerId: ElementId | null): void {
+    if (node.kind === 'accept' && node.succession === undefined && this.isStateOwner(ownerId)) {
+      // `state off; accept TurnOn via commPort then on;` (OnOff5/6, SysML v2 §7.18.3): the target-transition shorthand,
+      // a transition out of the state written just before. Read as an accept ACTION beside the states it would be a
+      // different statement, so it is refused, and the `then X;` that completes it with it.
+      this.refuseStateForm(node, `the target-transition shorthand \`accept ${node.name ?? ''}…\` directly in a state`);
+      this.refusedTargetThen.add(ownerId);
+      return;
+    }
+    if (node.kind === 'exhibit' && node.chain && node.chain.length > 0) {
+      this.refuseStateForm(node, `\`exhibit ${[node.name, ...node.chain].join('::')}\`, an exhibit of a state by a qualified name`);
+      return;
+    }
     const eClass = BEHAVIOR_ECLASS[node.kind] ?? 'ActionUsage';
     const attrs: Record<string, AttrValue> = { actionKind: node.kind };
+    if (node.isAbstract) attrs.isAbstract = true;
     if (node.via) attrs.via = node.via;
     if (node.target) attrs.actionTarget = node.target;
     if (node.succession) attrs.succession = node.succession;
@@ -2366,6 +2428,13 @@ class Mapper {
 
   /** `entry` / `do` / `exit` (action)? (name)? (: T)? (= value)? (body)? — kept like any behaviour statement's. */
   private mapStateBehavior(node: StateBehavior, ownerId: ElementId | null): void {
+    if (node.inline) {
+      // `entry assign x := 1;` / `do send X to Y;`: the notation's inline action. Neither the walk nor the
+      // interpreter runs an action written this way, so it is refused whole rather than kept as a bare behaviour
+      // beside a loose action statement.
+      this.refuseStateForm(node, `\`${node.kind} ${node.inline.kind} …\`, an action written in place of the ${node.kind} action's body`);
+      return;
+    }
     const el = this.create('ActionUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
