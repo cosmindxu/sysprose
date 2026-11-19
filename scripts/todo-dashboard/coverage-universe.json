@@ -1,10 +1,11 @@
 {
  "meta": {
-  "generated": "2026-11-19T01:03:33+01:00",
+  "generated": "2026-11-19T01:19:29+01:00",
   "sources": [
    "scripts/todo-dashboard/coverage-universe-source.json",
    "docs/CONFORMANCE.md",
    "docs/CONSTRAINT-CLASSES.md",
+   "scripts/todo-dashboard/ds_open.json (the dashboard's FALSE tier)",
    "corpus (637 models)",
    "test/conformance/",
    "test/e2e/",
@@ -104,7 +105,39 @@
     "title": "API Model and the OSLC PSM",
     "reason": "no row, although an OSLC conformance suite exists (CONFORMANCE \u00a74)"
    }
-  ]
+  ],
+  "false": {
+   "by_area": {
+    "Textual notation": 0,
+    "Graphical notation": 0,
+    "API & services": 0,
+    "KerML kernel": 0,
+    "Constraints & parametrics": 6
+   },
+   "by_area_tier": {
+    "KerML kernel": 0,
+    "Textual notation": 0,
+    "Graphical notation": 0,
+    "API & services": 0,
+    "Constraints & parametrics": 0
+   },
+   "by_area_register": {
+    "Constraints & parametrics": 6
+   },
+   "tier_count": 0,
+   "tier_ids": [],
+   "tier_unattributed": [],
+   "tier_touched": {},
+   "register_entries": 6,
+   "register_by_area": {
+    "Constraints & parametrics": 6
+   },
+   "register_by_class": {
+    "lra": 2,
+    "partial-context": 2,
+    "per-instance": 2
+   }
+  }
  },
  "rows": [
   {
@@ -1601,7 +1634,8 @@
    "evidence": "class level `experimental`; counted facts: rows 1",
    "weight": 1,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:bool",
@@ -1614,7 +1648,8 @@
    "evidence": "class level `experimental`; counted facts: rows 54",
    "weight": 54,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:lra",
@@ -1627,7 +1662,8 @@
    "evidence": "class level `tested`; counted facts: rows 486",
    "weight": 486,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 2
   },
   {
    "id": "CON:lira",
@@ -1640,7 +1676,8 @@
    "evidence": "class level `tested`; counted facts: rows 15",
    "weight": 15,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:nra-poly-pinned",
@@ -1653,7 +1690,8 @@
    "evidence": "class level `experimental`; counted facts: rows 6",
    "weight": 6,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:nra-poly-free",
@@ -1666,7 +1704,8 @@
    "evidence": "class level `experimental`; counted facts: rows 1",
    "weight": 1,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:nra-div-pinned",
@@ -1679,7 +1718,8 @@
    "evidence": "class level `tested`; counted facts: rows 17",
    "weight": 17,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:units",
@@ -1692,7 +1732,8 @@
    "evidence": "class level `differential-tested`; counted facts: rows 100",
    "weight": 100,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:text-as-real",
@@ -1705,7 +1746,8 @@
    "evidence": "class level `experimental`; counted facts: rows 2",
    "weight": 2,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:partial-context",
@@ -1718,7 +1760,8 @@
    "evidence": "class level `experimental`; counted facts: rows 2",
    "weight": 2,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 2
   },
   {
    "id": "CON:stated-value",
@@ -1731,7 +1774,8 @@
    "evidence": "class level `differential-tested`; counted facts: rows 311",
    "weight": 311,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:defining-equation",
@@ -1744,7 +1788,8 @@
    "evidence": "class level `differential-tested`; counted facts: rows 16",
    "weight": 16,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:bind-equality",
@@ -1757,7 +1802,8 @@
    "evidence": "class level `experimental`; counted facts: rows 9",
    "weight": 9,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:asserted-fact",
@@ -1770,7 +1816,8 @@
    "evidence": "class level `experimental`; counted facts: rows 28",
    "weight": 28,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:requirement-clause",
@@ -1783,7 +1830,8 @@
    "evidence": "class level `differential-tested`; counted facts: rows 236",
    "weight": 236,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:per-instance",
@@ -1796,7 +1844,8 @@
    "evidence": "class level `experimental`; counted facts: rows 1",
    "weight": 1,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 2
   },
   {
    "id": "CON:fence-no-formal-clause",
@@ -1809,7 +1858,8 @@
    "evidence": "class level `fenced`; counted facts: rows 40",
    "weight": 40,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:fence-unparseable",
@@ -1822,7 +1872,8 @@
    "evidence": "class level `unpinned`; counted facts: rows 1",
    "weight": 1,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:fence-unresolved-name",
@@ -1835,7 +1886,8 @@
    "evidence": "class level `fenced`; counted facts: rows 3",
    "weight": 3,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:fence-unit-unresolved",
@@ -1848,7 +1900,8 @@
    "evidence": "class level `unpinned`; counted facts: rows 1",
    "weight": 1,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:fence-dimension-clash",
@@ -1861,7 +1914,8 @@
    "evidence": "class level `fenced`; counted facts: rows 2",
    "weight": 2,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:fence-offset-arithmetic",
@@ -1874,7 +1928,8 @@
    "evidence": "class level `fenced`; counted facts: rows 3",
    "weight": 3,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:fence-refused-derivation",
@@ -1887,7 +1942,8 @@
    "evidence": "class level `fenced`; counted facts: rows 1",
    "weight": 1,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:fence-unsupported-operator",
@@ -1900,7 +1956,8 @@
    "evidence": "class level `fenced-defect`; counted facts: rows 6",
    "weight": 6,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   },
   {
    "id": "CON:fence-non-numeric-operand",
@@ -1913,7 +1970,8 @@
    "evidence": "class level `fenced`; counted facts: rows 4",
    "weight": 4,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "rows_against": 0
   }
  ],
  "metrics": {
@@ -1924,6 +1982,31 @@
   "decision_rows": 25,
   "decision_decided": 7,
   "decision_coverage": 28.0,
-  "false": 0
+  "false": 6,
+  "false_tier": 0,
+  "false_register_entries": 6,
+  "false_unattributed": 0,
+  "false_by_area": {
+   "Textual notation": 0,
+   "Graphical notation": 0,
+   "API & services": 0,
+   "KerML kernel": 0,
+   "Constraints & parametrics": 6
+  },
+  "false_by_area_tier": {
+   "KerML kernel": 0,
+   "Textual notation": 0,
+   "Graphical notation": 0,
+   "API & services": 0,
+   "Constraints & parametrics": 0
+  },
+  "false_by_area_register": {
+   "Constraints & parametrics": 6
+  },
+  "false_register_by_class": {
+   "lra": 2,
+   "partial-context": 2,
+   "per-instance": 2
+  }
  }
 }

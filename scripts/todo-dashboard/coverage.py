@@ -44,8 +44,15 @@ The two headers:
   decision coverage  = share of measured CON rows the solver decides (level >= tested)
 
 They are deliberately NOT a single "percent of all SysML": the denominators are stated on
-the page (rows defined, rows measured, rows unmeasured) and the soundness fact (FALSE 0)
-is reported beside them, never folded in.
+the page (rows defined, rows measured, rows unmeasured) and soundness is reported beside
+them, never folded in. Soundness is a per-area count of open wrong-statement signals. Its
+two inputs are the dashboard's FALSE tier (`ds_open.json`: open findings, each attributed
+to the area of the coverage row id or class name it names) and the class register's `Table
+rows against` (the differential-table rows a class has against its hand-computed answer,
+counted in the constraint lane). The register's column is per class cell: the census
+charges one row against to every class the row rests on, so a row resting on three classes
+is three entries, and the page says so rather than reporting them as distinct findings. The
+count sits beside each area's row count and never enters a percentage.
 """
 import json
 import os
@@ -57,6 +64,7 @@ DOC = os.path.join(REPO, 'docs')
 OUT_JSON = os.path.join(HERE, 'coverage-universe.json')
 OUT_HTML = os.path.join(HERE, 'coverage.html')
 SOURCE = os.path.join(HERE, 'coverage-universe-source.json')
+OPEN = os.path.join(HERE, 'ds_open.json')
 CORPUS = '/home/xcos/Work/sysprose-soundness-artifacts/gate-tools/corpus'
 
 
@@ -160,6 +168,99 @@ def append_note(row, extra):
     row['note'] = f'{base}; {extra}' if base else extra
 
 
+def load_false_tier():
+    """The dashboard's FALSE tier: the open wrong-statement findings in `ds_open.json`.
+
+    `datasets.py` writes one entry per open TODO.md item, with `severity` the class the
+    dashboard's classifier gave it; `FALSE` is its name for a known wrong answer. The file
+    is an input, not a source of truth: a missing or malformed one is a hard error, so the
+    false counts cannot silently read 0.
+    """
+    if not os.path.exists(OPEN):
+        raise SystemExit(f'coverage.load_false_tier: {OPEN} not found '
+                         '(every FALSE-tier count would silently become 0)')
+    try:
+        entries = json.load(open(OPEN, encoding='utf-8'))
+    except Exception as e:
+        raise SystemExit(f'coverage.load_false_tier: cannot read {OPEN}: {e}')
+    if not isinstance(entries, list):
+        raise SystemExit(f'coverage.load_false_tier: {OPEN} is not a list of entries')
+    return [e for e in entries if isinstance(e, dict) and e.get('severity') == 'FALSE']
+
+
+def areas_of_finding(finding, rows):
+    """The coverage areas whose rows a FALSE-tier finding names.
+
+    A row id (`TXT:parts-attributes`, `API:commits`) is distinctive; a CON class name
+    (`bind-equality`, `fence/unsupported-operator`) is matched on word boundaries so a
+    short class name does not match inside an unrelated word. A finding that names no row
+    is reported unattributed by its caller, never dropped into an area.
+    """
+    text = f"{finding.get('title', '')} {finding.get('tag', '')}"
+    areas = set()
+    for r in rows:
+        names = [r['id']]
+        if r['kind'] == 'CON':
+            names.append(r['name'])
+        for n in names:
+            if not n:
+                continue
+            if ':' in n:
+                pat = re.escape(n)
+            else:
+                pat = r'(?<![A-Za-z0-9_/:-])' + re.escape(n) + r'(?![A-Za-z0-9_/:-])'
+            if re.search(pat, text):
+                areas.add(r['area'])
+    return areas
+
+
+def apply_false_counts(rows):
+    """Join the dashboard's FALSE tier with the class register's "Table rows against".
+
+    Both inputs are open wrong-statement signals, and both are attributed to the area of
+    the coverage rows they touch. A CON row carries the register's per-class count in
+    `rows_against`. A FALSE-tier finding is counted once per area whose row it names; one
+    that names no row is listed as unattributed so nothing is silently lost.
+
+    The two inputs are not the same unit. A finding is one finding; the register's column
+    is per class cell, and the census charges one differential-table row against to every
+    class the row rests on, so a row resting on three classes is three entries. The return
+    value keeps them apart (`by_area_tier`, `by_area_register`) and the page labels the
+    register half as entries, never as distinct findings.
+    """
+    findings = load_false_tier()
+    tier_by_area, register_by_area, register_by_class = {}, {}, {}
+    for r in rows:
+        tier_by_area.setdefault(r['area'], 0)
+        if r.get('rows_against'):
+            register_by_area[r['area']] = register_by_area.get(r['area'], 0) + r['rows_against']
+            register_by_class[r['name']] = r['rows_against']
+    touched, unattributed = {}, []
+    for f in findings:
+        areas = areas_of_finding(f, rows)
+        if not areas:
+            unattributed.append(f.get('id'))
+            continue
+        for a in areas:
+            touched[a] = touched.get(a, 0) + 1
+    for a, n in touched.items():
+        tier_by_area[a] = tier_by_area.get(a, 0) + n
+    by_area = {a: tier_by_area.get(a, 0) + register_by_area.get(a, 0)
+               for a in set(tier_by_area) | set(register_by_area)}
+    return {
+        'by_area': by_area,
+        'by_area_tier': tier_by_area,
+        'by_area_register': register_by_area,
+        'tier_count': len(findings),
+        'tier_ids': [f.get('id') for f in findings],
+        'tier_unattributed': unattributed,
+        'tier_touched': touched,
+        'register_entries': sum(r.get('rows_against', 0) for r in rows),
+        'register_by_area': register_by_area,
+        'register_by_class': register_by_class,
+    }
+
+
 def build_universe():
     src, by_id, order, clauses_by_row, unclaused = load_source()
     rows = []
@@ -209,6 +310,13 @@ def build_universe():
             rows[-1]['weight'] = int(cells[1])
         except Exception:
             rows[-1]['weight'] = 0
+        # The register's "Table rows against": differential-table rows this class has
+        # against its hand-computed answer, charged once to every class a row rests on.
+        # It belongs to the CON area (the constraint lane). A fence carries "—", hence 0.
+        try:
+            rows[-1]['rows_against'] = int(cells[6]) if len(cells) > 6 else 0
+        except Exception:
+            rows[-1]['rows_against'] = 0
     if 'Constraints & parametrics' not in areas:
         areas.append('Constraints & parametrics')
 
@@ -234,13 +342,15 @@ def build_universe():
                           '(CONFORMANCE §4, test/conformance/oslc-conformance.test.ts)',
     }
     data = {'meta': {'generated': '', 'sources': ['scripts/todo-dashboard/coverage-universe-source.json', 'docs/CONFORMANCE.md',
-                                                    'docs/CONSTRAINT-CLASSES.md', 'corpus (637 models)',
+                                                    'docs/CONSTRAINT-CLASSES.md', 'scripts/todo-dashboard/ds_open.json (the dashboard\'s FALSE tier)',
+                                                    'corpus (637 models)',
                                                     'test/conformance/', 'test/e2e/', 'scripts/todo-dashboard/probes/'],
                      'standards': src.get('standards', []),
                      'areas': areas, 'notes': notes, 'gaps': src.get('gaps', [])},
             'rows': rows}
     measure_txt(rows)
     measure_known(rows)
+    data['meta']['false'] = apply_false_counts(rows)
     return data
 
 
@@ -444,6 +554,7 @@ def metrics(data):
     w_cov = sum(max(1, r['weight']) for r in measured if r['state'] in ('read', 'parsed', 'decided', 'rendered'))
     con = [r for r in rows if r['kind'] == 'CON' and r['state'] != 'unmeasured']
     con_decided = [r for r in con if r['state'] == 'decided']
+    false_meta = data['meta'].get('false', {})
     return {
         'rows': len(rows),
         'measured': len(measured),
@@ -452,7 +563,18 @@ def metrics(data):
         'decision_rows': len(con),
         'decision_decided': len(con_decided),
         'decision_coverage': round(100 * len(con_decided) / len(con), 1) if con else 0.0,
-        'false': 0,
+        # Soundness, reported beside coverage and never in its percentages: each FALSE-tier
+        # finding once, plus the class register's per-class row-against entries (the same
+        # differential row is charged to every class it rests on, so this is not a count of
+        # distinct findings; the page says so).
+        'false': false_meta.get('tier_count', 0) + false_meta.get('register_entries', 0),
+        'false_tier': false_meta.get('tier_count', 0),
+        'false_register_entries': false_meta.get('register_entries', 0),
+        'false_unattributed': len(false_meta.get('tier_unattributed', [])),
+        'false_by_area': false_meta.get('by_area', {}),
+        'false_by_area_tier': false_meta.get('by_area_tier', {}),
+        'false_by_area_register': false_meta.get('by_area_register', {}),
+        'false_register_by_class': false_meta.get('register_by_class', {}),
     }
 
 
@@ -471,10 +593,18 @@ def write_html(data, m):
                      'but gives no row of its own, so they carry no state here; they are listed, not hidden:'
                      f'<ul>{items}</ul></div>')
     body_rows = []
+    false_by_area = m.get('false_by_area', {})
+    tier_by_area = m.get('false_by_area_tier', {})
+    register_by_area = m.get('false_by_area_register', {})
     for area, rs in by_area.items():
         measured = sum(1 for r in rs if r['state'] != 'unmeasured')
+        n_tier = tier_by_area.get(area, 0)
+        n_register = register_by_area.get(area, 0)
         body_rows.append(f'<tr class="area"><td colspan="6"><b>{area}</b> — {len(rs)} rows, '
-                         f'{measured} with measured evidence, {sum(1 for r in rs if r["state"] == "unmeasured")} unmeasured</td></tr>')
+                         f'{measured} with measured evidence, {sum(1 for r in rs if r["state"] == "unmeasured")} unmeasured, '
+                         f'<b>soundness {false_by_area.get(area, 0)}</b> ({n_tier} FALSE-tier '
+                         f'finding{"" if n_tier == 1 else "s"} + {n_register} class-register '
+                         f'row-against entr{"y" if n_register == 1 else "ies"})</td></tr>')
         for r in rs:
             st = pill.get(r['state'], r['state'])
             ev = r['evidence'] or ''
@@ -490,6 +620,24 @@ def write_html(data, m):
             body_rows.append(f'<tr><td class="n">{r["kind"]}</td><td>{r["name"]}</td><td class="cl">{cl}</td>'
                              f'<td><span class="pill {r["state"]}">{st}</span></td>'
                              f'<td class="n">{r["weight"] or "—"}</td><td class="ev">{ev}</td></tr>')
+    false_src = (f"{m['false_tier']} open FALSE-tier finding{'' if m['false_tier'] == 1 else 's'} in the dashboard"
+                 if m['false_tier'] else "the dashboard's FALSE tier is empty today")
+    if m['false_unattributed']:
+        false_src += f"; {m['false_unattributed']} finding(s) name no coverage row and are not attributed"
+    reg_by_class = m.get('false_register_by_class', {})
+    reg_parts = ', '.join(f"`{name}` {n}" for name, n in sorted(reg_by_class.items()) if n) or '0'
+    false_rule = ('A <i>soundness</i> count beside an area\'s row count joins two inputs and never '
+                  'enters a percentage. The dashboard\'s <i>FALSE</i> tier '
+                  '(<i>scripts/todo-dashboard/ds_open.json</i>) is open wrong-statement findings, '
+                  'each counted once in every area whose coverage row id or CON class name it '
+                  'names; one that names no row is reported as unattributed. The class register\'s '
+                  '<i>Table rows against</i> is the differential-table rows a class has against '
+                  'its hand-computed answer, and its column is per class cell: the census charges '
+                  'one row against to every class the row rests on, so a row resting on three '
+                  'classes is three entries. The register half is therefore an entry count, not a '
+                  'count of distinct findings. '
+                  f'{false_src[0].upper()}{false_src[1:]}; the register\'s entries are {reg_parts}. '
+                  'Soundness is shown beside coverage and never folded into a percentage. ')
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>SysML v2 coverage — Sysprose</title>
 <style>
@@ -519,8 +667,8 @@ The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> me
     <div class="k">of the measured rows, corpus-weighted: read / parsed / decided / rendered over measured</div></div>
   <div class="card"><div class="k">Decision coverage (constraint lane)</div><div class="v">{m['decision_coverage']}%</div>
     <div class="k">{m['decision_decided']} of {m['decision_rows']} measured constraint classes are decided (level ≥ tested)</div></div>
-  <div class="card"><div class="k">Wrong-statement findings</div><div class="v">{m['false']}</div>
-    <div class="k">soundness is reported beside coverage, never folded in</div></div>
+  <div class="card"><div class="k">Soundness signals (not folded in)</div><div class="v">{m['false']}</div>
+    <div class="k">soundness not folded in: {false_src}, plus {m['false_register_entries']} per-class row-against entries in the class register (a differential-table row against is charged once for every class cell it rests on, so this half counts entries, not distinct findings); shown beside each area's row count, never in a percentage</div></div>
   <div class="card"><div class="k">Unmeasured</div><div class="v">{m['unmeasured']}</div>
     <div class="k">rows with no mechanical evidence yet (pinned probes fill them as they land)</div></div>
 </div>
@@ -545,7 +693,7 @@ row is <i>decided</i> when its class level is
 <i>fenced</i>/<i>unpinned</i>; a GRAPH row is <i>rendered</i> where an E2E spec asserts the view kind's
 panel (<i>test/e2e/</i>); an API row is <i>decided</i> where a conformance test asserts the group's
 endpoints (<i>test/conformance/</i>, CONFORMANCE §3–4). Weights are corpus usage (TXT) or counted rows
-(CON). KERML rows stay unmeasured here: no test pins the metaclass itself, and an API group whose
+(CON). {false_rule}KERML rows stay unmeasured here: no test pins the metaclass itself, and an API group whose
 endpoints this build does not ship stays unmeasured too (the <i>Other</i> group: POST /transform and
 /validate). The app's 17 views include the 11 standard view rows here; the four annotation primitives the
 earlier 02 §2.2 extraction dropped now have rows of their own. Pinned probes fill the remaining unmeasured
