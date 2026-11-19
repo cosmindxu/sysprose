@@ -1,6 +1,6 @@
 {
  "meta": {
-  "generated": "2026-11-19T01:33:02+01:00",
+  "generated": "2026-11-19T01:53:58+01:00",
   "sources": [
    "scripts/todo-dashboard/coverage-universe-source.json",
    "docs/CONFORMANCE.md",
@@ -9,7 +9,9 @@
    "corpus (637 models)",
    "test/conformance/",
    "test/e2e/",
-   "scripts/todo-dashboard/probes/"
+   "scripts/todo-dashboard/probes/",
+   "scripts/todo-dashboard/timeline.json (the merge list)",
+   "scripts/todo-dashboard/coverage-history.json"
   ],
   "standards": [
    {
@@ -166,6 +168,7 @@
      "construct": "Elements \u2014 the SysML textual construct for every model element: element IDs and alias IDs, names and short names, and the leading kind keyword (7.2.1 overview)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -201,6 +204,7 @@
      "construct": "Dependencies \u2014 `dependency from <client> to <supplier>`, a relationship asserting that the client relies on the supplier (7.3.1 overview)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -224,6 +228,7 @@
      "construct": "Namespace \u2014 an Element that contains members through memberships and exposes them by name; supports name resolution and imports."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -253,6 +258,7 @@
      "construct": "OwningMembership \u2014 a Membership that additionally asserts composite ownership of its member."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -276,6 +282,7 @@
      "construct": "FeatureMembership \u2014 an OwningMembership specialized for a feature: a type owns a feature."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -311,6 +318,7 @@
      "construct": "NamespaceImport \u2014 an Import of the members of another namespace, recursive where stated (`::**`)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -334,6 +342,7 @@
      "construct": "Type \u2014 anything that classifies: the abstract supertype of Classifier and Feature, owning features, specializations and multiplicity."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -363,6 +372,7 @@
      "construct": "Definitions \u2014 `<kind> def <name>`: a Classifier declared with a kind keyword, optional `specializes`/`:>` subclassifications, and a namespace body."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -404,6 +414,7 @@
      "construct": "Feature chains \u2014 a dotted path of usages recording the intermediate features, not just a qualified name."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -427,6 +438,7 @@
      "construct": "Specialization \u2014 the generalization relationship between types: every instance of the specific type is also an instance of the general type (Subsetting, Redefinition and FeatureTyping are its specializations)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -450,6 +462,7 @@
      "construct": "Subclassification \u2014 a Specialization between classifiers (textual `:>` or `specializes`)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -473,6 +486,7 @@
      "construct": "FeatureTyping \u2014 relates a Feature to the Type that types it (textual `:`)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -496,6 +510,7 @@
      "construct": "Subsetting \u2014 a Specialization between features: one feature's values are a subset of another's (textual `:>`)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -519,6 +534,7 @@
      "construct": "Redefinition \u2014 a Subsetting that replaces an inherited feature, keeping its value set but changing name, type, multiplicity or value (textual `:>>`)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -542,6 +558,7 @@
      "construct": "Conjugation \u2014 produces a conjugated type with input and output directions reversed (textual `~`)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -571,6 +588,7 @@
      "construct": "MultiplicityRange \u2014 the lower and upper bound of a multiplicity (textual `[lo..hi]`, `[n]`, `[*]`)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -606,6 +624,7 @@
      "construct": "DataType \u2014 a Classifier whose instances are pure data values."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -635,6 +654,7 @@
      "construct": "Connector \u2014 a feature whose values are links between its ends; the basis of connections and interfaces."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -670,6 +690,7 @@
      "construct": "Function \u2014 a Behavior with a result parameter: a value-returning behavior."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -693,6 +714,7 @@
      "construct": "Expression \u2014 a Step that is computable; its subtypes (8.3.4.8.1\u201318) include literal, operator, invocation, feature-reference, constructor and collect expressions, the basis of calc and constraint bodies."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -728,6 +750,7 @@
      "construct": "Flow definitions and usages \u2014 `flow def`, and `flow`/`message`/`succession flow` usages; messages declare their payload with `of`."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -763,6 +786,7 @@
      "construct": "MetadataFeature \u2014 a feature that is a metadata instance of a Metaclass."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -792,6 +816,7 @@
      "construct": "Annotations \u2014 the SysML notation attaching a comment, documentation or textual representation to one or more model elements."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -821,6 +846,7 @@
      "construct": "Comments \u2014 `comment <name> /* \u2026 */`, a comment that may be named and is a member of its namespace."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -850,6 +876,7 @@
      "construct": "Documentation \u2014 `doc /* \u2026 */`, a comment that documents its single owning element."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -879,6 +906,7 @@
      "construct": "TextualRepresentation \u2014 a textual body in a named language (the `rep` notation) rendered as an annotation of its element."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -906,6 +934,12 @@
      "id": "TXT:imports",
      "clause": "SysML v2 Part 1 7.5.3",
      "construct": "Imports \u2014 public/private, membership and namespace (recursive `::**`) imports, with import filtering (7.5.4)."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/packages-imports.sysml",
+     "href": "probes/packages-imports.sysml"
     }
    ],
    "weight_used": 637,
@@ -937,6 +971,12 @@
      "construct": "Parts \u2014 part definitions and part usages, composite features owned by a definition or usage."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/parts-attributes.sysml",
+     "href": "probes/parts-attributes.sysml"
+    }
+   ],
    "weight_used": 632,
    "weight_source": "corpus usage"
   },
@@ -960,6 +1000,12 @@
      "construct": "Items \u2014 item definitions and item usages: things that flow or are conserved."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/items.sysml",
+     "href": "probes/items.sysml"
+    }
+   ],
    "weight_used": 5,
    "weight_source": "corpus usage"
   },
@@ -981,6 +1027,12 @@
      "id": "TXT:ports",
      "clause": "SysML v2 Part 1 7.12",
      "construct": "Ports \u2014 port definitions and usages with direction (`in`/`out`/`inout`) and conjugation (7.12.3)."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/ports-direction.sysml",
+     "href": "probes/ports-direction.sysml"
     }
    ],
    "weight_used": 101,
@@ -1012,6 +1064,12 @@
      "construct": "Interfaces \u2014 interface definitions and usages, the port-to-port connection contract."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/interfaces-connections.sysml",
+     "href": "probes/interfaces-connections.sysml"
+    }
+   ],
    "weight_used": 20,
    "weight_source": "corpus usage"
   },
@@ -1041,6 +1099,12 @@
      "construct": "Control nodes \u2014 fork, join, merge, decision and the initial/final nodes."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/actions-control-nodes.sysml",
+     "href": "probes/actions-control-nodes.sysml"
+    }
+   ],
    "weight_used": 32,
    "weight_source": "corpus usage"
   },
@@ -1068,6 +1132,12 @@
      "id": "TXT:transitions",
      "clause": "SysML v2 Part 1 7.18.3",
      "construct": "Transition usages \u2014 trigger, guard and effect between states."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/states-transitions.sysml",
+     "href": "probes/states-transitions.sysml"
     }
    ],
    "weight_used": 50,
@@ -1111,6 +1181,12 @@
      "construct": "Assert constraint usages \u2014 `assert constraint { \u2026 }`, a constraint usage that must hold."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/calculations-constraints.sysml",
+     "href": "probes/calculations-constraints.sysml"
+    }
+   ],
    "weight_used": 596,
    "weight_source": "corpus usage"
   },
@@ -1132,6 +1208,12 @@
      "id": "TXT:requirements",
      "clause": "SysML v2 Part 1 7.21",
      "construct": "Requirements \u2014 requirement definitions and usages with subject, require and assume, concerns, and satisfy requirement usages (7.21.4)."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/requirements.sysml",
+     "href": "probes/requirements.sysml"
     }
    ],
    "weight_used": 389,
@@ -1157,6 +1239,12 @@
      "construct": "Allocations \u2014 allocation definitions and usages, the cross-cutting allocate mapping."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/allocation.sysml",
+     "href": "probes/allocation.sysml"
+    }
+   ],
    "weight_used": 5,
    "weight_source": "corpus usage"
   },
@@ -1178,6 +1266,12 @@
      "id": "TXT:views",
      "clause": "SysML v2 Part 1 7.26",
      "construct": "Views and viewpoints \u2014 view and viewpoint definitions and usages, renderings, compartments and diagrams as view usages (7.26.5)."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/views.sysml",
+     "href": "probes/views.sysml"
     }
    ],
    "weight_used": 1,
@@ -1203,6 +1297,12 @@
      "construct": "Enumerations \u2014 enumeration definitions and usages with enumeration literals."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/enumerations.sysml",
+     "href": "probes/enumerations.sysml"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "floor (no corpus use)"
   },
@@ -1226,6 +1326,12 @@
      "construct": "Occurrences \u2014 occurrence definitions and usages, time slices and snapshots, individual and event occurrences (7.9.3\u20137.9.5)."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/occurrences.sysml",
+     "href": "probes/occurrences.sysml"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "floor (no corpus use)"
   },
@@ -1247,6 +1353,12 @@
      "id": "TXT:metadata",
      "clause": "SysML v2 Part 1 7.27",
      "construct": "Metadata \u2014 metadata definitions and usages, semantic metadata and user-defined keywords (7.27.2\u20137.27.4)."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "scripts/todo-dashboard/probes/metadata.sysml",
+     "href": "probes/metadata.sysml"
     }
    ],
    "weight_used": 58,
@@ -1290,6 +1402,7 @@
      "construct": "Use case definitions and usages \u2014 `use case def`/`use case`, a case with external actors and an include-use-case usage (7.25.3)."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -1311,6 +1424,12 @@
      "id": "GRAPH:general-view",
      "clause": "SysML v2 Part 1 8.2.3.5 (Table 34, 9.2.20.1)",
      "construct": "General View (gv) \u2014 the default compartment for a package; definitions and usages drawn as nodes and edges."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/diagram-notation.spec.ts",
+     "href": "../../test/e2e/diagram-notation.spec.ts"
     }
    ],
    "weight_used": 1,
@@ -1336,6 +1455,12 @@
      "construct": "Interconnection View (iv) \u2014 the default compartment for a part: nested parts, their ports and the connections between them."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/interface-tags-subject.spec.ts",
+     "href": "../../test/e2e/interface-tags-subject.spec.ts"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "equal"
   },
@@ -1357,6 +1482,12 @@
      "id": "GRAPH:action-flow",
      "clause": "SysML v2 Part 1 8.2.3.17 (Table 34, 9.2.20.1)",
      "construct": "Action Flow View (afv) \u2014 the default compartment for an action: actions, parameters, control nodes and flows."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/diagram-control-nodes.spec.ts",
+     "href": "../../test/e2e/diagram-control-nodes.spec.ts"
     }
    ],
    "weight_used": 1,
@@ -1382,6 +1513,12 @@
      "construct": "State Transition View (stv) \u2014 the default compartment for a state: states and the transitions between them."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/palette-per-view.spec.ts",
+     "href": "../../test/e2e/palette-per-view.spec.ts"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "equal"
   },
@@ -1403,6 +1540,12 @@
      "id": "GRAPH:sequence",
      "clause": "SysML v2 Part 1 8.2.3.9 (Table 34, 9.2.20.1)",
      "construct": "Sequence View (sv) \u2014 the default compartment for an occurrence: lifelines and time-ordered event occurrences (9.2.20.2.7)."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/diagram-tables-content.spec.ts",
+     "href": "../../test/e2e/diagram-tables-content.spec.ts"
     }
    ],
    "weight_used": 1,
@@ -1428,6 +1571,12 @@
      "construct": "Requirement view \u2014 the GeneralView filter over requirement definitions/usages and satisfy/derive/refine, drawn by the requirements graphical notation."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/diagram-edges.spec.ts",
+     "href": "../../test/e2e/diagram-edges.spec.ts"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "equal"
   },
@@ -1449,6 +1598,16 @@
      "id": "GRAPH:case-analysis",
      "clause": "SysML v2 Part 1 8.2.3.22\u20138.2.3.24",
      "construct": "Cases, analysis cases and verification cases \u2014 their graphical notation, including subjects, objectives and results."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/diagram-views3.spec.ts",
+     "href": "../../test/e2e/diagram-views3.spec.ts"
+    },
+    {
+     "path": "test/e2e/graph-analysis.spec.ts",
+     "href": "../../test/e2e/graph-analysis.spec.ts"
     }
    ],
    "weight_used": 1,
@@ -1474,6 +1633,12 @@
      "construct": "Allocations graphical notation \u2014 the allocate mappings, typically rendered as a matrix or table."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/diagram-views2.spec.ts",
+     "href": "../../test/e2e/diagram-views2.spec.ts"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "equal"
   },
@@ -1495,6 +1660,12 @@
      "id": "GRAPH:browser-view",
      "clause": "SysML v2 Part 1 9.2.20.2.2 (Table 34, 9.2.20.1)",
      "construct": "Browser View (bv) \u2014 the ownership/membership hierarchy from an exposed root, rendered as a collapsible tree."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/diagram-edges.spec.ts",
+     "href": "../../test/e2e/diagram-edges.spec.ts"
     }
    ],
    "weight_used": 1,
@@ -1520,6 +1691,12 @@
      "construct": "Grid View (grv) \u2014 exposed elements and relationships arranged in a rectangular grid; Table 34 names no graphical rendering clause for it."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/diagram-tables-content.spec.ts",
+     "href": "../../test/e2e/diagram-tables-content.spec.ts"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "equal"
   },
@@ -1541,6 +1718,12 @@
      "id": "GRAPH:geometry-view",
      "clause": "SysML v2 Part 1 9.2.20.2.4 (Table 34, 9.2.20.1)",
      "construct": "Geometry View (gev) \u2014 a 2D/3D visualization of exposed spatial items; Table 34 names no graphical rendering clause for it."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/e2e/geometry3d.spec.ts",
+     "href": "../../test/e2e/geometry3d.spec.ts"
     }
    ],
    "weight_used": 1,
@@ -1566,6 +1749,12 @@
      "construct": "ProjectService \u2014 create, read, update and delete projects."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "test/conformance/api-contract.test.ts",
+     "href": "../../test/conformance/api-contract.test.ts"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "equal"
   },
@@ -1587,6 +1776,12 @@
      "id": "API:branches",
      "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
      "construct": "ProjectDataVersioningService \u2014 branches and their lifecycle."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/conformance/api-contract.test.ts",
+     "href": "../../test/conformance/api-contract.test.ts"
     }
    ],
    "weight_used": 1,
@@ -1612,6 +1807,12 @@
      "construct": "ProjectDataVersioningService \u2014 tags and their lifecycle."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "test/conformance/api-contract.test.ts",
+     "href": "../../test/conformance/api-contract.test.ts"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "equal"
   },
@@ -1633,6 +1834,12 @@
      "id": "API:commits",
      "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
      "construct": "ProjectDataVersioningService \u2014 commits, the write path for model content."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/conformance/api-contract.test.ts",
+     "href": "../../test/conformance/api-contract.test.ts"
     }
    ],
    "weight_used": 1,
@@ -1658,6 +1865,12 @@
      "construct": "ElementNavigationService \u2014 elements, roots and directional relationships read at a commit."
     }
    ],
+   "evidence_links": [
+    {
+     "path": "test/conformance/api-contract.test.ts",
+     "href": "../../test/conformance/api-contract.test.ts"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "equal"
   },
@@ -1679,6 +1892,12 @@
      "id": "API:queries",
      "clause": "API and Services 7.2.4; REST/HTTP PSM 8.1.3",
      "construct": "QueryService \u2014 stored queries and query results."
+    }
+   ],
+   "evidence_links": [
+    {
+     "path": "test/conformance/api-contract.test.ts",
+     "href": "../../test/conformance/api-contract.test.ts"
     }
    ],
    "weight_used": 1,
@@ -1704,6 +1923,7 @@
      "construct": "ExternalRelationshipService \u2014 create, read and delete the relationships an element has to elements outside the project."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -1727,6 +1947,7 @@
      "construct": "ProjectUsageService \u2014 create, read and delete usages of one project's content by another project."
     }
    ],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -1742,6 +1963,7 @@
    "weight": 0,
    "clause_ids": [],
    "clauses": [],
+   "evidence_links": [],
    "weight_used": null,
    "weight_source": "unmeasured"
   },
@@ -1758,6 +1980,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "counted rows"
   },
@@ -1774,6 +2002,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 54,
    "weight_source": "counted rows"
   },
@@ -1790,6 +2024,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 2,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 486,
    "weight_source": "counted rows"
   },
@@ -1806,6 +2046,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 15,
    "weight_source": "counted rows"
   },
@@ -1822,6 +2068,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 6,
    "weight_source": "counted rows"
   },
@@ -1838,6 +2090,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "counted rows"
   },
@@ -1854,6 +2112,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 17,
    "weight_source": "counted rows"
   },
@@ -1870,6 +2134,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 100,
    "weight_source": "counted rows"
   },
@@ -1886,6 +2156,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 2,
    "weight_source": "counted rows"
   },
@@ -1902,6 +2178,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 2,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 2,
    "weight_source": "counted rows"
   },
@@ -1918,6 +2200,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 311,
    "weight_source": "counted rows"
   },
@@ -1934,6 +2222,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 16,
    "weight_source": "counted rows"
   },
@@ -1950,6 +2244,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 9,
    "weight_source": "counted rows"
   },
@@ -1966,6 +2266,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 28,
    "weight_source": "counted rows"
   },
@@ -1982,6 +2288,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 236,
    "weight_source": "counted rows"
   },
@@ -1998,6 +2310,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 2,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "counted rows"
   },
@@ -2014,6 +2332,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 40,
    "weight_source": "counted rows"
   },
@@ -2030,6 +2354,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "counted rows"
   },
@@ -2046,6 +2376,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 3,
    "weight_source": "counted rows"
   },
@@ -2062,6 +2398,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "counted rows"
   },
@@ -2078,6 +2420,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 2,
    "weight_source": "counted rows"
   },
@@ -2094,6 +2442,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 3,
    "weight_source": "counted rows"
   },
@@ -2110,6 +2464,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 1,
    "weight_source": "counted rows"
   },
@@ -2126,6 +2486,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 6,
    "weight_source": "counted rows"
   },
@@ -2142,6 +2508,12 @@
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
    "weight_used": 4,
    "weight_source": "counted rows"
   }

@@ -54,8 +54,8 @@ row count stands in for it. The equal-weight variant counts every measured row o
 Each row's weight and its source are named in the Weight column; `weight` itself is left
 exactly as the corpus and the register set it.
 
-They are deliberately NOT a single "percent of all SysML": the denominators are stated on
-the page (rows defined, rows measured, rows unmeasured) and soundness is reported beside
+They are deliberately NOT a single "percent of all SysML": the denominators are stated on the
+page (rows defined, rows measured, rows unmeasured) and soundness is reported beside
 them, never folded in. Soundness is a per-area count of open wrong-statement signals. Its
 two inputs are the dashboard's FALSE tier (`ds_open.json`: open findings, each attributed
 to the area of the coverage row id or class name it names) and the class register's `Table
@@ -64,18 +64,35 @@ counted in the constraint lane). The register's column is per class cell: the ce
 charges one row against to every class the row rests on, so a row resting on three classes
 is three entries, and the page says so rather than reporting them as distinct findings. The
 count sits beside each area's row count and never enters a percentage.
+
+CU-9 adds the two things the snapshot lacked. Every measured row carries `evidence_links`:
+the repo files its evidence names (the pinned probe for a TXT row, the E2E spec for a GRAPH
+row, the conformance test for an API row, the class register for a CON row), checked to
+exist so a renamed probe or spec fails the build instead of leaving a dead link. And
+`coverage-history.json` records the per-merge trend: one entry per merge of the dashboard's
+timeline (`timeline.json`), plus the commits after the timeline's last entry that changed the
+coverage snapshot, read from git. Each entry records four numbers — measured rows, unmeasured
+rows, decided classes and the open false count — from the snapshot committed at that commit.
+A commit before the coverage page existed carries nulls, never zeros: a missing snapshot is
+not zero coverage. The false count is a null too until CU-6, where the snapshot first recorded
+the tier and the register halves as a measurement; before that it was a hard-coded stub, and
+charting that 0 would read as a soundness regression when it is only the count becoming honest.
 """
 import json
 import os
 import re
+import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
 DOC = os.path.join(REPO, 'docs')
 OUT_JSON = os.path.join(HERE, 'coverage-universe.json')
 OUT_HTML = os.path.join(HERE, 'coverage.html')
+OUT_HIST = os.path.join(HERE, 'coverage-history.json')
 SOURCE = os.path.join(HERE, 'coverage-universe-source.json')
+TIMELINE = os.path.join(HERE, 'timeline.json')
 OPEN = os.path.join(HERE, 'ds_open.json')
+SNAPSHOT = 'scripts/todo-dashboard/coverage-universe.json'
 CORPUS = '/home/xcos/Work/sysprose-soundness-artifacts/gate-tools/corpus'
 
 
@@ -393,12 +410,15 @@ def build_universe():
     data = {'meta': {'generated': '', 'sources': ['scripts/todo-dashboard/coverage-universe-source.json', 'docs/CONFORMANCE.md',
                                                     'docs/CONSTRAINT-CLASSES.md', 'scripts/todo-dashboard/ds_open.json (the dashboard\'s FALSE tier)',
                                                     'corpus (637 models)',
-                                                    'test/conformance/', 'test/e2e/', 'scripts/todo-dashboard/probes/'],
+                                                    'test/conformance/', 'test/e2e/', 'scripts/todo-dashboard/probes/',
+                                                    'scripts/todo-dashboard/timeline.json (the merge list)',
+                                                    'scripts/todo-dashboard/coverage-history.json'],
                      'standards': src.get('standards', []),
                      'areas': areas, 'notes': notes, 'gaps': src.get('gaps', [])},
             'rows': rows}
     measure_txt(rows)
     measure_known(rows)
+    apply_evidence_links(rows)
     apply_weights(rows)
     data['meta']['false'] = apply_false_counts(rows)
     return data
@@ -597,6 +617,48 @@ def measure_known(rows):
         print(f'coverage: no asserting test yet, left unmeasured: {unmeasured}')
 
 
+# The repo-relative paths a row's evidence can name. The lookbehind keeps a fragment like
+# `test/e2e/x.spec.ts` from also matching inside a longer path; the character class stops at
+# the punctuation that ends a path in prose.
+EVIDENCE_PATH = re.compile(
+    r'(?<![\w/.-])((?:scripts|test|docs)/[A-Za-z0-9_./-]+\.(?:ts|tsx|py|sysml|md|json))')
+
+
+def evidence_paths(row):
+    """The repo files a measured row's evidence names, plus the register for a CON row."""
+    paths = []
+    for p in EVIDENCE_PATH.findall(row.get('evidence', '')):
+        p = p.rstrip('.,;:)')
+        if p not in paths:
+            paths.append(p)
+    if row['kind'] == 'CON' and 'docs/CONSTRAINT-CLASSES.md' not in paths:
+        paths.insert(0, 'docs/CONSTRAINT-CLASSES.md')
+    return paths
+
+
+def apply_evidence_links(rows):
+    """Link every measured row to the file that measures it (CU-9).
+
+    A measured row whose evidence names no file, or names one that no longer exists, is a
+    hard error: the page must not carry a state with a dead or invented link, and a renamed
+    probe or spec has to fail the build rather than silently leave the claim unlinked. The
+    href is relative to this script's directory, where the page is written, so the links
+    work in a checkout and in the self-contained dashboard.
+    """
+    for r in rows:
+        r['evidence_links'] = []
+        if r['state'] == 'unmeasured':
+            continue
+        paths = evidence_paths(r)
+        if not paths:
+            raise SystemExit(f'coverage.apply_evidence_links: measured row {r["id"]} names no evidence file')
+        for p in paths:
+            full = os.path.join(REPO, p)
+            if not os.path.exists(full):
+                raise SystemExit(f'coverage.apply_evidence_links: {r["id"]} names a missing file: {p}')
+            r['evidence_links'].append({'path': p, 'href': os.path.relpath(full, HERE).replace(os.sep, '/')})
+
+
 COVERED_STATES = ('read', 'parsed', 'decided', 'rendered')
 
 
@@ -653,7 +715,197 @@ def metrics(data):
     }
 
 
-def write_html(data, m):
+# CU-9: the four numbers the per-merge trend records. They are the coverage page's own
+# numbers — how wide the measured matrix is (measured, unmeasured), how deep the constraint
+# lane reads (decided classes) and how sound it is (the open false count) — so the chart
+# moves when the page's claims move and not otherwise.
+HISTORY_NUMBERS = ('measured', 'unmeasured', 'decided_classes', 'false')
+
+
+def snapshot_numbers(sha):
+    """The numbers of the coverage snapshot committed at `sha`, or None if there is none.
+
+    The trend is read from the metrics committed at the merge, never recomputed against
+    today's rules and never carried backwards. A commit before the coverage dataset existed
+    has no snapshot (None, not zeros). A snapshot that exists but is malformed is a hard
+    error, so a broken point cannot be skipped silently.
+    """
+    r = subprocess.run(['git', '-C', REPO, 'show', f'{sha}:{SNAPSHOT}'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    try:
+        m = json.loads(r.stdout).get('metrics')
+    except Exception as e:
+        raise SystemExit(f'coverage.snapshot_numbers: cannot read {sha}:{SNAPSHOT}: {e}')
+    if not m:
+        raise SystemExit(f'coverage.snapshot_numbers: {sha}:{SNAPSHOT} has no metrics')
+    # Before CU-6 `false` was a hard-coded 0, not a measurement, while the class register's
+    # rows-against was already 6. Only a snapshot that recorded both halves (the FALSE tier
+    # and the register entries) measured it; an earlier one is a gap, never a false zero.
+    measured_false = 'false_tier' in m and 'false_register_entries' in m
+    return {
+        'rows': m.get('rows'),
+        'measured': m.get('measured'),
+        'unmeasured': m.get('unmeasured'),
+        'decided_classes': m.get('decision_decided'),
+        'false': m.get('false', 0) if measured_false else None,
+        'construct_coverage': m.get('construct_coverage'),
+        'decision_coverage': m.get('decision_coverage'),
+    }
+
+
+def history_entry(idx, sha, day, subject, source, nums):
+    e = {'idx': idx, 'day': day, 'sha': sha, 'subject': subject, 'source': source, 'snapshot': None}
+    if nums is None:
+        for k in HISTORY_NUMBERS:
+            e[k] = None
+    else:
+        e.update(nums)
+        e['snapshot'] = sha
+    return e
+
+
+def build_history():
+    """Per-merge coverage trend: the timeline's merge list, then the snapshot commits after it.
+
+    The merge list is `timeline.json`'s (the dashboard's timeline). Its last entry predates
+    the coverage dataset, so the commits after it that changed `coverage-universe.json` are
+    appended from git; a sha already in the timeline is not repeated. The full reachable
+    history is scanned, not just the first parent: the snapshot changes made on a feature
+    branch must survive the no-ff merge into main, and on main the first-parent chain names
+    the merge instead of the commit that made the change. Each entry carries the four numbers
+    of the snapshot committed at that commit. A trailing snapshot that leaves the four numbers
+    unchanged (the same state re-committed) is dropped, so regenerating after a commit is
+    byte-identical instead of growing a point for the regeneration itself.
+    """
+    try:
+        T = json.load(open(TIMELINE, encoding='utf-8'))
+    except Exception as e:
+        raise SystemExit(f'coverage.build_history: cannot read {TIMELINE}: {e}')
+    if not isinstance(T, list) or not T:
+        raise SystemExit('coverage.build_history: timeline.json is empty')
+    entries = []
+    for r in T:
+        entries.append(history_entry(r['idx'], r['sha'], r['day'], r['subject'],
+                                     'timeline', snapshot_numbers(r['sha'])))
+    seen = {r['sha'] for r in T}
+    log = subprocess.run(['git', '-C', REPO, 'log', '--format=%h%x09%ad%x09%s',
+                          '--date=short', 'HEAD', '--', SNAPSHOT],
+                         capture_output=True, text=True)
+    if log.returncode != 0:
+        raise SystemExit(f'coverage.build_history: git log failed: {log.stderr.strip()}')
+    ext = []
+    for line in reversed(log.stdout.splitlines()):
+        sha, day, subject = line.split('\t', 2)
+        if sha in seen:
+            continue
+        nums = snapshot_numbers(sha)
+        if nums is None:
+            continue
+        ext.append(history_entry(len(entries) + len(ext), sha, day, subject, 'coverage-snapshot', nums))
+
+    def four(e):
+        return tuple(e[k] for k in HISTORY_NUMBERS)
+
+    while len(ext) > 1 and four(ext[-1]) == four(ext[-2]):
+        ext.pop()
+    return {
+        'note': ('Per-merge coverage trend. The merge list is scripts/todo-dashboard/timeline.json '
+                 '(the dashboard\'s timeline); after its last entry, the commits in the full reachable history '
+                 'that changed scripts/todo-dashboard/coverage-universe.json are appended from git. Each entry '
+                 'records the four numbers this page charts — measured rows, unmeasured rows, decided classes '
+                 'and the open false count — read from the metrics committed at that commit. A commit before '
+                 'the coverage page existed carries nulls, never zeros: a missing snapshot is not zero coverage. '
+                 'The false count is also null before CU-6, where the snapshot first measured its tier and '
+                 'register halves; the earlier value was a stub, not a zero. A trailing re-commit that leaves the '
+                 'four numbers unchanged is not repeated.'),
+        'numbers': list(HISTORY_NUMBERS),
+        'snapshot_path': SNAPSHOT,
+        'merges': entries + ext,
+    }
+
+
+def write_history():
+    hist = build_history()
+    json.dump(hist, open(OUT_HIST, 'w'), indent=1)
+    return hist
+
+
+def esc(s):
+    return str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def sparkline(points, key, label, color):
+    """One small inline SVG line for a series of the trend (no script, no external asset).
+
+    A None is a gap, not a zero: a number the snapshot did not measure is skipped, so an
+    unmeasured point is never drawn as a measurement.
+    """
+    recorded = [(i, p[key]) for i, p in enumerate(points) if p[key] is not None]
+    if not recorded:
+        return (f'<div class="spark"><div class="k">{label}</div>'
+                f'<div class="sub">no measured value in this series yet</div></div>')
+    vals = [v for _, v in recorded]
+    W, H, pad = 220, 60, 6
+    lo, hi = min(vals), max(vals)
+    n = len(points)
+    xs = [pad + (W - 2 * pad) * (i / (n - 1) if n > 1 else 0.5) for i, _ in recorded]
+    ys = [(H / 2 if hi == lo else H - pad - (H - 2 * pad) * (v - lo) / (hi - lo)) for v in vals]
+    line = ' '.join(f'{x:.1f},{y:.1f}' for x, y in zip(xs, ys))
+    dots = ''.join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.5" fill="{color}"/>'
+                   for x, y in zip(xs, ys))
+    span = f'{vals[0]} → {vals[-1]}' if len(vals) > 1 else f'{vals[0]} only'
+    return (f'<div class="spark"><div class="k">{label}</div>'
+            f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="{label}: {vals[0]} to {vals[-1]}">'
+            f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2"/>{dots}</svg>'
+            f'<div class="k"><b>{vals[-1]}</b> <span class="sub">{span} across {len(vals)} of '
+            f'{n}; min {lo}, max {hi}</span></div></div>')
+
+
+def history_html(history):
+    """The trend chart and its recorded points (CU-9)."""
+    entries = history['merges']
+    points = [e for e in entries if e['measured'] is not None]
+    if not points:
+        return ('<div class="note"><b>Coverage trend.</b> No coverage snapshot is recorded yet, so '
+                'there is nothing to chart; the file appears with the first coverage snapshot.</div>')
+    sparks = ''.join([
+        sparkline(points, 'measured', 'Measured rows', '#1e6b24'),
+        sparkline(points, 'unmeasured', 'Unmeasured rows', '#a3560b'),
+        sparkline(points, 'decided_classes', 'Decided classes', '#1d4ed8'),
+        sparkline(points, 'false', 'False signals', '#b42318'),
+    ])
+    rows = ''.join(
+        f'<tr><td>{esc(e["day"])}</td><td><code>{esc(e["sha"])}</code></td>'
+        f'<td>{esc(e["subject"])}</td><td class="n">{e["rows"]}</td>'
+        f'<td class="n">{e["measured"]}</td><td class="n">{e["unmeasured"]}</td>'
+        f'<td class="n">{e["decided_classes"]}</td>'
+        f'<td class="n">{"—" if e["false"] is None else e["false"]}</td></tr>'
+        for e in points)
+    n_timeline = sum(1 for e in entries if e['source'] == 'timeline')
+    n_ext = sum(1 for e in entries if e['source'] == 'coverage-snapshot')
+    n_blank = len(entries) - len(points)
+    false_points = [e for e in points if e['false'] is not None]
+    false_from = ('' if not false_points else
+                  f' The false series begins at <code>{esc(false_points[0]["sha"])}</code>, '
+                  f'where the snapshot first recorded both the FALSE tier and the register entries; '
+                  f'before that the count was a hard-coded stub, so it is a dash, not a zero.')
+    return f"""<div class="note"><b>Coverage trend (CU-9).</b> One point per timeline merge, plus each
+commit after the last one that changed the coverage snapshot, from
+<i>scripts/todo-dashboard/coverage-history.json</i>, charting the same four numbers: measured rows,
+unmeasured rows, decided classes and the open false count. The dashboard's timeline (<i>timeline.json</i>)
+lists {n_timeline} merge{'' if n_timeline == 1 else 's'}; {n_ext} snapshot-changing commit{'' if n_ext == 1 else 's'}
+after its last entry are appended from git. {len(points)} entries have a snapshot; the other {n_blank}
+predate the coverage page and carry no numbers — a missing snapshot is not zero coverage.{false_from}</div>
+<div class="trend">{sparks}</div>
+<table class="small"><thead><tr><th>Day</th><th>Commit</th><th>Subject</th><th class="n">Rows</th>
+<th class="n">Measured</th><th class="n">Unmeasured</th><th class="n">Decided classes</th>
+<th class="n">False</th></tr></thead><tbody>{rows}</tbody></table>
+"""
+
+
+def write_html(data, m, history):
     by_area = {}
     for r in data['rows']:
         by_area.setdefault(r['area'], []).append(r)
@@ -685,6 +937,11 @@ def write_html(data, m):
             ev = r['evidence'] or ''
             if r['note'] and r['note'] != r['evidence']:
                 ev = f'{ev}<br><span class="sub">{r["note"]}</span>' if ev else r['note']
+            if r.get('evidence_links'):
+                links = '<br>' + ' · '.join(
+                    f'<a class="lnk" href="{esc(l["href"])}">{esc(l["path"])}</a>'
+                    for l in r['evidence_links'])
+                ev = f'{ev}{links}' if ev else links
             if r['clauses']:
                 cl = '<br>'.join(f'<span class="cid">{c["id"]}</span> '
                                  f'<span class="cno">{c["clause"]}</span>' for c in r['clauses'])
@@ -735,6 +992,11 @@ tr.area td{{background:#fcfbf8;padding-top:10px;border-bottom:1px solid #e8e5dc}
 .pill.partial{{background:#fff4e5;color:#a3560b}} .pill.refused{{background:#f2f0ff;color:#5925dc}}
 .pill.unmeasured{{background:#f4f2ee;color:#6e6a63}}
 .ev{{color:#6e6a63;font-size:12.5px}} .sub{{color:#8a857c}}
+.ev a.lnk{{color:#1d4ed8;text-decoration:none}} .ev a.lnk:hover{{text-decoration:underline}}
+.trend{{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}}
+.spark{{background:#fff;border:1px solid #e8e5dc;border-radius:8px;padding:10px 12px;min-width:200px}}
+.spark svg{{width:100%;height:60px;display:block}} .spark .k{{font-size:12.5px;color:#6e6a63}}
+table.small td,table.small th{{font-size:12.5px}}
 .cid{{font-weight:600;color:#3d3a35}} .cno{{color:#6e6a63;font-size:12.5px}}
 .note{{background:#fff;border:1px solid #e8e5dc;border-radius:8px;padding:14px 16px;margin-top:16px;color:#3d3a35;font-size:13.5px}}
 </style></head><body>
@@ -756,6 +1018,7 @@ The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> me
   <div class="card"><div class="k">Unmeasured</div><div class="v">{m['unmeasured']}</div>
     <div class="k">rows with no mechanical evidence yet (pinned probes fill them as they land)</div></div>
 </div>
+{history_html(history)}
 <table>
 <thead><tr><th class="n">Kind</th><th>Construct / class</th><th>Clause</th><th>State</th><th class="n">Weight (source)</th><th>Evidence</th></tr></thead>
 <tbody>{''.join(body_rows)}</tbody></table>
@@ -798,13 +1061,19 @@ def build():
     data = build_universe()
     data['meta']['generated'] = os.popen('date -Is').read().strip()
     data['metrics'] = metrics(data)
+    history = write_history()
     json.dump(data, open(OUT_JSON, 'w'), indent=1)
-    write_html(data, data['metrics'])
+    write_html(data, data['metrics'], history)
     m = data['metrics']
+    points = [e for e in history['merges'] if e['measured'] is not None]
+    trend = (f'; trend {len(points)} point{"" if len(points) == 1 else "s"} of '
+             f'{len(history["merges"])} entries ({points[0]["measured"]} -> {points[-1]["measured"]} measured rows)'
+             if points else '; trend has no snapshot yet')
     print(f'universe: {m["rows"]} rows in {len(data["meta"]["areas"])} areas — measured {m["measured"]}, '
           f'unmeasured {m["unmeasured"]}; construct coverage {m["construct_weighted"]}% weighted / '
           f'{m["construct_equal"]}% equal; decision coverage {m["decision_weighted"]}% weighted / '
-          f'{m["decision_equal"]}% equal ({m["decision_decided"]}/{m["decision_rows"]} constraint classes)')
+          f'{m["decision_equal"]}% equal ({m["decision_decided"]}/{m["decision_rows"]} constraint classes)'
+          f'{trend}')
 
 
 if __name__ == '__main__':
