@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 159
-- **Tests:** 5732 total — 5732 passed, 0 failed, 0 skipped
+- **Tests:** 5755 total — 5755 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -94,7 +94,7 @@
 | test/unit/graph-algorithms.test.ts | 19 | 0 | 0 |
 | test/unit/graph-analysis.test.ts | 19 | 0 | 0 |
 | test/unit/langium.direction.test.ts | 5 | 0 | 0 |
-| test/unit/langium.grammar.test.ts | 65 | 0 | 0 |
+| test/unit/langium.grammar.test.ts | 87 | 0 | 0 |
 | test/unit/library.load.test.ts | 13 | 0 | 0 |
 | test/unit/linked-model.test.ts | 15 | 0 | 0 |
 | test/unit/paste.test.ts | 7 | 0 | 0 |
@@ -159,7 +159,7 @@
 | test/unit/text.recovery-honesty.test.ts | 37 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 242 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 243 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 27 | 0 | 0 |
