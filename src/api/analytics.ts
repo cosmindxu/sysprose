@@ -2620,6 +2620,11 @@ export interface StateMachineRun {
    */
   completionBudgetHit: boolean;
   /**
+   * Why the run did not start, where it did not: the machine's entry action names where it opens in a shape the
+   * interpreter does not read (`StateRunResult.unopened`). Nothing is visited then. Absent otherwise.
+   */
+  unopened?: string;
+  /**
    * The step the run stopped at without taking it, where it stopped at one: a
    * step into the machine's own root or into a node under an action, which the
    * interpreter does not take (`StateRunResult.refused`, `docs/06` §8.12). The
@@ -2740,6 +2745,7 @@ export function executionReport(model: Model): ExecutionReport {
         clock: result.clock ?? 0,
         complete: result.complete ?? result.finalState !== null,
         completionBudgetHit: result.completionBudgetHit === true,
+        ...(result.unopened === undefined ? {} : { unopened: result.unopened }),
         ...(result.refused === undefined
           ? {}
           : (() => {

@@ -3969,8 +3969,9 @@ state machines disagrees about — run-to-completion (chasing is bounded at 64
 steps), priority (innermost substate first), exits (a step exits to the least
 common ancestor of its source and its target, and every transition is external:
 the next paragraph), history (shallow, by parent map), regions (the interpreter
-concatenates them; a parallel machine — a state definition or usage marked
-`parallel`, SysML v2 §7.18.2 — is not explored here at all), deferred
+concatenates them; a parallel machine — a state definition or usage, an
+exhibit state among them, marked `parallel`, SysML v2 §7.18.2 — is not explored
+here at all), deferred
 events (none — there is no event pool), and time (discrete `after(n)`; the walk
 offers each `after(n)` label as an event rather than advancing a clock). A
 verdict about a machine is a verdict under a reading of those seven, and one
@@ -4341,8 +4342,12 @@ separately, so its states decide themselves. They are neither reported
 `unreachable` nor counted in the outer machine's totals, and the outer walk stops
 at the nested definition's boundary. A simulator run of the outer machine takes
 its states at the same boundary, so it starts where the walk opens: at the outer
-machine's own initial substate (where its own `initial` node leads, else its
-first declared state), also when the nested definition is written before it. The
+machine's own initial substate (where its own `initial` node leads, else the
+state its entry action's succession names — `entry; then off;`, SysML v2
+§7.18.2, read only when the entry action has that one unguarded successor and
+it is one of the state's own substates; any other edge leaving an entry action
+refuses the machine, and the simulator then does not start it — else its first
+declared state), also when the nested definition is written before it. The
 Simulation tab offers the outer machine's own events only, not the nested
 definition's, and lists a nested definition as a machine where no machine holds
 it: a `state def` whose only content is a nested definition is no machine, so the
@@ -4350,6 +4355,15 @@ tab runs the nested one; a nested definition inside a machine is not listed
 beside it. A nested `state def` that owns no `TransitionUsage` is walked by
 nothing, and each of its states then reads `not walked` in the app rather than
 being called unreachable under a machine that does not contain it.
+
+The state notation of SysML v2 §7.18 is read only in part. `entry X;` and
+`do X;` without the `action` keyword are still read as declaring a new action
+named `X`, where the specification reads them as a reference to an existing
+one; and these §7.18 forms do not parse yet: `accept after 5[min]`, the
+transition shorthand written after its source state (`state off; accept …
+then on;`), an entry action named `initial`, a guarded start from the entry
+action (`if c then off;`), `entry assign …;` and `do send … to X;`,
+`exhibit A::B :> C;` and `abstract exhibit state x;`.
 
 A transition that **crosses** that boundary — written in the outer machine and
 leading into one of the nested definition's states or to the definition itself,
@@ -5285,7 +5299,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:563-580`, `1127-1152` (the two rules that ask),
+`src/validation/rules.ts:566-583`, `1130-1155` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

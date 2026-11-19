@@ -52,6 +52,7 @@ import {
   hierarchyPath,
   initialConfig,
   initialStateOf,
+  entryStartUnreadOf,
   inlineAssign,
   isCompletion,
   isFinalState,
@@ -881,6 +882,12 @@ export interface RunStateOptions {
 export interface StateRunResult {
   /** State ids in the order visited, starting with the initial state. */
   visited: ElementId[];
+  /**
+   * Set when the run did not start: the machine's entry action names where it opens (SysML v2 §7.18.2), in a shape
+   * this interpreter does not read — a second or a guarded successor, a target that is not one of its direct states.
+   * The sentence says so; nothing was visited, and the run is not `complete`. Additive field.
+   */
+  unopened?: string;
   /** Transitions fired, in order. */
   fired: StateFire[];
   /** Entry/do/exit behaviors performed, in order. */
@@ -991,6 +998,15 @@ export function runStateMachine(
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null };
   }
 
+  // The explorer refuses such a machine (an `edge-not-walked` census row); the run must not open at a guess either.
+  const view = machineRegion(model, container.id);
+  if (entryStartUnreadOf(model, view, view.directStates(container.id))) {
+    const unopened =
+      `${model.qualifiedName(container.id) || container.id} does not start: its entry action names where it opens ` +
+      '(SysML v2 §7.18.2), and not as the one unguarded succession into one of its own states that this ' +
+      'interpreter reads — so no start is guessed.';
+    return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
+  }
   seedStore(model, container, valueStore, opts.store);
   const maxCompletion = Math.max(0, opts.maxCompletion ?? 64);
   const performed: PerformedAction[] = [];

@@ -437,6 +437,8 @@ export interface BehaviorStmt extends langium.AstNode {
     readonly $container: Body | Namespace | RequirementClause;
     readonly $type: 'BehaviorStmt';
     body?: Body;
+    exhibitState: boolean;
+    isParallel: boolean;
     kind: 'accept' | 'assign' | 'exhibit' | 'include' | 'perform' | 'send' | 'terminate';
     multiplicity: Array<Multiplicity>;
     name?: Name;
@@ -1390,6 +1392,8 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     name: BehaviorStmt,
                     properties: [
                         { name: 'body' },
+                        { name: 'exhibitState', defaultValue: false },
+                        { name: 'isParallel', defaultValue: false },
                         { name: 'kind' },
                         { name: 'multiplicity', defaultValue: [] },
                         { name: 'name' },

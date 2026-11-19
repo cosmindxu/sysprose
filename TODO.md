@@ -1593,13 +1593,17 @@ tagged `[O1 …]` are what its steps and reviews left open.
       differ" — the seventh is `d45dcfa21d53-health-effect.sysml`, a parse-error model whose error
       message now lists `parallel` among the expected tokens (message and `expected` array only:
       same codes, ranges, verdict, exit 2); accepted as the direct consequence of the keyword.
+      STAGE 1b DONE 2026-11-19 (spec-par-ps2): `exhibit state es parallel { … }` and `state <M> parallel { … }`
+      keep their name/short name and body and are refused as parallel machines (the short-name case is
+      read from the text shape in the mapper, because a grammar-only fix made Langium log an ALL(*)
+      ambiguity); `exhibit action|use case … parallel` is no longer read as a parallel exhibit state.
       STILL OPEN: stage 2 (concurrent semantics and an interleaving explorer, profile `regions`
       field); the rest of §7.18.3 (`validateStateDefinitionParallelSubactions` /
       `validateStateUsageParallelSubactions`: a parallel state's own substates have no transitions in
-      or out); `exhibit state es parallel { … }` (the spec's own example) still misparses silently
-      (`es` loses its body, `parallel` becomes a keyword-less element; it needs `BehaviorStmt`);
-      `state <M> parallel { … }` still reads as a state named `parallel`; nested parallel states
-      still run as exclusive in the simulator (only the explorer refuses them).
+      or out); nested parallel states still run as exclusive in the simulator (only the explorer
+      refuses them); `exhibit action ea parallel {…}` / `exhibit use case u parallel {…}` /
+      `perform action p parallel {…}` still split silently into a keyword-less `parallel` member (a
+      wrong statement: it needs a diagnostic code).
 
 - [ ] **The spec's own state-machine example does not parse: `entry; then off;` is an error.** SysML v2
       Part 1 §7.18.3's `state def OnOff1 { entry; then off; state off; state on; transition off_on
@@ -1609,6 +1613,13 @@ tagged `[O1 …]` are what its steps and reviews left open.
       spec names a machine's initial state. Done: the §7.18 examples (OnOff1, OnOff2, VehicleStates)
       parse with no diagnostics, the initial state is read as the entry succession's target, and a
       test pins each example verbatim. [mc-vs-bib 2026-11-19; spec conformance mandatory]
+      PART DONE 2026-11-19 (spec-par-ps2) — `entry; then X;` only; OnOff2 still needs the forms listed in the next item (`accept after`); the item closes with that one. Delivered: OnOff1, the Exercising example and
+      VehicleStates parse with no diagnostics; a bare `then X` after an entry action is a succession
+      from that action, and the machine starts at X (explorer and simulator) when the state has one
+      entry action with one unguarded, payload-free succession into one of its own substates; every
+      other edge leaving an entry action refuses the machine (never an exhaustive claim) and the
+      simulator does not start (`Not started: …`); an entry/do/exit action's type, multiplicity and
+      body are kept; `do`/`entry`/`exit` bodies are kept out of the machine's states.
 
 - [ ] **Say that the PSSM Clause 9 oracle was not built, or build a scored subset.** `docs/04` cites
       `omg-pssm-1.0-2019` Clause 9 as "a UML/fUML oracle for the conformance scorecard" for
@@ -1641,3 +1652,34 @@ tagged `[O1 …]` are what its steps and reviews left open.
       `larraz-tinelli-2022`) returns a verdict, not an implementation. The reason that holds is
       `docs/04` non-goal 5 (only static contracts are decided). Done: `docs/05` §4 gives that reason.
       [mc-vs-bib 2026-11-18; E]
+
+- [ ] **More SysML v2 §7.18 state forms do not parse (spec conformance is mandatory).** After
+      `entry; then X;` these spec forms still fail or are misread: `accept after 5[min]` (a time trigger,
+      OnOff2–OnOff6), the target-transition shorthand (`state off; accept … then on;`, OnOff5/6),
+      `entry action initial` (`initial` is a keyword here), guarded entry successions (`if c then off;`),
+      `entry assign …;` / `do send … to X;` (mis-split into a duplicate-name error and a parse error),
+      `exhibit A::B :> C;` (parse error) and `abstract exhibit state x;` (splits off a bare
+      ReferenceUsage). Probe each against the spec text (Part 1 §7.18.2–7.18.4); fence a silent
+      misread first. Done: every §7.18 example parses with no diagnostic or is refused with a stated
+      reason, each pinned verbatim by a test. [spec-par-ps2 2026-11-19; spec conformance mandatory]
+
+- [ ] **`entry X;` / `do X;` / `exit X;` must read as a reference to an existing action, as the spec
+      says, not as a declaration of a new one.** Today they declare a new action (the serializer writes a
+      named one as `entry action x` to keep the two apart) and existing round-trip tests pin the
+      declaration reading (`entry init; … transition first init …`). Done: the spec reading is
+      implemented, the tests that pinned the declaration reading are replaced and every model that
+      relied on it still gets the same verdict (check the corpus). [spec-par-ps2 2026-11-19; spec
+      conformance mandatory]
+
+- [ ] **A comment just before a body silently drops the body.** `state x /* c */ { state a; }` (and
+      `state <M1> parallel /* } */ { … }`) parse with `ok: true` and no diagnostic; the body is lost,
+      identically on main before spec-par-ps2. A wrong statement: fence first. Done: the body is kept or
+      a diagnostic names the loss, with the probes pinned. [spec-par-ps2 2026-11-19; wrong statement]
+
+- [ ] **The app's step-by-step Simulation Play path, for a machine whose entry start is not read.**
+      `runStateMachine` now returns no run with `Not started: …`, but the UI's Play path builds its start
+      through `initialConfig`, which for an unread start gives an empty configuration with no sentence
+      (not probed in the app); and a composite state entered mid-run whose entry start is unread rests at
+      the composite with no substate (the explorer refuses that machine). Done: both say why they did
+      not start, with an E2E or unit pin. [spec-par-ps2 2026-11-19]
+

@@ -25,6 +25,7 @@ import { describe, it, expect } from 'vitest';
 import { parseModel, serializeModel, checkText } from '@text/index';
 import { UnwritableMultiplicityError } from '@text/serializer';
 import type { Model } from '@core/index';
+import { validate } from '@validation/index';
 
 const named = (model: Model, name: string) =>
   model.all().find((e) => e.declaredName === name);
@@ -550,5 +551,15 @@ describe('recovery honesty — a save never fabricates notation', () => {
       `saving laundered the error away:\n${out}`,
     ).toContain('validation/blank-name');
     expect(after.diagnostics.map((d) => d.code)).not.toContain('validation/split-declaration');
+  });
+});
+
+describe('split-declaration — the empty state actions of SysML v2 §7.18.2', () => {
+  it('does not report `entry;`, `do;` or `exit;` (BNF `EmptyActionUsage`), and still reports a bare keyword', () => {
+    const { model } = parseModel('package P { state def S { entry; do; exit; state a; } part def V { port; } }');
+    const split = validate(model).filter((d) => d.ruleId === 'split-declaration');
+    expect(split.map((d) => d.message)).toEqual([
+      'A bare «PortUsage» with no name, type, value or body — this declaration was probably split by a misplaced keyword.',
+    ]);
   });
 });

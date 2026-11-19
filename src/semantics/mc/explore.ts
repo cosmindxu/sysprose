@@ -100,6 +100,7 @@ import {
   afterDuration,
   hashConfig,
   initialConfig,
+  entryOpeningOf,
   isFinalState,
   isHistoryComposite,
   isHistoryPseudostate,
@@ -977,6 +978,28 @@ export interface EdgeCensus {
 }
 
 /**
+ * The entry successions a start of this machine is read from ({@link entryOpeningOf}): the machine's own, read
+ * through its general machine as the walk reads it, and each composite state's (`initialSubstate`). Exactly the
+ * edges the walk's starts consume — an entry succession no start reads stays out of this set, and the census
+ * refuses the machine over it.
+ */
+function entryOpenings(model: Model, machineId: ElementId): ReadonlySet<ElementId> {
+  const out = new Set<ElementId>();
+  const region = machineRegion(model, machineId);
+  const own = entryOpeningOf(model, region, region.directStates(machineId));
+  if (own) out.add(own.id);
+  for (const el of region.descendants) {
+    // A general machine's root is read through `own` above, never entered as a state of this one.
+    if (!region.nodes.has(el.id) || region.bases.includes(el.id)) continue;
+    if (!model.children(el.id).some((c) => c.attrs.stateSubaction === 'entry')) continue;
+    const inner = machineRegion(model, el.id);
+    const opening = entryOpeningOf(model, inner, inner.directStates(el.id));
+    if (opening) out.add(opening.id);
+  }
+  return out;
+}
+
+/**
  * Every edge under the machine, accounted for as walked or refused with a code.
  *
  * WHY A CENSUS AND NOT ANOTHER MECHANISM. Four readers have now found four
@@ -1035,6 +1058,7 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
   const crossing = new Map(boundaryCrossings(model, machineId).map((c) => [c.edge.id, c] as const));
   const outside = new Set(stepsOutsideStates(model, machineId).map((t) => t.id));
   const onStack = stackNodes(model, machineId);
+  const openings = entryOpenings(model, machineId);
   const rows: EdgeCensusRow[] = [];
   const nameOf = (id: ElementId | undefined): string =>
     id === undefined ? 'nothing' : `\`${model.qualifiedName(id) || id}\``;
@@ -1087,6 +1111,23 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
         'opening',
         '`initialState` reads it to decide where the machine opens; no step fires it, and counting ' +
           'it as walkable would report it dead on every exhaustive walk',
+      );
+    } else if (relation.has(el.id) && openings.has(el.id)) {
+      row(
+        'opening',
+        'it is the succession from an entry action to the state it opens in (SysML v2 §7.18.2): `initialState` ' +
+          'reads it to decide where that state opens; no step fires it, and counting it as walkable would report ' +
+          'it dead on every exhaustive walk',
+      );
+    } else if (from !== undefined && model.get(from)?.attrs.stateSubaction === 'entry') {
+      // An edge leaving an entry action names where a state opens (SysML v2 §7.18.2). Every one the starts did not
+      // consume refuses the machine — into a node that is not a state, a second or a guarded successor — because the
+      // walk then opens nowhere the text says, and filing it `off-stack` let a walk from a guessed start publish.
+      row(
+        'unaccounted',
+        `it leaves the entry action ${nameOf(from)} for ${nameOf(to)}, so it says where a state opens, and it is not ` +
+          'the one unguarded succession into a direct state that this walk reads as a start; the walk does not ' +
+          'guess another start, so the machine is not walked',
       );
     } else if (relation.has(el.id) && onStack.has(from!)) {
       row(

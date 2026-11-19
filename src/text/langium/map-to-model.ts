@@ -141,6 +141,32 @@ const CONTROL_NODE_ECLASS: Record<string, string> = {
 };
 
 /** Behavioural action-statement keyword → metaclass (SysML action/state usages). */
+/**
+ * Is this the short-name-only parallel spelling, `state <M> parallel { … }` (or `exhibit state <M> parallel { … }`)?
+ *
+ * SysML v2 reserves `parallel` (§7.18.2; BNF `StateUsageBody`: `';' | ( isParallel ?= 'parallel' )? '{' … '}'`), so
+ * the spec reads that text as a parallel state with short name `M` and no name. This grammar keeps `parallel` an
+ * ordinary identifier, and the parser fills the optional name slot with it, so the reading is taken here instead, on
+ * the exact shape only: a short name, then the bare (unquoted) word `parallel`, then nothing but the body. Any other
+ * text keeps the name — `state <M> parallel;`, `state <M> parallel : T { … }`, `state <M> 'parallel' { … }` — and the
+ * writer quotes a short-named state's name `parallel` before a body, so the reading never changes on a save.
+ */
+function readsShortNameParallel(node: {
+  shortName?: string;
+  name?: string;
+  body?: AstNode;
+  $cstNode?: AstNode['$cstNode'];
+}): boolean {
+  if (node.shortName === undefined || node.name !== 'parallel' || node.body?.$cstNode === undefined) return false;
+  const cst = node.$cstNode;
+  if (cst === undefined) return false;
+  const head = cst.root.fullText
+    .slice(cst.offset, node.body.$cstNode.offset)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
+  return />\s*parallel\s*$/.test(head);
+}
+
 const BEHAVIOR_ECLASS: Record<string, string> = {
   accept: 'AcceptActionUsage',
   send: 'SendActionUsage',
@@ -707,6 +733,17 @@ class Mapper {
    * chain into each other.
    */
   private readonly lastSuccessionTarget = new Map<ElementId | null, string>();
+
+  /**
+   * The entry action just mapped in each owner scope, while the members after it are still `then X;`.
+   *
+   * SysML v2 §7.18.2: `entry; then off;` (or `entry action initial; then off;`) is a succession FROM the entry action
+   * TO the state entered first — BNF `StateBodyItem`: `EntryActionMember ( EntryTransitionMember )*`, where an
+   * `EntryTransitionMember` is `'then' TargetSuccession ';'`. The source is the entry action whether or not it has a
+   * name, so the edge is made from its id rather than a reference. Only the members written straight after the entry
+   * action read so; any other member ends the run, and a later bare `then` is the ordinary chained one.
+   */
+  private readonly pendingEntry = new Map<ElementId | null, ElementId>();
 
   /**
    * Warnings about an unresolved SPECIALIZATION reference, paired with the
@@ -1700,6 +1737,7 @@ class Mapper {
   }
 
   private mapMemberInner(node: Member, ownerId: ElementId | null): void {
+    if (node.$type !== 'FirstThen' || (node as FirstThen).source !== undefined) this.pendingEntry.delete(ownerId);
     switch (node.$type) {
       case 'Doc':
         return this.mapDoc(node as Doc, ownerId);
@@ -1792,6 +1830,18 @@ class Mapper {
       case 'FirstThen': {
         const ft = node as FirstThen;
         if (!ft.target) return;
+        const entry = ft.source === undefined ? this.pendingEntry.get(ownerId) : undefined;
+        if (entry !== undefined) {
+          // `entry; then off;` — the succession from the entry action to the state it opens in (SysML v2 §7.18.2).
+          const edge = this.create('Succession', {
+            ownerId: ownerId ?? undefined,
+            source: [entry],
+            target: [],
+            attrs: { targetRef: ft.target, entryTransition: true },
+          });
+          this.deferEnds(edge.id, undefined, ft.target, node, 'ref/unresolved-reference', (r) => `Unresolved reference '${r}'`);
+          return;
+        }
         // A bare `then X` chains from the previous succession's target.
         const source = ft.source ?? this.lastSuccessionTarget.get(ownerId);
         if (!source) {
@@ -2091,9 +2141,13 @@ class Mapper {
     if (node.via) attrs.via = node.via;
     if (node.target) attrs.actionTarget = node.target;
     if (node.succession) attrs.succession = node.succession;
+    // `exhibit state es parallel { … }` (SysML v2 §8.2.2.18.2: an exhibit state usage ends in `StateUsageBody`). The
+    // grammar admits the keyword on `exhibit` alone, and `exhibit state <M> parallel { … }` the way `state` does.
+    const shortParallel = node.kind === 'exhibit' && node.exhibitState && readsShortNameParallel(node);
+    if (node.isParallel || shortParallel) attrs.isParallel = true;
     const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
-      declaredName: unquoteName(node.name),
+      declaredName: shortParallel ? undefined : unquoteName(node.name),
       declaredShortName: unquoteName(node.shortName),
       attrs,
     });
@@ -2289,17 +2343,25 @@ class Mapper {
     );
   }
 
-  /** `entry` / `do` / `exit` (name)? (= value)? — the value is kept like any behaviour statement's. */
+  /** `entry` / `do` / `exit` (action)? (name)? (: T)? (= value)? (body)? — kept like any behaviour statement's. */
   private mapStateBehavior(node: StateBehavior, ownerId: ElementId | null): void {
     const el = this.create('ActionUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       attrs: { stateSubaction: node.kind },
     });
+    if (node.kind === 'entry') this.pendingEntry.set(ownerId, el.id);
+    // `entry action warmup : WarmUp;`, `do action exercise : Exercise { action a; then action b; }` (SysML v2
+    // §7.18.2): the type, the multiplicity and the body are the action's own, as on any action usage. They used to be
+    // parsed and dropped, so the state lost its entry action's type and its do action's steps with no diagnostic.
+    for (const spec of node.specializations) this.applySpecialization(el, spec);
+    const mults = readableMultiplicities(node.multiplicity);
+    if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
       this.model.setAttrs(el.id, this.splitValueUnit(node.value));
       this.recordValueOperator(el, node.valueOp);
     }
+    if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);
   }
 
   private mapControlNode(node: ControlNode, ownerId: ElementId | null): void {
@@ -2672,6 +2734,8 @@ class Mapper {
     // checker reads (`src/semantics/mc/explore.ts` also accepts the API's
     // `parallel`). Only the state rule sets it, so no other declaration can.
     if (node.isParallel) attrs.isParallel = true;
+    const shortParallel = node.keyword === 'state' && readsShortNameParallel(node);
+    if (shortParallel) attrs.isParallel = true;
     // Keyword-less provenance (F5 residual): a purely name-led feature such as
     // an enum literal (`low = 0.25;`) is a ReferenceUsage WITHOUT the `ref`
     // keyword; the serializer uses this marker to re-emit it keyword-less.
@@ -2701,7 +2765,8 @@ class Mapper {
     }
 
     const declaredShortName = unquoteName(node.shortName);
-    const declaredName = unquoteName(node.name);
+    // `state <M> parallel { … }`: the word sat in the name slot (see readsShortNameParallel) and is the keyword.
+    const declaredName = shortParallel ? undefined : unquoteName(node.name);
 
     const isRequirement = eClass === 'RequirementUsage' || eClass === 'RequirementDefinition';
     if (isRequirement && declaredShortName) attrs.reqId = declaredShortName;

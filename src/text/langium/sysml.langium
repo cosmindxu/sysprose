@@ -256,15 +256,40 @@ ControlNode infers ControlNode:
 BehaviorStmt infers BehaviorStmt:
     (succession=('first' | 'then'))?
     (visibility=Visibility)?
-    kind=('accept' | 'send' | 'assign' | 'perform' | 'exhibit' | 'include' | 'terminate')
-    ('action' | 'state' | 'use' 'case')?
-    ('<' shortName=Name '>')?
-    (name=Name)?
+    ( kind=('accept' | 'send' | 'assign' | 'perform' | 'include' | 'terminate')
+      ('action' | 'state' | 'use' 'case')?
+      ('<' shortName=Name '>')?
+      (name=Name)?
+      BehaviorStmtRest
+      (body=Body | ';')?
+    // `exhibit state es parallel { … }`: BNF `ExhibitStateUsage` ends in the same
+    // `StateUsageBody` as a state usage (SysML v2 §8.2.2.18.2), so `parallel` may
+    // stand just before the body. As on `state` (see StateDeclarationTail), the
+    // keyword is read only after a written name, so that `exhibit state parallel
+    // { … }` stays an exhibit state NAMED `parallel` and the two readings never
+    // compete for one token. The short-name-only spelling `exhibit state <M>
+    // parallel { … }` parses with `parallel` in the name slot; the mapper reads
+    // that exact shape (the word itself, unquoted, then the body) as the keyword,
+    // only after `state` (`exhibit <E> parallel { … }` keeps the name).
+    // `parallel` belongs to an exhibit STATE only: `exhibit action …` and `exhibit use case …` take the plain tail.
+    | kind='exhibit'
+      ('action' | 'use' 'case')
+      ('<' shortName=Name '>')?
+      (name=Name)?
+      BehaviorStmtRest
+      (body=Body | ';')?
+    | kind='exhibit'
+      (exhibitState?='state')?
+      ('<' shortName=Name '>')?
+      ( name=Name BehaviorStmtRest ( isParallel?='parallel' body=Body | body=Body | ';' )?
+      | BehaviorStmtRest (body=Body | ';')? )
+    );
+
+fragment BehaviorStmtRest:
     (specializations+=Specialization | multiplicity+=Multiplicity)*
     ('via' via=QualifiedName)?
     ('to' target=QualifiedName)?
-    (valueOp=ValueOp value=Expression)?
-    (body=Body | ';')?;
+    (valueOp=ValueOp value=Expression)?;
 
 // `return (ref)? name (: T)? (= expr)? { … }`
 ReturnStmt infers ReturnStmt:
@@ -408,10 +433,12 @@ fragment StateDeclarationTail:
 // out of StateDeclarationTail so the optional-name choice can never compete with
 // the `parallel` keyword for the same token: `state parallel { … }` is a state
 // NAMED `parallel`, and the modifier is read only after a written name. The
-// short-name-only spelling narrows the same way: `state <M> parallel { … }`
-// parses as a state NAMED `parallel` with short name `M`, not as a parallel
-// state — recorded as left undone (a third tail would have to out-rank the name
-// reading for the same token).
+// short-name-only spelling `state <M> parallel { … }` parses with `parallel` in
+// the name slot of StateDeclarationTail (a third tail would compete with the name
+// reading for the same token, an ALL(*) ambiguity); the mapper reads that exact
+// shape — short name, the bare word, then the body — as the keyword, which is
+// the spec's reading (`parallel` is reserved there), and keeps the name in every
+// other shape (`state <M> parallel;`, `state <M> 'parallel' { … }`).
 fragment NamelessStateDeclarationTail:
     (isSufficient?='all')?
     ('<' shortName=Name '>')?
