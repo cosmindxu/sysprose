@@ -86,6 +86,7 @@ export {
   refusedStepSentence,
   executeBehavior,
   propagateBindings,
+  runsParallel,
   evaluateModel,
   executeModel,
   type ExecutionStep,

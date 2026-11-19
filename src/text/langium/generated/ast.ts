@@ -171,6 +171,7 @@ export type SysMLKeywordNames =
     | "ordered"
     | "out"
     | "package"
+    | "parallel"
     | "part"
     | "perform"
     | "port"
@@ -269,10 +270,10 @@ export function isImportName(item: unknown): item is ImportName {
     return typeof item === 'string';
 }
 
-export type KeywordName = 'accept' | 'action' | 'association' | 'behavior' | 'classifier' | 'connector' | 'do' | 'done' | 'end' | 'entry' | 'event' | 'exit' | 'feature' | 'flow' | 'frame' | 'function' | 'individual' | 'interaction' | 'item' | 'member' | 'metaclass' | 'metadata' | 'multiplicity' | 'occurrence' | 'part' | 'port' | 'predicate' | 'send' | 'snapshot' | 'state' | 'step' | 'succession' | 'transition' | 'type';
+export type KeywordName = 'accept' | 'action' | 'association' | 'behavior' | 'classifier' | 'connector' | 'do' | 'done' | 'end' | 'entry' | 'event' | 'exit' | 'feature' | 'flow' | 'frame' | 'function' | 'individual' | 'interaction' | 'item' | 'member' | 'metaclass' | 'metadata' | 'multiplicity' | 'occurrence' | 'parallel' | 'part' | 'port' | 'predicate' | 'send' | 'snapshot' | 'state' | 'step' | 'succession' | 'transition' | 'type';
 
 export function isKeywordName(item: unknown): item is KeywordName {
-    return item === 'type' || item === 'classifier' || item === 'behavior' || item === 'interaction' || item === 'function' || item === 'predicate' || item === 'metaclass' || item === 'feature' || item === 'step' || item === 'multiplicity' || item === 'connector' || item === 'association' || item === 'member' || item === 'part' || item === 'item' || item === 'port' || item === 'flow' || item === 'action' || item === 'state' || item === 'metadata' || item === 'occurrence' || item === 'event' || item === 'snapshot' || item === 'individual' || item === 'succession' || item === 'transition' || item === 'accept' || item === 'send' || item === 'do' || item === 'entry' || item === 'exit' || item === 'end' || item === 'frame' || item === 'done';
+    return item === 'type' || item === 'classifier' || item === 'behavior' || item === 'interaction' || item === 'function' || item === 'predicate' || item === 'metaclass' || item === 'feature' || item === 'step' || item === 'multiplicity' || item === 'connector' || item === 'association' || item === 'member' || item === 'part' || item === 'item' || item === 'port' || item === 'flow' || item === 'action' || item === 'state' || item === 'metadata' || item === 'occurrence' || item === 'event' || item === 'snapshot' || item === 'individual' || item === 'succession' || item === 'transition' || item === 'accept' || item === 'send' || item === 'do' || item === 'entry' || item === 'exit' || item === 'end' || item === 'frame' || item === 'done' || item === 'parallel';
 }
 
 export type Member = Alias | Allocate | Annotation | BehaviorStmt | Bind | Comment | Connect | ControlNode | Definition | Dependency | Derive | Doc | FirstThen | IfStmt | Import | LoopStmt | Refine | RelationshipStmt | RequirementClause | ReturnStmt | Satisfy | StateBehavior | Succession | TextualRep | Trace | Transition | Verify;
@@ -295,10 +296,10 @@ export function isName(item: unknown): item is Name {
     return isSoftKeyword(item) || (typeof item === 'string' && (/[_a-zA-Z][\w]*/.test(item) || /'(\\.|[^'\\])*'/.test(item)));
 }
 
-export type NonKeywordName = 'accept' | 'do' | 'end' | 'entry' | 'event' | 'exit' | 'frame' | 'individual' | 'member' | 'send' | 'snapshot' | 'succession' | 'transition';
+export type NonKeywordName = 'accept' | 'do' | 'end' | 'entry' | 'event' | 'exit' | 'frame' | 'individual' | 'member' | 'parallel' | 'send' | 'snapshot' | 'succession' | 'transition';
 
 export function isNonKeywordName(item: unknown): item is NonKeywordName {
-    return item === 'succession' || item === 'transition' || item === 'accept' || item === 'send' || item === 'do' || item === 'entry' || item === 'exit' || item === 'end' || item === 'frame' || item === 'member' || item === 'event' || item === 'snapshot' || item === 'individual';
+    return item === 'succession' || item === 'transition' || item === 'accept' || item === 'send' || item === 'do' || item === 'entry' || item === 'exit' || item === 'end' || item === 'frame' || item === 'member' || item === 'event' || item === 'snapshot' || item === 'individual' || item === 'parallel';
 }
 
 export type PlainRefName = NonKeywordName | string;
@@ -325,10 +326,10 @@ export function isRefName(item: unknown): item is RefName {
     return isKeywordName(item) || (typeof item === 'string' && (/[_a-zA-Z][\w]*/.test(item) || /'(\\.|[^'\\])*'/.test(item)));
 }
 
-export type SoftKeyword = 'about' | 'derive' | 'done' | 'filter' | 'locale' | 'multiplicity' | 'var';
+export type SoftKeyword = 'about' | 'derive' | 'done' | 'filter' | 'locale' | 'multiplicity' | 'parallel' | 'var';
 
 export function isSoftKeyword(item: unknown): item is SoftKeyword {
-    return item === 'var' || item === 'multiplicity' || item === 'about' || item === 'locale' || item === 'filter' || item === 'done' || item === 'derive';
+    return item === 'var' || item === 'multiplicity' || item === 'about' || item === 'locale' || item === 'filter' || item === 'done' || item === 'derive' || item === 'parallel';
 }
 
 export type SpecOp = string;
@@ -642,8 +643,9 @@ export interface Definition extends langium.AstNode {
     fromMult: Array<Multiplicity>;
     fromSpecs: Array<Specialization>;
     isDef: boolean;
+    isParallel: boolean;
     isSufficient: boolean;
-    keyword?: BaseKeyword;
+    keyword?: 'state' | BaseKeyword;
     modifiers: Array<FeatureModifier>;
     multiplicity: Array<Multiplicity>;
     name?: Name | PlainRefName | RefName;
@@ -1542,6 +1544,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'fromMult', defaultValue: [] },
                         { name: 'fromSpecs', defaultValue: [] },
                         { name: 'isDef', defaultValue: false },
+                        { name: 'isParallel', defaultValue: false },
                         { name: 'isSufficient', defaultValue: false },
                         { name: 'keyword' },
                         { name: 'modifiers', defaultValue: [] },

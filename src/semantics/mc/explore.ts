@@ -1422,11 +1422,14 @@ function acrossSentence(model: Model, c: BoundaryCrossing, inherited: ElementId 
 /**
  * The constructs this engine refuses, checked BEFORE the walk.
  *
- * The first three are §3.8's own list. `attrs.parallel` and `attrs.history` are
- * reachable only through the API — `sysml.langium` has no keyword for either —
- * so a machine using them was built by a program, and exploring it as though it
- * were an ordinary machine would report an interleaving this engine does not
- * perform and a history it does not resume. A transition missing an endpoint
+ * The first three are §3.8's own list. A parallel machine (`parallel` in the
+ * notation, SysML v2 §7.18.2, lowered to `attrs.isParallel`; the API's
+ * `attrs.parallel` also marks one) — or a parallel state nested anywhere in its
+ * region — has concurrent regions this walk does not interleave, so exploring
+ * it as though it were an ordinary machine would report a run this engine does
+ * not perform. A history state (`attrs.history`)
+ * is reachable only through the API — `sysml.langium` has no keyword for it —
+ * and a machine using one resumes a substate this walk does not resume. A transition missing an endpoint
  * cannot fire at all, and a walk that ignored it would count it dead on a
  * technicality rather than on a semantics.
  *
@@ -1458,15 +1461,25 @@ function unsupportedConstructs(
 ): UnsupportedConstruct[] {
   const out: UnsupportedConstruct[] = [];
   const machine = model.get(machineId);
-  if (machine && (isTruthy(machine.attrs.parallel) || isTruthy(machine.attrs.isParallel))) {
+  // A parallel state anywhere in this machine's region refuses it, not only a
+  // parallel ROOT: `state sub parallel { … }` nested inside an ordinary machine
+  // is a region of THIS machine (a nested `state def` is a machine of its own
+  // and is excluded below), and walking past it would publish the exclusive
+  // interleaving the refusal exists to withhold.
+  for (const el of [machine, ...machineRegion(model, machineId).descendants]) {
+    if (!el) continue;
+    if (el.id !== machineId && el.eClass === 'StateDefinition') continue;
+    if (!isTruthy(el.attrs.parallel) && !isTruthy(el.attrs.isParallel)) continue;
+    const who = el.id === machineId ? 'the machine' : `\`${model.qualifiedName(el.id) || el.id}\``;
     out.push({
       construct: 'parallel-regions',
       detail:
-        'the machine is marked parallel. The interpreter concatenates regions and this explorer ' +
-        'does not interleave them, so no exhaustive answer about a parallel machine is available ' +
-        'here; `attrs.parallel` has no keyword in sysml.langium and is set only through the API.',
-      elementId: machineId,
+        `${who} is marked parallel (\`parallel\` on a state definition or usage, SysML v2 §7.18.2, ` +
+        `or the API's \`attrs.parallel\`). Its regions are performed concurrently, and this explorer ` +
+        'does not interleave them, so no exhaustive answer about a parallel machine is available here.',
+      elementId: el.id,
     });
+    break;
   }
   for (const el of [machine, ...machineRegion(model, machineId).descendants]) {
     if (!el) continue;

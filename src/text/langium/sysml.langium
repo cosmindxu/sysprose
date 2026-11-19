@@ -318,13 +318,15 @@ Definition infers Definition:
       (visibility=Visibility)?
       (
           prefixes+=Prefix (prefixes+=Prefix)*
-          ( keyword=BaseKeyword (isDef?='def' | prefixes+=Direction)? DeclarationTail
+          ( keyword='state' (isDef?='def' | prefixes+=Direction)? ( StateDeclarationTail | NamelessStateDeclarationTail )
+          | keyword=BaseKeyword (isDef?='def' | prefixes+=Direction)? DeclarationTail
             // Keyword-less prefixed feature: its name must NOT be a word that
             // is also a BaseKeyword (see PlainRefName), so `ref occurrence :>> x`
             // deterministically parses as an anonymous occurrence usage — the
             // same alternative the ALL(*) conflict resolution used to pick,
             // but now without an "Ambiguous Alternatives" warning.
           | PlainDeclarationTail )
+        | keyword='state' (isDef?='def' | prefixes+=Direction)? ( StateDeclarationTail | NamelessStateDeclarationTail )
         | keyword=BaseKeyword (isDef?='def' | prefixes+=Direction)? DeclarationTail
       )
       // A direction may also FOLLOW the keyword (`port in a : Pt;`). Without
@@ -389,6 +391,38 @@ fragment PlainDeclarationTail:
     DeclSpecs
     DeclTailRest;
 
+// Declaration tail for a state definition or usage. Identical to DeclarationTail
+// except that the spec's `parallel` keyword may stand just before the body
+// (SysML v2 §7.18.2; BNF `StateDefBody`/`StateUsageBody`:
+// `';' | ( isParallel ?= 'parallel' )? '{' … '}'`). The keyword is legal on no
+// other declaration, so it is admitted here rather than in the shared tail.
+fragment StateDeclarationTail:
+    (isSufficient?='all')?
+    ( preMult+=Multiplicity )?
+    ('<' shortName=Name '>')?
+    name=RefName
+    DeclSpecs
+    StateDeclTailRest;
+
+// A state declaration with no name (the BNF's Identification is optional), kept
+// out of StateDeclarationTail so the optional-name choice can never compete with
+// the `parallel` keyword for the same token: `state parallel { … }` is a state
+// NAMED `parallel`, and the modifier is read only after a written name. The
+// short-name-only spelling narrows the same way: `state <M> parallel { … }`
+// parses as a state NAMED `parallel` with short name `M`, not as a parallel
+// state — recorded as left undone (a third tail would have to out-rank the name
+// reading for the same token).
+fragment NamelessStateDeclarationTail:
+    (isSufficient?='all')?
+    ('<' shortName=Name '>')?
+    DeclSpecs
+    DeclTailRest;
+
+// The spec puts `parallel` just before the body and nowhere else:
+// `';' | ( isParallel ?= 'parallel' )? '{' … '}'` (SysML v2 §7.18.2).
+fragment StateDeclTailRest:
+    DeclMiddle ( isParallel?='parallel' body=Body | body=Body | ';' )?;
+
 // Specializations, multiplicities and `ordered`/`nonunique` may appear in any
 // order and be interleaved (`: T [0..1] ordered :>> x`); one loop keeps it
 // unambiguous (mirrors the KerML FeatureSpecializationPart production).
@@ -447,6 +481,11 @@ Prefix returns string:
 
 // Single base keyword; `def` handled separately. Multi-word keywords such as
 // `use case` are recognised too.
+//
+// `state` is deliberately NOT here: it is a base keyword with a body of its own
+// (SysML v2 §7.18.2, where `parallel` may stand just before the body), and a
+// separate alternative keeps the two readings of `state def X …` disjoint at
+// the keyword token rather than ambiguous after the name.
 BaseKeyword returns string:
       'package' | 'namespace'
     // KerML types / features
@@ -456,7 +495,7 @@ BaseKeyword returns string:
     | 'expr' | 'bool' | 'inv' | 'multiplicity' | 'connector'
     // SysML definitions / usages
     | 'part' | 'attribute' | 'item' | 'port' | 'connection' | 'interface'
-    | 'flow' | 'action' | 'state' | 'calc' | 'constraint' | 'requirement'
+    | 'flow' | 'action' | 'calc' | 'constraint' | 'requirement'
     | 'concern' | 'case' | 'analysis' | 'verification'
     | 'view' | 'viewpoint' | 'render' | 'rendering' | 'enum' | 'occurrence'
     | 'allocation' | 'metadata' | 'message' | 'render'
@@ -616,7 +655,8 @@ PlainRefName returns string:
 // Systems Library's `Actions.sysml`.
 NonKeywordName returns string:
       'succession' | 'transition' | 'accept' | 'send' | 'do' | 'entry' | 'exit'
-    | 'end' | 'frame' | 'member' | 'event' | 'snapshot' | 'individual';
+    | 'end' | 'frame' | 'member' | 'event' | 'snapshot' | 'individual'
+    | 'parallel';
 
 // Reserved words that may also appear as feature names in a reference. Only
 // noun/modifier keywords are included; structural/operator words (`to`, `then`,
@@ -633,7 +673,10 @@ KeywordName returns string:
     | 'metaclass' | 'feature' | 'step' | 'multiplicity' | 'connector' | 'association' | 'member'
     | 'part' | 'item' | 'port' | 'flow' | 'action' | 'state' | 'metadata'
     | 'occurrence' | 'event' | 'snapshot' | 'individual' | 'succession' | 'transition'
-    | 'accept' | 'send' | 'do' | 'entry' | 'exit' | 'end' | 'frame' | 'done';
+    | 'accept' | 'send' | 'do' | 'entry' | 'exit' | 'end' | 'frame' | 'done'
+    // `parallel` is a state-modifier keyword (7.18.2) and also an ordinary
+    // feature name; a reference must keep resolving the word either way.
+    | 'parallel';
 
 // A DECLARATION name: an identifier, a single-quoted 'unrestricted name', or a
 // small set of soft reserved words the library also uses as declared names.
@@ -648,7 +691,8 @@ Name returns string:
 // keyword-less `'derive'` (the same shape `filter`/`var` already have) —
 // pinned in langium.grammar.test.ts rather than widened here.
 SoftKeyword returns string:
-      'var' | 'multiplicity' | 'about' | 'locale' | 'filter' | 'done' | 'derive';
+      'var' | 'multiplicity' | 'about' | 'locale' | 'filter' | 'done' | 'derive'
+    | 'parallel';
 
 terminal ID: /[_a-zA-Z][\w]*/;
 // Single-quoted unrestricted name (value keeps its quotes; the mapper strips).

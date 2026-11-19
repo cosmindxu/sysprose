@@ -81,6 +81,8 @@ const KEY_ATTRS = [
   // table below fails on a serializer that stops writing it, not only the
   // targeted tests.
   'locale',
+  // The `parallel` keyword on a state definition or usage (SysML v2 §7.18.2).
+  'isParallel',
 ] as const;
 
 /** A stable, order-independent signature of an element. */
@@ -585,6 +587,61 @@ describe('round-trip — hand-written snippets', () => {
     const once = serializeModel(m);
     const twice = serializeModel(parseModel(once).model);
     expect(twice).toBe(once);
+  });
+});
+
+describe('round-trip — the parallel state keyword (SysML v2 §7.18.2)', () => {
+  it('writes `parallel` back just before the body, for a definition and for a usage', () => {
+    const text = `package P {
+  part def Ctl {
+    state def Modes parallel {
+      state nav;
+      state comms;
+    }
+    state ops parallel { state a; state b; }
+  }
+}`;
+    const first = parseModel(text);
+    expect(first.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const saved = serializeModel(first.model);
+    expect(saved).toContain('state def Modes parallel {');
+    expect(saved).toContain('state ops parallel {');
+    // The modifier is not a leading flag: `parallel state def` would not parse.
+    expect(saved).not.toMatch(/^\s*parallel\s+state/m);
+    const back = parseModel(saved);
+    expect(back.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expectSameElementSet(first.model, back.model);
+    const flags = back.model.all().filter((el) => el.attrs.isParallel === true);
+    expect(flags.map((el) => `${el.eClass} ${el.declaredName}`).sort()).toEqual([
+      'StateDefinition Modes',
+      'StateUsage ops',
+    ]);
+  });
+
+  it('writes an empty body for a parallel state, because `parallel` cannot stand before `;`', () => {
+    // `parallel` is legal only immediately before a body (SysML v2 §7.18.2), so
+    // `state def Modes parallel;` does not parse. An empty parallel state must
+    // keep its `{ }` or saving it would corrupt the file.
+    const text = `package P {
+  part def Ctl {
+    state def Modes parallel { }
+    state ops parallel { }
+  }
+}`;
+    const first = parseModel(text);
+    expect(first.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const saved = serializeModel(first.model);
+    expect(saved).toContain('state def Modes parallel { }');
+    expect(saved).toContain('state ops parallel { }');
+    expect(saved).not.toContain('parallel;');
+    const back = parseModel(saved);
+    expect(back.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expectSameElementSet(first.model, back.model);
+    const flags = back.model.all().filter((el) => el.attrs.isParallel === true);
+    expect(flags.map((el) => `${el.eClass} ${el.declaredName}`).sort()).toEqual([
+      'StateDefinition Modes',
+      'StateUsage ops',
+    ]);
   });
 });
 

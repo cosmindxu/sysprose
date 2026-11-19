@@ -280,6 +280,66 @@ describe('what the walk refuses to explore', () => {
     expect(finding!.message).toContain('is not explored');
   });
 
+  it('refuses a parallel machine written in the notation, and makes no exhaustive claim', () => {
+    // PS1: the keyword is parsed from text now (SysML v2 §7.18.2), so the
+    // refusal the API-only path had must fire from a file an author writes.
+    const { model, diagnostics } = parseModel(`package P {
+      state def Machine parallel {
+        state nav { state off; state on; transition off accept go then on; }
+        state comms { state idle; state busy; transition idle accept send then busy; }
+      }
+    }`);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const machine = model.all().find((el) => el.eClass === 'StateDefinition')!;
+    expect(machine.declaredName).toBe('Machine');
+    expect(machine.attrs.isParallel).toBe(true);
+    const r = reachReport(model, { scopeId: machine.id });
+    expect(r.machines).toHaveLength(1);
+    const only = r.machines[0];
+    expect(only.exhaustive).toBe(false);
+    expect(only.states.unreachable).toEqual([]);
+    expect(only.transitions.dead).toEqual([]);
+    expect(only.unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
+    const finding = r.diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(finding!.message).toContain('is not explored');
+    expect(finding!.message).toContain('§7.18.2');
+  });
+
+  it('refuses a machine with a parallel state nested in it, not only a parallel root', () => {
+    // The parallel usage is not the machine root here: the outer definition owns
+    // a transition of its own, so the usage is a REGION of it. Walking the outer
+    // as though its regions were exclusive would publish `sub` unreachable and
+    // its steps dead — the absence claim the refusal exists to withhold.
+    const { model, diagnostics } = parseModel(`package P {
+      part def Ctl {
+        state def Top {
+          state s1;
+          state s2;
+          transition s1 accept go then s2;
+          state sub parallel {
+            state r1 { state a1; state a2; transition a1 accept p then a2; }
+            state r2 { state b1; state b2; transition b1 accept q then b2; }
+          }
+        }
+      }
+    }`);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const top = model.all().find((el) => el.eClass === 'StateDefinition' && el.declaredName === 'Top')!;
+    const sub = model.all().find((el) => el.eClass === 'StateUsage' && el.declaredName === 'sub')!;
+    expect(sub.attrs.isParallel).toBe(true);
+    const r = reachReport(model, { scopeId: top.id });
+    expect(r.machines).toHaveLength(1);
+    const only = r.machines[0];
+    expect(only.exhaustive).toBe(false);
+    expect(only.states.unreachable).toEqual([]);
+    expect(only.transitions.dead).toEqual([]);
+    expect(only.unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
+    expect(only.unsupported[0].elementId).toBe(sub.id);
+    const finding = r.diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(finding!.message).toContain('is not explored');
+    expect(finding!.message).toContain('sub');
+  });
+
   it('a history state is unsupported for the same reason', () => {
     const m = new Model();
     const f = new ModelFactory(m);

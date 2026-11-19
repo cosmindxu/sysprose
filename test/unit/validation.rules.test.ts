@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 28 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(28);
+  it('exposes all 29 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(29);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -1533,5 +1533,57 @@ describe('validation — constraint-by-instance (the 27th rule)', () => {
     expect(bySpec.length).toBeGreaterThan(0);
     // F4: no reading carries `via` or `instance` yet, so the 27th rule is quiet.
     expect(byInstance).toEqual([]);
+  });
+});
+
+describe('validation — transition-in-parallel-state (the 29th rule)', () => {
+  const PARALLEL = `package P {
+    state def Modes parallel {
+      state nav { state off; state on; transition off accept go then on; }
+      state comms { state idle; state busy; transition idle accept send then busy; }
+      transition nav.off accept hop then comms.idle;
+    }
+  }`;
+
+  it('is registered last, after every rule whose ordinal a document names', () => {
+    expect(RULES_BY_ID.has('transition-in-parallel-state')).toBe(true);
+    expect(RULE_IDS[RULE_IDS.length - 1]).toBe('transition-in-parallel-state');
+    expect(RULES.findIndex((r) => r.id === 'constraint-by-instance')).toBeLessThan(RULES.length - 1);
+  });
+
+  it('refuses a transition between two concurrent substates, and is silent within one region or without `parallel`', async () => {
+    const m = parseModel(PARALLEL).model;
+    const diags = runRule(m, 'transition-in-parallel-state');
+    // The `off -> on` and `idle -> busy` steps stay inside their own region;
+    // only `nav.off -> comms.idle` crosses the two.
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe('error');
+    expect(diags[0].ruleId).toBe('transition-in-parallel-state');
+    expect(diags[0].message).toContain('§7.18.2');
+    expect(diags[0].message).toContain('Modes');
+    expect(diags[0].elementId).toBeDefined();
+    // The exclusive twin is the same machine without `parallel`: the same step is legal there.
+    const exclusive = parseModel(PARALLEL.replace(' parallel {', ' {')).model;
+    expect(runRule(exclusive, 'transition-in-parallel-state')).toEqual([]);
+    // The step is a violation wherever it is WRITTEN: a transition at the
+    // enclosing machine's level whose endpoints lie in two regions of the
+    // parallel state joins the same pair (§7.18.2 does not qualify the position).
+    const outside = parseModel(`package P {
+      part def Ctl {
+        state def Top {
+          state M parallel { state a; state b; }
+          transition M::a accept x then M::b;
+        }
+      }
+    }`).model;
+    const outsideDiags = runRule(outside, 'transition-in-parallel-state');
+    expect(outsideDiags).toHaveLength(1);
+    expect(outsideDiags[0].severity).toBe('error');
+    expect(outsideDiags[0].message).toContain('M');
+    // Through the text pipeline the finding carries its catalogue code and a range.
+    const loaded = await loadModelText(PARALLEL, { library: 'none' });
+    const finding = loaded.report.diagnostics.find((d) => d.code === 'validation/transition-in-parallel-state')!;
+    expect(finding.severity).toBe('error');
+    expect(finding.range).toBeDefined();
   });
 });

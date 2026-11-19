@@ -2667,6 +2667,11 @@ class Mapper {
     const attrs: Record<string, AttrValue> = {};
     if (direction) attrs.direction = direction;
     for (const f of flags) attrs[`is${f[0].toUpperCase()}${f.slice(1)}`] = true;
+    // `parallel` just before a state definition's or usage's body (SysML v2
+    // §7.18.2). The flag name is `isParallel` because that is what the model
+    // checker reads (`src/semantics/mc/explore.ts` also accepts the API's
+    // `parallel`). Only the state rule sets it, so no other declaration can.
+    if (node.isParallel) attrs.isParallel = true;
     // Keyword-less provenance (F5 residual): a purely name-led feature such as
     // an enum literal (`low = 0.25;`) is a ReferenceUsage WITHOUT the `ref`
     // keyword; the serializer uses this marker to re-emit it keyword-less.

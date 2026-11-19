@@ -448,6 +448,9 @@ function header(model: Model, el: ElementRecord): string {
     if (el.attrs[k] === true) parts.push(k.slice(2).toLowerCase());
   }
   for (const k of Object.keys(el.attrs).sort()) {
+    // `isParallel` is not a leading modifier: SysML v2 §7.18.2 puts `parallel`
+    // just before the body, and it is written there ({@link parallelSuffix}).
+    if (k === 'isParallel') continue;
     if (k.startsWith('is') && k.length > 2 && el.attrs[k] === true && !MODIFIER_ORDER_SET.has(k)) {
       parts.push(k.slice(2).toLowerCase());
     }
@@ -525,7 +528,32 @@ function header(model: Model, el: ElementRecord): string {
   // Inline control clause (grammar DeclMiddle ctrl): `… while c` / `… for x in c`.
   if (typeof el.attrs.loopKind === 'string') parts.push(...loopClause(el));
 
+  parts.push(...parallelSuffix(el));
+
   return parts.join(' ');
+}
+
+/**
+ * The `parallel` keyword just before a state declaration's body (SysML v2
+ * §7.18.2; the BNF writes `StateDefBody`/`StateUsageBody` as
+ * `';' | ( isParallel ?= 'parallel' )? '{' … '}'`).
+ *
+ * Written only for a state declaration that has a NAME: the grammar reads
+ * `state def parallel { … }` as a state named `parallel` so that identifiers
+ * keep parsing, which means the modifier has no unambiguous spelling without a
+ * name in front of it. The short-name-only spelling is narrowed the same way:
+ * `state <M> parallel { … }` parses as a state NAMED `parallel` with short name
+ * `M` (no error), not as a parallel state, so it cannot carry the keyword
+ * either. A nameless state carrying `isParallel` (an API-built model — no text
+ * can produce one) therefore keeps the flag in the model and does not write the
+ * keyword; the sentinel-flagged `state <M> parallel { … }` case is recorded as
+ * left undone rather than guessed at.
+ */
+function parallelSuffix(el: ElementRecord): string[] {
+  if (el.attrs.isParallel !== true) return [];
+  if (el.eClass !== 'StateDefinition' && el.eClass !== 'StateUsage') return [];
+  if (el.declaredName === undefined) return [];
+  return ['parallel'];
 }
 
 /** The last segment of a qualified reference (`ScalarValues::Real` → `Real`). */
@@ -697,7 +725,13 @@ function renderWithBody(
     lines.push(`${INDENT.repeat(indent + 1)}${expr}`);
   }
 
-  if (lines.length === 0) return `${pad}${head};`;
+  if (lines.length === 0) {
+    // `parallel` is legal only immediately before a body (SysML v2 §7.18.2), so
+    // a parallel state with no members must still write an empty one:
+    // `state def Modes parallel;` does not parse and would lose the keyword.
+    if (parallelSuffix(el).length > 0) return `${pad}${head} { }`;
+    return `${pad}${head};`;
+  }
   return `${pad}${head} {\n${lines.join('\n')}\n${pad}}`;
 }
 

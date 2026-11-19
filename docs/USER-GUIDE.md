@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (28 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (29 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -3969,7 +3969,8 @@ state machines disagrees about — run-to-completion (chasing is bounded at 64
 steps), priority (innermost substate first), exits (a step exits to the least
 common ancestor of its source and its target, and every transition is external:
 the next paragraph), history (shallow, by parent map), regions (the interpreter
-concatenates them; a parallel machine is not explored here at all), deferred
+concatenates them; a parallel machine — a state definition or usage marked
+`parallel`, SysML v2 §7.18.2 — is not explored here at all), deferred
 events (none — there is no event pool), and time (discrete `after(n)`; the walk
 offers each `after(n)` label as an event rather than advancing a clock). A
 verdict about a machine is a verdict under a reading of those seven, and one
@@ -4019,9 +4020,10 @@ machines: a state or `state def` above it that owns a transition, with no other
 `state def` between the two. Where no machine holds it, as in
 `state S { state C { … } }` or with a lone `state def` around it, the composite
 is the machine itself, and the sentence is the plain one above, the one `reach`
-prints for the same step. On a parallel machine, which only the API makes, each
-region runs on its own over the whole script, so the step stops only its own
-region, the regions that have not stopped run on, and the sentence says so; when
+prints for the same step. On a parallel machine — a state definition or usage
+marked `parallel`, SysML v2 §7.18.2 — each region runs on its own over the whole
+script, so the step stops only its own region, the regions that have not stopped
+run on, and the sentence says so; when
 every region has refused it says the run stops, lists each region's step, and
 **Play** stops. The simulator used
 to take it the old way, standing at the machine itself or at the node under the
@@ -5283,7 +5285,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:562-579`, `1055-1080` (the two rules that ask),
+`src/validation/rules.ts:563-580`, `1127-1152` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 
