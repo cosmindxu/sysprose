@@ -728,12 +728,27 @@ def snapshot_numbers(sha):
     The trend is read from the metrics committed at the merge, never recomputed against
     today's rules and never carried backwards. A commit before the coverage dataset existed
     has no snapshot (None, not zeros). A snapshot that exists but is malformed is a hard
-    error, so a broken point cannot be skipped silently.
+    error, so a broken point cannot be skipped silently. A commit object missing from this
+    checkout is a hard error too: in a shallow or otherwise truncated history every old
+    point would otherwise chart as "predates the coverage page" instead of failing.
     """
+    def have(spec):
+        return subprocess.run(['git', '-C', REPO, 'cat-file', '-e', spec],
+                              capture_output=True, text=True).returncode == 0
+
+    if not have(f'{sha}:{SNAPSHOT}'):
+        # The path is absent. Tell that apart from the commit being absent: only the
+        # former is a legitimate "the dataset did not exist yet".
+        if not have(f'{sha}^{{commit}}'):
+            raise SystemExit(
+                f'coverage.snapshot_numbers: commit {sha} is not in this checkout; a shallow or '
+                'otherwise truncated history cannot chart the coverage trend (fetch the full history)')
+        return None
     r = subprocess.run(['git', '-C', REPO, 'show', f'{sha}:{SNAPSHOT}'],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        return None
+        raise SystemExit(f'coverage.snapshot_numbers: git show {sha}:{SNAPSHOT} failed: '
+                         f'{r.stderr.strip()}')
     try:
         m = json.loads(r.stdout).get('metrics')
     except Exception as e:
@@ -896,8 +911,10 @@ commit after the last one that changed the coverage snapshot, from
 <i>scripts/todo-dashboard/coverage-history.json</i>, charting the same four numbers: measured rows,
 unmeasured rows, decided classes and the open false count. The dashboard's timeline (<i>timeline.json</i>)
 lists {n_timeline} merge{'' if n_timeline == 1 else 's'}; {n_ext} snapshot-changing commit{'' if n_ext == 1 else 's'}
-after its last entry are appended from git. {len(points)} entries have a snapshot; the other {n_blank}
-predate the coverage page and carry no numbers — a missing snapshot is not zero coverage.{false_from}</div>
+after its last entry are appended from git (a trailing re-commit that leaves the four charted numbers
+unchanged is not repeated, so this is fewer than <code>git log</code> finds for the file). {len(points)}
+entries have a snapshot; the other {n_blank} predate the coverage page and carry no numbers — a missing
+snapshot is not zero coverage.{false_from}</div>
 <div class="trend">{sparks}</div>
 <table class="small"><thead><tr><th>Day</th><th>Commit</th><th>Subject</th><th class="n">Rows</th>
 <th class="n">Measured</th><th class="n">Unmeasured</th><th class="n">Decided classes</th>
@@ -966,7 +983,9 @@ def write_html(data, m, history):
                   'enters a percentage. The dashboard\'s <i>FALSE</i> tier '
                   '(<i>scripts/todo-dashboard/ds_open.json</i>) is open wrong-statement findings, '
                   'each counted once in every area whose coverage row id or CON class name it '
-                  'names; one that names no row is reported as unattributed. The class register\'s '
+                  'names; one that names no row is reported as unattributed. A finding naming '
+                  'rows in more than one area is therefore counted in each of their headers but '
+                  'once in the card total, so the headers can sum above it. The class register\'s '
                   '<i>Table rows against</i> is the differential-table rows a class has against '
                   'its hand-computed answer, and its column is per class cell: the census charges '
                   'one row against to every class the row rests on, so a row resting on three '
@@ -1014,7 +1033,7 @@ The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> me
     <div class="v eq">{m['decision_equal']}% <span class="vs">equal</span></div>
     <div class="k">decided of the {m['decision_rows']} measured constraint classes (level ≥ tested). Weighted uses the register's counted rows ({m['decision_weighted_num']} of {m['decision_weighted_den']}); equal counts every class once ({m['decision_decided']} of {m['decision_rows']}).</div></div>
   <div class="card"><div class="k">Soundness signals (not folded in)</div><div class="v">{m['false']}</div>
-    <div class="k">soundness not folded in: {false_src}, plus {m['false_register_entries']} per-class row-against entries in the class register (a differential-table row against is charged once for every class cell it rests on, so this half counts entries, not distinct findings); shown beside each area's row count, never in a percentage</div></div>
+    <div class="k">soundness not folded in: {false_src}, plus {m['false_register_entries']} per-class row-against entries in the class register (a differential-table row against is charged once for every class cell it rests on, so this half counts entries, not distinct findings); a FALSE-tier finding naming rows in two areas counts in both headers but once here; shown beside each area's row count, never in a percentage</div></div>
   <div class="card"><div class="k">Unmeasured</div><div class="v">{m['unmeasured']}</div>
     <div class="k">rows with no mechanical evidence yet (pinned probes fill them as they land)</div></div>
 </div>
