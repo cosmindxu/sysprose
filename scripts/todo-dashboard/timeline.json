@@ -3752,9 +3752,9 @@
   "open_raw": 78,
   "open": 78,
   "open_by": {
-   "FALSE": 1,
-   "WEAKER": 43,
-   "POLISH": 32,
+   "FALSE": 5,
+   "WEAKER": 41,
+   "POLISH": 30,
    "HELD": 2
   },
   "new": 0,
@@ -3773,6 +3773,38 @@
    "HELD": 0
   },
   "cum_new": 321,
+  "cum_closed": 241
+ },
+ {
+  "idx": 118,
+  "sha": "b2fbd3b",
+  "when": "2026-11-19T08:24:16+01:00",
+  "day": "2026-11-19",
+  "subject": "merge spec-par-ps2: entry; then X; sets the initial state; exhibit state ... parallel and state <M> parallel keep their name and body",
+  "open_raw": 82,
+  "open": 82,
+  "open_by": {
+   "FALSE": 2,
+   "WEAKER": 43,
+   "POLISH": 35,
+   "HELD": 2
+  },
+  "new": 4,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 1,
+   "WEAKER": 0,
+   "POLISH": 3,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 325,
   "cum_closed": 241
  }
 ]
