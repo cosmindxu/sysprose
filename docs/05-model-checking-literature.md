@@ -322,7 +322,7 @@ And it would not help the properties proposed here anyway: branching-time POR fo
 
 **Probabilistic model checking, Markov chains, MDPs, PCTL** (Baier & Katoen ch 10; Handbook ch 28). Rejected: the model states no rates. `fault-tree` is deliberately structural for the same reason.
 
-**μ-calculus, parity games, reactive synthesis** (Handbook chs 26, 27; MoChArt LNCS 4428's parity-game paper). Rejected: synthesis produces an implementation, and Sysprose is a tool in which a human writes the model. Realizability is a declared non-goal and the word is reserved.
+**μ-calculus, parity games, reactive synthesis** (Handbook chs 26, 27; MoChArt LNCS 4428's parity-game paper). Rejected: `docs/04` non-goal 5 — only static contracts are decided (`consistency` is satisfiability of static contracts), and reactive realizability is a different question; realizability *checking* (`katis-2022`, `larraz-tinelli-2022`) returns a verdict, not an implementation, so synthesis is not the reason. The word *realizable* is reserved.
 
 **Deductive program verification as a lane** (the KeY book; Nipkow & Klein chs 7-12; Huth & Ryan ch 4). Rejected: there is no program — no Java, no IMP, no Hoare triple, nothing to compute a weakest precondition over. What transposes is not the proving but the *specification discipline*, which is candidate 4 and the footprint half of candidate 3.
 
