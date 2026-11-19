@@ -1142,7 +1142,16 @@ state-machine semantics differs on fields like these, so a verdict that did not
 name its reading would be one nobody could reproduce or contest; the `exits` field
 was added on 2026-10-21, when the step's reading changed and moved verdicts the
 other six did not show. PSSM is not implemented and no conformance with it is
-claimed.
+claimed. The departure from PSSM is declared field by field in the profile and
+is not measured: no test of PSSM Clause 9 (`omg-pssm-1.0-2019`) is run or scored
+against this tool, and nothing in `src/` or `test/` uses that document.
+
+**Non-goals of this lane.** Anything unbounded, and real-time patterns with
+sub-tick bounds, are refused (`inconclusive`), and there is no external route for
+them today: no SMV, nuXmv or OCRA export ships (the only OCRA thing in the tool is
+the opt-in reading of a bare `connect` as a value equality), and building one is a
+separate decision. Machines are walked one at a time: no composition of state
+machines, synchronous or asynchronous, is checked.
 
 **Which properties it decides, and which it refuses.** Four patterns —
 `absence`, `universality`, `bounded-existence`, `precedence` — are safety
@@ -1457,7 +1466,7 @@ way cannot appear in any model that passes `npm run check` — and a command han
 one prints the errors above its report and exits non-zero, reporting on what
 parsed rather than reading the repeated cells as a set.
 
-Everything else the lane produces — verdict lines, SMT-LIB, Othello, SMV, Lean
+Everything else the lane produces — verdict lines, SMT-LIB, Lean
 skeletons, evidence JSON — leaves the model alone and lands in the terminal or
 in a file. No command in this lane edits a requirement's text, a constraint or a
 value.

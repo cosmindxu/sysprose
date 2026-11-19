@@ -649,15 +649,16 @@ Eight mechanisms, each a test that fails loudly rather than a convention.
 
 ### Non-goals (deliberate)
 
-1. **No unbounded proof in TypeScript.** The in-process behaviour engine decides only the finite abstraction it exhaustively explored. Anything unbounded goes to z3 k-induction or to an SMV export, and the report names which.
+1. **No unbounded proof in TypeScript.** The in-process behaviour engine decides only the finite abstraction it exhaustively explored. Anything unbounded is refused (`inconclusive`) and the report says so; there is no external route today (no SMV, nuXmv or OCRA export ships, and the `cristoforetti-2026` path planned in phase 5 was not built), and building an export is a separate decision.
 2. **No event pool, deferred events or PSSM completion events.** `triggerEquals` is an exact match and completion chasing is bounded at 64. The profile prints `deferredEvents: 'none'` and a model needing them gets `verification/behaviour-unsupported-construct`, never a verdict.
-3. **No dense time in-process.** `after(n)` is a discrete clock; real-time patterns with sub-tick bounds are export-only.
+3. **No dense time in-process.** `after(n)` is a discrete clock; real-time patterns with sub-tick bounds are refused (`inconclusive`), with no external route today; building an export is a separate decision.
 4. **No liveness in-process.** `existence` and `response` are `inconclusive` until a lasso search lands and a fairness assumption is named.
 5. **No reactive realizability.** `consistency` decides satisfiability of static contracts. `katis-2022` and `larraz-tinelli-2022` are about a different question; the word *realizable* is reserved by the claims guard.
 6. **No kernel-checked proofs in-process.** z3 is trusted as a solver. The vocabulary is "proved by z3 (negation unsat)", never "kernel-checked" — that phrase is reserved for an imported Lean result whose axiom set was parsed.
 7. **No LLM inside the tool.** Property authoring is the agent's job, guided by `#prompt`; the tool supplies the dictionary, the template, gate 0, the four gates and the back-translation. `danso-2026` sets the bar and the gates are the answer to it.
 8. **No invented syntax.** Properties, evidence, fault hypotheses and temporal patterns are §7.27 metadata over a shipped `SysproseVerification` package, exactly as `#prompt` is a keyword over `SysproseStatements`. Two of the four keywords put to this plan are refused outright because the standard already expresses them, and one of the two remaining is held (§2.1).
 9. **No in-browser solver in this plan.** z3 WASM needs `SharedArrayBuffer`, i.e. COOP/COEP headers GitHub Pages cannot set. The app reads evidence and says "prove in the terminal" with the exact command. The `coi-serviceworker` workaround is a later decision, not a promise — and cross-origin isolation (`COOP: same-origin` + `COEP: require-corp`) would also break the optional Google Drive feature's sign-in popup and its `docs.google.com` Picker iframe, so in-browser z3 and Google sign-in constrain each other. *Decided later (U14, 2026-10-14):* the local dev and preview servers send those headers and serve z3, so the palette's solver checks run in the page there (`SYSPROSE_NO_ISOLATION=1` turns the headers off for local Drive testing); the hosted site gets no headers and no service worker, and keeps `not here` with the command.
+10. **No composition of state machines.** Each state machine is walked one at a time; no composition of machines, synchronous or asynchronous, is checked, and nothing in the seven-field profile says otherwise.
 
 ### The one declared deviation from the standard
 
