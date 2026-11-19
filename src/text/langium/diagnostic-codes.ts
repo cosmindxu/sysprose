@@ -140,6 +140,14 @@ const CODES = [
   },
 
   {
+    code: 'mapper/accept-delay-unread',
+    source: 'mapper',
+    severity: 'error',
+    when: 'A transition accepter is written with an expression after a payload name other than the time trigger `accept after <expression>` (SysML v2 §7.18.3), or with a type or a `via` beside `after`: `accept TurnOn 5[min]`. The notation has no such form, so the expression would be dropped and the accepter read as an event it is not.',
+    hint: 'Write the accepter as `accept <Payload> via <port>` for an event, or `accept after <duration>` for a time trigger; the load stays degraded and the checks abstain until you do.',
+  },
+
+  {
     code: 'mapper/negated-assert-unread',
     source: 'mapper',
     severity: 'error',

@@ -1106,6 +1106,15 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
           'states holds its target, the step has no least common ancestor to exit to, and the walk ' +
           'refuses this machine by name rather than walking a step whose meaning is not defined here',
       );
+    } else if (typeof el.attrs.timeTrigger === 'string' && el.attrs.timeTrigger) {
+      // `accept after 5[min]` (SysML v2 §7.18.3) is a time trigger. This engine's only clock is the discrete `after(n)`
+      // dwell, whose unit it does not know, so equating the two would be a guess; and written without a named
+      // trigger the edge would read as a completion that fires at once. Neither is a claim about the machine.
+      row(
+        'unaccounted',
+        `it is triggered by \`accept after ${el.attrs.timeTrigger}\`, a time trigger (SysML v2 §7.18.3) in a unit ` +
+          'this engine has no clock for, so the walk does not guess a reading and the machine is not walked',
+      );
     } else if (relation.has(el.id) && sourceKind === 'InitialNode') {
       row(
         'opening',

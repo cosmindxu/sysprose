@@ -228,7 +228,15 @@ TransitionClause:
     AcceptClause | GuardClause | EffectClause;
 
 AcceptClause infers AcceptClause:
-    'accept' payload=QualifiedName (':' payloadType=QualifiedName)? ('via' via=QualifiedName)?;
+    'accept' payload=QualifiedName (':' payloadType=QualifiedName)? ('via' via=QualifiedName)?
+    // `accept after 5[min]` (SysML v2 §7.18.3): a time trigger. `after` is NOT a keyword here, so it stays a valid
+    // name; it is read as the payload name and the mapper recognises the exact shape `after` + a delay expression.
+    (delay=DelayExpr)?;
+
+// The delay of a time trigger: a number with an optional unit bracket (`5[min]`, `2`). It is NOT a general Expression:
+// that would read the `if` of a following guard as a conditional expression (`accept b if n < 0 then s`).
+DelayExpr infers Expression:
+    {infer NumberLiteral} value=NUMBER ({infer BracketExpr.base=current} '[' arg=Expression ']')?;
 
 GuardClause infers GuardClause:
       '[' expr=Expression ']'

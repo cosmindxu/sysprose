@@ -1007,6 +1007,16 @@ export function runStateMachine(
       'interpreter reads — so no start is guessed.';
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
+  const timeTriggered = machineRegion(model, container.id).descendants.find(
+    (e) => typeof e.attrs.timeTrigger === 'string' && e.attrs.timeTrigger,
+  );
+  if (timeTriggered) {
+    const unopened =
+      `${model.qualifiedName(container.id) || container.id} is not run: \`${model.qualifiedName(timeTriggered.id) || timeTriggered.id}\` ` +
+      `is triggered by \`accept after ${timeTriggered.attrs.timeTrigger}\` (SysML v2 §7.18.3), a time trigger this ` +
+      'interpreter has no clock for, so no run is started and no step is guessed.';
+    return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
+  }
   seedStore(model, container, valueStore, opts.store);
   const maxCompletion = Math.max(0, opts.maxCompletion ?? 64);
   const performed: PerformedAction[] = [];

@@ -1405,6 +1405,7 @@ function transitionLine(model: Model, el: ElementRecord, pad: string): string {
   if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
   parts.push('first', endpoint(model, el, 'source'));
   if (typeof el.attrs.trigger === 'string' && el.attrs.trigger) parts.push('accept', el.attrs.trigger);
+  if (typeof el.attrs.timeTrigger === 'string' && el.attrs.timeTrigger) parts.push('accept after', el.attrs.timeTrigger);
   if (typeof el.attrs.guard === 'string' && el.attrs.guard) parts.push(`if ${el.attrs.guard}`);
   if (typeof el.attrs.effect === 'string' && el.attrs.effect) parts.push('do', el.attrs.effect);
   parts.push('then', endpoint(model, el, 'target'));

@@ -2310,8 +2310,28 @@ class Mapper {
     let trigger: string | undefined;
     let guard: string | undefined;
     let effect: string | undefined;
+    let timeTrigger: string | undefined;
     for (const c of node.clauses) {
-      if (c.$type === 'AcceptClause') trigger = c.payload;
+      if (c.$type === 'AcceptClause') {
+        // `accept after 5[min]` (SysML v2 §7.18.3): a TIME trigger, not an event named `after`. Only the exact shape
+        // `after` + a delay expression reads so; a payload name followed by an expression is not a form the
+        // notation has, and is refused rather than read as the event.
+        if (c.delay) {
+          if (c.payload === 'after' && !c.payloadType && !c.via) timeTrigger = exprText(c.delay);
+          else {
+            const code = 'mapper/accept-delay-unread';
+            this.diagnostics.push({
+              message: `Unexpected expression after 'accept ${c.payload}': a time trigger is written \`accept after <duration>\`.`,
+              ...posOf(c),
+              severity: 'error',
+              source: 'mapper',
+              code,
+              hint: renderHint(code, {}),
+              ...(rangeOf(c) ? { range: rangeOf(c) } : {}),
+            });
+          }
+        } else trigger = c.payload;
+      }
       else if (c.$type === 'GuardClause') guard = exprText(c.expr);
       else if (c.$type === 'EffectClause') effect = c.effect;
     }
@@ -2319,6 +2339,7 @@ class Mapper {
     const tgtRef = node.target;
     const attrs: Record<string, AttrValue> = {};
     if (trigger) attrs.trigger = trigger;
+    if (timeTrigger) attrs.timeTrigger = timeTrigger;
     if (guard) attrs.guard = guard;
     if (effect) attrs.effect = effect;
     const el = this.create('TransitionUsage', {
