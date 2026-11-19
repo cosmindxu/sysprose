@@ -43,6 +43,7 @@ import {
   foldVerdictWords,
   foldByVerdictAndCause,
   TARGET_CONTEXT_FOLD,
+  runsParallel,
   type SpecialisationInstance,
 } from '../semantics/index';
 import { dimEqual, dimToString } from '../semantics/units';
@@ -831,6 +832,77 @@ const specializationCycle: ValidationRule = {
     return out;
   },
 };
+
+/**
+ * A transition between the concurrent substates of a parallel state.
+ *
+ * SysML v2 §7.18.2 says it in one sentence: "However, no transitions are
+ * allowed between the concurrent states nested in a parallel state." The
+ * regions of a parallel state are performed concurrently, so a step from one
+ * to the other has no reading this grammar's semantics defines. §7.18.3 adds
+ * the complementary half (a parallel state "is not allowed to have transitions
+ * to or from its substates"); that half is not reported here yet.
+ *
+ * Only `parallel` (lowered to `attrs.isParallel`, or the API's `attrs.parallel`)
+ * makes an element a parallel state, and the check is the same predicate the
+ * explorer uses (`runsParallel`). Endpoints the binder did not resolve are left
+ * to `dangling-endpoint`.
+ */
+const transitionInParallelState: ValidationRule = {
+  id: 'transition-in-parallel-state',
+  description: 'A transition joins two concurrent substates of a parallel state.',
+  severity: 'error',
+  run(model) {
+    const mk = diagBuilder(this.id, this.severity);
+    const out: Diagnostic[] = [];
+    for (const p of model.all()) {
+      if (isLibraryElement(p)) continue;
+      if (!runsParallel(model, p.id)) continue;
+      // Every transition in the model, not only the ones written INSIDE the
+      // parallel state: `transition M::a accept x then M::b;` at the enclosing
+      // machine's level joins two concurrent substates just the same (§7.18.2
+      // does not qualify where the step is written), and `regionChildOf`
+      // filters out every transition that does not cross this state's regions.
+      for (const tr of model.all()) {
+        if (tr.eClass !== 'TransitionUsage' && tr.eClass !== 'TransitionFeature') continue;
+        const fromId = tr.source?.[0];
+        const toId = tr.target?.[0];
+        if (fromId === undefined || toId === undefined) continue;
+        const fromRegions = regionChildOf(model, p.id, fromId);
+        const toRegions = regionChildOf(model, p.id, toId);
+        if (!fromRegions || !toRegions || fromRegions.id === toRegions.id) continue;
+        const from = model.get(fromId);
+        const to = model.get(toId);
+        out.push(
+          mk(
+            `${label(model, p)} is a parallel state, and the transition from ${
+              from ? label(model, from) : String(fromId)
+            } to ${to ? label(model, to) : String(toId)} joins two of its concurrent substates — ` +
+              'SysML v2 §7.18.2: no transitions are allowed between the concurrent states nested in a parallel state.',
+            tr.id,
+          ),
+        );
+      }
+    }
+    return out;
+  },
+};
+
+/**
+ * The child of `ownerId` that holds `id` (the REGION of a parallel state `id`
+ * sits in), or `undefined` when `id` is `ownerId` itself or lies outside it.
+ */
+function regionChildOf(model: Model, ownerId: ElementId, id: ElementId): ElementRecord | undefined {
+  const seen = new Set<ElementId>();
+  let cur: ElementRecord | undefined = model.get(id);
+  let child: ElementRecord | undefined;
+  while (cur && cur.id !== ownerId && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    child = cur;
+    cur = cur.ownerId === null ? undefined : model.get(cur.ownerId);
+  }
+  return cur?.id === ownerId ? child : undefined;
+}
 
 /** (11) A relationship element with no owner. */
 const orphanRelationship: ValidationRule = {
@@ -1625,6 +1697,7 @@ export const RULES: ValidationRule[] = [
   derivedDimensionMismatch,
   unwritableNoteBody,
   staleEvidence,
+  transitionInParallelState,
 ];
 
 /** Rule lookup by id. */

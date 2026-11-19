@@ -47,6 +47,14 @@ describe('diagnostic-code catalogue', () => {
     }
   });
 
+  it('catalogues the parallel-state transition rule under validation/', () => {
+    const c = diagnosticCode('validation/transition-in-parallel-state');
+    expect(c, 'the new rule has no catalogue entry').toBeDefined();
+    expect(c!.source).toBe('validation');
+    expect(c!.severity).toBe('error');
+    expect(c!.when).toContain('§7.18.2');
+  });
+
   it('explains every `verification/*` code the tool names to a reader', () => {
     // The verification lane states its contracts over CODE STRINGS —
     // `ALLOW_INCONCLUSIVE_CODES` is the scope of `--allow-inconclusive`, and

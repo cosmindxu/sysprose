@@ -88,9 +88,9 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
     reading:
       'the interpreter CONCATENATES: each region is driven through the whole step sequence in turn ' +
       'and the results are appended, so regions do not interleave. The explorer does not explore a ' +
-      'parallel machine at all — `attrs.parallel` has no keyword in sysml.langium and is reachable ' +
-      'only through the API — it reports verification/behaviour-unsupported-construct and is never ' +
-      'exhaustive.',
+      'parallel machine at all — `parallel` is parsed on a state definition or usage (SysML v2 ' +
+      '§7.18.2) and the walk does not interleave the concurrent regions it marks — it reports ' +
+      'verification/behaviour-unsupported-construct and is never exhaustive.',
     provenance: 'src/semantics/execute.ts — runHierMachine; src/semantics/mc/explore.ts — unsupportedConstructs',
   },
   {

@@ -1584,6 +1584,22 @@ tagged `[O1 …]` are what its steps and reviews left open.
       stages merged, the probes decided per the spec, the profile no longer declares a departure on
       regions, and the 637-model differential reads exactly "631 identical, 6 differ" (or every move
       ruled). [mc-vs-bib 2026-11-18; wrong statement; spec conformance mandatory 2026-11-19]
+      STAGE 1 DONE 2026-11-19 (a spec-par PS1, merge pending push): `parallel` parses into
+      `isParallel`, the definition keeps its name, a parallel machine (also one nested in an
+      ordinary machine) is refused with `verification/behaviour-unsupported-construct` from text
+      (`reach` "0 walked", `check-behaviour` inconclusive, exit 2), the keyword round-trips, and
+      `validation/transition-in-parallel-state` rejects a transition between a parallel state's
+      substates (§7.18.2). Ruling 2026-11-19: the 637-model differential reads "630 identical, 7
+      differ" — the seventh is `d45dcfa21d53-health-effect.sysml`, a parse-error model whose error
+      message now lists `parallel` among the expected tokens (message and `expected` array only:
+      same codes, ranges, verdict, exit 2); accepted as the direct consequence of the keyword.
+      STILL OPEN: stage 2 (concurrent semantics and an interleaving explorer, profile `regions`
+      field); the rest of §7.18.3 (`validateStateDefinitionParallelSubactions` /
+      `validateStateUsageParallelSubactions`: a parallel state's own substates have no transitions in
+      or out); `exhibit state es parallel { … }` (the spec's own example) still misparses silently
+      (`es` loses its body, `parallel` becomes a keyword-less element; it needs `BehaviorStmt`);
+      `state <M> parallel { … }` still reads as a state named `parallel`; nested parallel states
+      still run as exclusive in the simulator (only the explorer refuses them).
 
 - [ ] **The spec's own state-machine example does not parse: `entry; then off;` is an error.** SysML v2
       Part 1 §7.18.3's `state def OnOff1 { entry; then off; state off; state on; transition off_on

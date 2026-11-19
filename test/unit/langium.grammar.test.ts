@@ -592,6 +592,71 @@ describe('Langium SysML grammar — bracket expression', () => {
   });
 });
 
+describe('Langium SysML grammar — the parallel state keyword (SysML v2 §7.18.2)', () => {
+  it('reads `parallel` just before the body of a state definition and of a state usage', () => {
+    const ast = parseClean(`
+      package P {
+        state def Modes parallel {
+          state nav;
+          state comms;
+        }
+        state ops parallel { state a; state b; }
+      }
+    `);
+    const pkg = ast.members[0] as Definition;
+    const states = (pkg.body?.members ?? []).filter(isDefinition) as Definition[];
+    const [modes, ops] = states;
+    expect(modes.keyword).toBe('state');
+    expect(modes.isDef).toBe(true);
+    expect(modes.name).toBe('Modes');
+    expect(modes.isParallel).toBe(true);
+    expect(modes.body?.members.map((m) => (m as Definition).name)).toEqual(['nav', 'comms']);
+    expect(ops.keyword).toBe('state');
+    expect(ops.isDef).toBe(false);
+    expect(ops.name).toBe('ops');
+    expect(ops.isParallel).toBe(true);
+  });
+
+  it('keeps `parallel` an ordinary identifier outside that position', () => {
+    const ast = parseClean(`
+      package P { attribute parallel : Real; }
+      package Q { part parallel; }
+      package R { state parallel { state a; } }
+      package S { part def Hold { attribute parallel : Real; } }
+    `);
+    const names = ast.members.map((m) => {
+      const pkg = m as Definition;
+      const first = pkg.body?.members.find(isDefinition) as Definition;
+      return `${first.keyword ?? '«keywordless»'}${first.isDef ? ' def' : ''} ${first.name}:${String(first.isParallel)}`;
+    });
+    expect(names).toEqual([
+      'attribute parallel:false',
+      'part parallel:false',
+      'state parallel:false',
+      'part def Hold:false',
+    ]);
+  });
+
+  it('lowers the keyword to attrs.isParallel and keeps the definition’s own name', () => {
+    const { model, diagnostics } = parseModel(`
+      package P {
+        part def Ctl {
+          state def Modes parallel { state a; state b; }
+          state ops parallel { state c; state d; }
+        }
+      }
+    `);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const modes = model.all().find((el) => el.eClass === 'StateDefinition')!;
+    const ops = model.all().find((el) => el.eClass === 'StateUsage' && el.declaredName === 'ops')!;
+    expect(modes.declaredName).toBe('Modes');
+    expect(modes.attrs.isParallel).toBe(true);
+    expect(ops.declaredName).toBe('ops');
+    expect(ops.attrs.isParallel).toBe(true);
+    expect(model.children(modes.id).map((c) => c.declaredName)).toEqual(['a', 'b']);
+  });
+});
+
 // The parser is built the first time something asks for it (Chevrotain's lookahead analysis,
 // about 1.3 s in a browser); `warmParser` lets a page pay that before the click that needs a
 // parse (`src/ui/parser-warmup.ts`, docs/UI-ROADMAP.md P3).

@@ -2771,8 +2771,9 @@ wave 2.
   stop the session, made it name the deleted edge by its raw id. Play stops at
   a run at rest (`simulationAtRest`: complete, or stopped), where it ticked on
   to the sample cap. Two runs are worded apart, both reachable only outside
-  the walk's machines. On a parallel machine (`attrs.parallel`, API only, and
-  refused by the walk as `parallel-regions`) each region is driven on its own
+  the walk's machines. On a parallel machine (a state definition or usage
+  marked `parallel`, SysML v2 §7.18.2, or `attrs.parallel` from the API; refused
+  by the walk as `parallel-regions`) each region is driven on its own
   over the whole script, so the stop is the region's: the other regions fire
   on, and a sentence saying the run "takes no step after it" was contradicted
   by the Fired line of the same sample. The sentence now says the other regions
@@ -3102,7 +3103,8 @@ the standing instruction to continue without asking; each can be reversed by
 reopening the entry named.
 
 - **Every region's refusal on a parallel machine (changed).** A parallel
-  machine (`attrs.parallel`, API only) drives each region on its own over the
+  machine (`parallel` in the notation, or `attrs.parallel` from the API) drives
+  each region on its own over the
   whole script, so a step a region does not take stops that region. Until now
   `StateRunResult.refused` named the first region's refusal only, the sentence
   said the machine's other regions run on whatever had happened to them, and

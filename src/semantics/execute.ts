@@ -941,8 +941,8 @@ export interface StateRunResult {
    * entering the far state of a boundary crossing and staying there — a run the
    * Simulation tab showed and nothing defined.
    *
-   * ON A PARALLEL MACHINE ({@link runsParallel}, set only through the API) the
-   * stop is the REGION's: each region is driven on its own over the whole
+   * ON A PARALLEL MACHINE ({@link runsParallel}, from the notation's `parallel`
+   * keyword or the API's `attrs.parallel`) the stop is the REGION's: each region is driven on its own over the whole
    * script, one after another, so the region the step came in stops and takes
    * no step after it, and the other regions run on. `refused` is the FIRST
    * region's refusal; {@link refusals} lists every region's. The walk refuses
@@ -1071,9 +1071,10 @@ function stopClause(model: Model, machineId: ElementId, regions?: { stopped: num
 }
 
 /**
- * Is the machine rooted at `machineId` run as a parallel one (`attrs.parallel`,
- * which only the API sets): each child region driven on its own over the whole
- * script, one region after another? Then a step a region does not take
+ * Is the machine rooted at `machineId` run as a parallel one (the notation's
+ * `parallel` on a state definition or usage, SysML v2 §7.18.2, or the API's
+ * `attrs.parallel`): each child region driven on its own over the whole script,
+ * one region after another? Then a step a region does not take
  * ({@link StateRunResult.refused}) stops that region, not the run.
  */
 export function runsParallel(model: Model, machineId: ElementId): boolean {
