@@ -1354,6 +1354,81 @@
   },
   {
    "idx": 112,
+   "day": "2026-11-18",
+   "sha": "6b5144f",
+   "subject": "a5w4 merge: W5 + W8 outcomes; CU and TY1 follow-up filed; docs re-measured (5692/5692, E2E 238/238)",
+   "source": "timeline",
+   "snapshot": "6b5144f",
+   "rows": 79,
+   "measured": 39,
+   "unmeasured": 40,
+   "decided_classes": 7,
+   "false": null,
+   "construct_coverage": 95.7,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 113,
+   "day": "2026-11-18",
+   "sha": "4e6789f",
+   "subject": "TODO: CU-1 closed; TY1 follow-up part closed by TY1A (mask-param ruling, lra TY2 follow-up recorded)",
+   "source": "timeline",
+   "snapshot": "4e6789f",
+   "rows": 79,
+   "measured": 56,
+   "unmeasured": 23,
+   "decided_classes": 7,
+   "false": null,
+   "construct_coverage": 95.8,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 114,
+   "day": "2026-11-18",
+   "sha": "15db003",
+   "subject": "TODO: the TY1 follow-up is closed \u2014 TY1A delivered the body-reading half; nine rows stay a sound ?",
+   "source": "timeline",
+   "snapshot": "15db003",
+   "rows": 79,
+   "measured": 56,
+   "unmeasured": 23,
+   "decided_classes": 7,
+   "false": null,
+   "construct_coverage": 95.8,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 115,
+   "day": "2026-11-18",
+   "sha": "66d5765",
+   "subject": "TODO: six items from the model-checking vs SystemsPerspectiveBib comparison",
+   "source": "timeline",
+   "snapshot": "66d5765",
+   "rows": 79,
+   "measured": 56,
+   "unmeasured": 23,
+   "decided_classes": 7,
+   "false": null,
+   "construct_coverage": 95.8,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 116,
+   "day": "2026-11-19",
+   "sha": "c0cd8f7",
+   "subject": "TODO: parallel states are a mandatory spec-conformance item; the spec's OnOff1 example does not parse",
+   "source": "timeline",
+   "snapshot": "c0cd8f7",
+   "rows": 79,
+   "measured": 56,
+   "unmeasured": 23,
+   "decided_classes": 7,
+   "false": null,
+   "construct_coverage": 95.8,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 117,
    "day": "2026-11-17",
    "sha": "5b07886",
    "subject": "todo-dashboard: the SysML v2 coverage universe and what is measurably covered",
@@ -1368,22 +1443,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 113,
-   "day": "2026-11-18",
-   "sha": "6b5144f",
-   "subject": "a5w4 merge: W5 + W8 outcomes; CU and TY1 follow-up filed; docs re-measured (5692/5692, E2E 238/238)",
-   "source": "coverage-snapshot",
-   "snapshot": "6b5144f",
-   "rows": 79,
-   "measured": 39,
-   "unmeasured": 40,
-   "decided_classes": 7,
-   "false": null,
-   "construct_coverage": 95.7,
-   "decision_coverage": 28.0
-  },
-  {
-   "idx": 114,
+   "idx": 118,
    "day": "2026-11-18",
    "sha": "2890ef2",
    "subject": "a5-cu CU1: API groups decided and GRAPH kinds rendered where a test asserts them (17 rows; API:other stays unmeasured, not shipped)",
@@ -1398,7 +1458,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 115,
+   "idx": 119,
    "day": "2026-11-19",
    "sha": "0d08856",
    "subject": "a5-cu CU2: measure the read column for the 14 textual rows from pinned probes (6 read, 8 partial)",
@@ -1413,7 +1473,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 116,
+   "idx": 120,
    "day": "2026-11-19",
    "sha": "a073ae2",
    "subject": "a5-cu CU3: normative clause list",
@@ -1428,7 +1488,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 117,
+   "idx": 121,
    "day": "2026-11-19",
    "sha": "b7cc670",
    "subject": "a5-cu-3: review fixes",
@@ -1443,7 +1503,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 118,
+   "idx": 122,
    "day": "2026-11-19",
    "sha": "7ede80b",
    "subject": "a5-cu CU3: cases get their own unmeasured row; the gaps are listed; the source is validated harder",
@@ -1458,7 +1518,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 119,
+   "idx": 123,
    "day": "2026-11-19",
    "sha": "37471ac",
    "subject": "a5-cu CU6: per-area false counts",
@@ -1473,7 +1533,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 120,
+   "idx": 124,
    "day": "2026-11-19",
    "sha": "ccb21bb",
    "subject": "a5-cu CU8: weighting policy",
@@ -1488,7 +1548,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 121,
+   "idx": 125,
    "day": "2026-11-19",
    "sha": "92c5289",
    "subject": "a5-cu CU9: trends and evidence links",
@@ -1503,7 +1563,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 122,
+   "idx": 126,
    "day": "2026-11-19",
    "sha": "3a740db",
    "subject": "a5-cu-689: review fixes (trend note, README rows, a truncated history is an error, per-area count wording)",
@@ -1518,7 +1578,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 123,
+   "idx": 127,
    "day": "2026-11-19",
    "sha": "4a9d6a3",
    "subject": "a5-cu-689: Fable review fixes (register wrong-statement defects counted, equal-size variants, n/a for an empty denominator, class names only as code or in the tag, ignored files rejected)",

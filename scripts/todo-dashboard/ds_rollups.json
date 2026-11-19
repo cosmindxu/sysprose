@@ -1680,6 +1680,42 @@
    }
   },
   {
+   "id": 350,
+   "tier": "polish",
+   "title": "Read the corpus against model-checking candidates 6\u20138 before building any of them.",
+   "section": "Behaviour checks and the palette's checks lane \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "7",
+     "text": "or the behavioural fault tree",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "is built, read `bittner-2015`, `stewart-2021`, `joshi-2006` (8), `dealfaro-henzinger-2001` (6, 7) and `peres-ghazel-2023`",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "against them and record agreements and conflicts in `docs/05`. Done: `docs/05` carries the reading per candidate. [mc-vs-bib 2026-11-18; D]",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 3,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
    "id": 321,
    "tier": "weaker",
    "title": "Abstentions left (wording and refusals) (rollup; sound, only weaker).",
@@ -1767,6 +1803,35 @@
     {
      "key": "2",
      "text": "The walks of ofKind Redefinition/Subsetting/FeatureTyping/Subclassification are shown not to depend on the walk order (bind.ts 264 was order dependent and is fixed; units-eval reads only within-family text order; the def",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 2,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 352,
+   "tier": "polish",
+   "title": "Parallel states per SysML v2 (\u00a77.18.2, \u00a78.4.14) \u2014 MANDATORY: the tool must conform to the spec.",
+   "section": "Behaviour checks and the palette's checks lane \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "1",
+     "text": "FENCE, first (wrong statements today): parse `parallel` into `isParallel`, keep the definition's name, and refuse parallel machines with `verification/behaviour-unsupported-construct` and no exhaustive claim.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2",
+     "text": "CONFORM: perform the substates of a parallel state concurrently in the interpreter and explore every interleaving the spec admits in the explorer (so `reach`/`check-behaviour` decide parallel machines), validate the no-t",
      "status": "open",
      "closed_day": "",
      "closed_by": ""
@@ -2037,11 +2102,11 @@
   }
  ],
  "totals": {
-  "open": 196,
+  "open": 201,
   "closed": 15,
   "narrowed": 4,
   "ruled": 1,
   "held": 4,
-  "subs": 220
+  "subs": 225
  }
 }

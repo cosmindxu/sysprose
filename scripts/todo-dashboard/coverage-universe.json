@@ -1,6 +1,6 @@
 {
  "meta": {
-  "generated": "2026-11-19T02:50:05+01:00",
+  "generated": "2026-11-19T02:50:31+01:00",
   "sources": [
    "scripts/todo-dashboard/coverage-universe-source.json",
    "docs/CONFORMANCE.md",
@@ -134,9 +134,13 @@
     "D-x-pow-neg"
    ],
    "defect_unattributed": [],
-   "tier_count": 0,
-   "tier_ids": [],
-   "tier_unattributed": [],
+   "tier_count": 1,
+   "tier_ids": [
+    341
+   ],
+   "tier_unattributed": [
+    341
+   ],
    "tier_touched": {},
    "register_entries": 6,
    "register_by_area": {
@@ -2544,7 +2548,7 @@
   "decision_rows": 25,
   "decision_decided": 7,
   "decision_coverage": 28.0,
-  "false": 7,
+  "false": 8,
   "false_defects": 1,
   "false_defect_ids": [
    "D-x-pow-neg"
@@ -2552,9 +2556,9 @@
   "false_by_area_defects": {
    "Constraints & parametrics": 1
   },
-  "false_tier": 0,
+  "false_tier": 1,
   "false_register_entries": 6,
-  "false_unattributed": 0,
+  "false_unattributed": 1,
   "false_by_area": {
    "API & services": 0,
    "Constraints & parametrics": 7,

@@ -3560,9 +3560,9 @@
   "open_raw": 62,
   "open": 62,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 42,
-   "POLISH": 18,
+   "FALSE": 4,
+   "WEAKER": 40,
+   "POLISH": 16,
    "HELD": 2
   },
   "new": 0,
@@ -3582,5 +3582,165 @@
   },
   "cum_new": 302,
   "cum_closed": 238
+ },
+ {
+  "idx": 112,
+  "sha": "6b5144f",
+  "when": "2026-11-18T11:37:33+01:00",
+  "day": "2026-11-18",
+  "subject": "a5w4 merge: W5 + W8 outcomes; CU and TY1 follow-up filed; docs re-measured (5692/5692, E2E 238/238)",
+  "open_raw": 73,
+  "open": 73,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 26,
+   "HELD": 2
+  },
+  "new": 11,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 1,
+   "WEAKER": 0,
+   "POLISH": 10,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 313,
+  "cum_closed": 238
+ },
+ {
+  "idx": 113,
+  "sha": "4e6789f",
+  "when": "2026-11-18T22:55:06+01:00",
+  "day": "2026-11-18",
+  "subject": "TODO: CU-1 closed; TY1 follow-up part closed by TY1A (mask-param ruling, lra TY2 follow-up recorded)",
+  "open_raw": 72,
+  "open": 72,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 25,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 313,
+  "cum_closed": 239
+ },
+ {
+  "idx": 114,
+  "sha": "15db003",
+  "when": "2026-11-18T22:56:07+01:00",
+  "day": "2026-11-18",
+  "subject": "TODO: the TY1 follow-up is closed \u2014 TY1A delivered the body-reading half; nine rows stay a sound ?",
+  "open_raw": 71,
+  "open": 71,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 24,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 313,
+  "cum_closed": 240
+ },
+ {
+  "idx": 115,
+  "sha": "66d5765",
+  "when": "2026-11-18T23:57:54+01:00",
+  "day": "2026-11-18",
+  "subject": "TODO: six items from the model-checking vs SystemsPerspectiveBib comparison",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 41,
+   "POLISH": 29,
+   "HELD": 2
+  },
+  "new": 6,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 1,
+   "POLISH": 5,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 319,
+  "cum_closed": 240
+ },
+ {
+  "idx": 116,
+  "sha": "c0cd8f7",
+  "when": "2026-11-19T00:02:56+01:00",
+  "day": "2026-11-19",
+  "subject": "TODO: parallel states are a mandatory spec-conformance item; the spec's OnOff1 example does not parse",
+  "open_raw": 78,
+  "open": 78,
+  "open_by": {
+   "FALSE": 1,
+   "WEAKER": 43,
+   "POLISH": 32,
+   "HELD": 2
+  },
+  "new": 2,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 2,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 321,
+  "cum_closed": 241
  }
 ]
