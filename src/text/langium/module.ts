@@ -71,7 +71,7 @@ class SysmlLexer extends DefaultLexer {
 
   /**
    * A `/* … *\/` comment in the MIDDLE of a declaration, directly before its
-   * `{` or `;` (`state def M /* c *\/ { … }`, `part def A :> B /* c *\/;`), is
+   * `{` (`state def M /* c *\/ { … }`), is
    * not a free-standing element: left in the stream it ended the declaration at
    * its name and the braced body fell to the enclosing body's trailing
    * expression slot, so the body vanished with no diagnostic. Such a comment is
@@ -88,8 +88,7 @@ class SysmlLexer extends DefaultLexer {
     const drop = new Set<number>();
     for (let i = 1; i < tokens.length - 1; i++) {
       if (tokens[i].tokenType !== ml) continue;
-      const nextType = tokens[i + 1].tokenType;
-      if (nextType !== lc && nextType !== semi) continue;
+      if (tokens[i + 1].tokenType !== lc) continue;
       let start = i;
       while (start > 0) {
         const t = tokens[start - 1].tokenType;

@@ -906,8 +906,9 @@ describe('a block comment between a declaration header and its body', () => {
     expect(names(src)).toContain(inner);
   });
 
-  it('keeps the next element after a comment before `;`', () => {
-    expect(names('package P { part def A /* c */ ; part def Z; }')).toEqual(expect.arrayContaining(['A', 'Z']));
+  it('leaves a comment before `;` as it was: a loud parse error', () => {
+    const { diagnostics } = parseModel('package P { part def A /* c */ ; part def Z; }');
+    expect(diagnostics.map((d) => d.code)).toContain('parse/mismatched-token');
   });
 
   it('leaves doc / comment bodies and free-standing comments as they were', () => {
