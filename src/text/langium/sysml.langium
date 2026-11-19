@@ -326,8 +326,11 @@ LoopStmt infers LoopStmt:
 // `if c { … } (else { … })?`  (member-level IfActionUsage)
 IfStmt infers IfStmt:
     (succession=('first' | 'then'))?
-    'if' cond=Expression (body=Body | 'then' thenTarget=QualifiedName ';'? | target=QualifiedName ';'?)
-    ('else' (elseBody=Body | elseTarget=QualifiedName ';'?))?;
+    // `if c then X;` (SysML v2 §7.18.2, a guarded succession): `then` + a mandatory `;` and NO `else`, so a conditional
+    // EXPRESSION (`if c then a else b`, a calc body) is never read as this statement.
+    'if' cond=Expression ( 'then' thenTarget=QualifiedName ';'
+      | (body=Body | target=QualifiedName ';'?)
+        ('else' (elseBody=Body | elseTarget=QualifiedName ';'?))? );
 
 // ─────────────────────── requirement clauses ─────────────────────────
 

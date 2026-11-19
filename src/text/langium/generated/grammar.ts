@@ -4408,18 +4408,6 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
             "$type": "Alternatives",
             "elements": [
               {
-                "$type": "Assignment",
-                "feature": "body",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@47"
-                  },
-                  "arguments": []
-                }
-              },
-              {
                 "$type": "Group",
                 "elements": [
                   {
@@ -4440,8 +4428,7 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                   },
                   {
                     "$type": "Keyword",
-                    "value": ";",
-                    "cardinality": "?"
+                    "value": ";"
                   }
                 ]
               },
@@ -4449,74 +4436,96 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                 "$type": "Group",
                 "elements": [
                   {
-                    "$type": "Assignment",
-                    "feature": "target",
-                    "operator": "=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@75"
-                      },
-                      "arguments": []
-                    }
-                  },
-                  {
-                    "$type": "Keyword",
-                    "value": ";",
-                    "cardinality": "?"
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "else"
-              },
-              {
-                "$type": "Alternatives",
-                "elements": [
-                  {
-                    "$type": "Assignment",
-                    "feature": "elseBody",
-                    "operator": "=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@47"
-                      },
-                      "arguments": []
-                    }
-                  },
-                  {
-                    "$type": "Group",
+                    "$type": "Alternatives",
                     "elements": [
                       {
                         "$type": "Assignment",
-                        "feature": "elseTarget",
+                        "feature": "body",
                         "operator": "=",
                         "terminal": {
                           "$type": "RuleCall",
                           "rule": {
-                            "$ref": "#/rules@75"
+                            "$ref": "#/rules@47"
                           },
                           "arguments": []
                         }
                       },
                       {
-                        "$type": "Keyword",
-                        "value": ";",
-                        "cardinality": "?"
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Assignment",
+                            "feature": "target",
+                            "operator": "=",
+                            "terminal": {
+                              "$type": "RuleCall",
+                              "rule": {
+                                "$ref": "#/rules@75"
+                              },
+                              "arguments": []
+                            }
+                          },
+                          {
+                            "$type": "Keyword",
+                            "value": ";",
+                            "cardinality": "?"
+                          }
+                        ]
                       }
                     ]
+                  },
+                  {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "else"
+                      },
+                      {
+                        "$type": "Alternatives",
+                        "elements": [
+                          {
+                            "$type": "Assignment",
+                            "feature": "elseBody",
+                            "operator": "=",
+                            "terminal": {
+                              "$type": "RuleCall",
+                              "rule": {
+                                "$ref": "#/rules@47"
+                              },
+                              "arguments": []
+                            }
+                          },
+                          {
+                            "$type": "Group",
+                            "elements": [
+                              {
+                                "$type": "Assignment",
+                                "feature": "elseTarget",
+                                "operator": "=",
+                                "terminal": {
+                                  "$type": "RuleCall",
+                                  "rule": {
+                                    "$ref": "#/rules@75"
+                                  },
+                                  "arguments": []
+                                }
+                              },
+                              {
+                                "$type": "Keyword",
+                                "value": ";",
+                                "cardinality": "?"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ],
+                    "cardinality": "?"
                   }
                 ]
               }
-            ],
-            "cardinality": "?"
+            ]
           }
         ]
       },
