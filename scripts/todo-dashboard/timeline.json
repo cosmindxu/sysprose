@@ -3784,9 +3784,9 @@
   "open_raw": 82,
   "open": 82,
   "open_by": {
-   "FALSE": 2,
-   "WEAKER": 43,
-   "POLISH": 35,
+   "FALSE": 6,
+   "WEAKER": 41,
+   "POLISH": 33,
    "HELD": 2
   },
   "new": 4,
@@ -3806,5 +3806,37 @@
   },
   "cum_new": 325,
   "cum_closed": 241
+ },
+ {
+  "idx": 119,
+  "sha": "90a70fa",
+  "when": "2026-11-19T11:39:37+01:00",
+  "day": "2026-11-19",
+  "subject": "merge fence-comment: a comment before a body no longer drops it; parallel after a non-state keyword is an error",
+  "open_raw": 81,
+  "open": 81,
+  "open_by": {
+   "FALSE": 1,
+   "WEAKER": 43,
+   "POLISH": 35,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 1,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 325,
+  "cum_closed": 242
  }
 ]
