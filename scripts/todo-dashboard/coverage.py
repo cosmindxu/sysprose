@@ -216,15 +216,47 @@ def load_false_tier():
     return [e for e in entries if isinstance(e, dict) and e.get('severity') == 'FALSE']
 
 
+DEFECTS = os.path.join(REPO, 'docs', 'constraint-class-defects.json')
+
+
+def load_register_defects(rows):
+    """The class register's open wrong-statement defects, attributed to their classes' area.
+
+    `docs/constraint-class-defects.json` records the defects a class is capped by. One of
+    kind `wrong-statement` is an open wrong answer even when the dashboard classes its TODO
+    item below FALSE, and the class's "rows against" cell does not count it (it counts
+    differential-table rows). It is a third input beside the FALSE tier and the register's
+    entries, never merged into either. A missing or malformed file is a hard error.
+    """
+    if not os.path.exists(DEFECTS):
+        raise SystemExit(f'coverage.load_register_defects: {DEFECTS} not found '
+                         '(register wrong-statement defects would silently count 0)')
+    try:
+        defects = json.load(open(DEFECTS, encoding='utf-8')).get('defects')
+    except Exception as e:
+        raise SystemExit(f'coverage.load_register_defects: cannot read {DEFECTS}: {e}')
+    if not isinstance(defects, list):
+        raise SystemExit(f'coverage.load_register_defects: {DEFECTS} has no defects list')
+    area_of_class = {r['name']: r['area'] for r in rows if r['kind'] == 'CON'}
+    out = []
+    for d in defects:
+        if d.get('kind') != 'wrong-statement':
+            continue
+        areas = sorted({area_of_class[c] for c in d.get('classes', []) if c in area_of_class})
+        out.append({'id': d['id'], 'areas': areas})
+    return out
+
+
 def areas_of_finding(finding, rows):
     """The coverage areas whose rows a FALSE-tier finding names.
 
     A row id (`TXT:parts-attributes`, `API:commits`) is distinctive; a CON class name
-    (`bind-equality`, `fence/unsupported-operator`) is matched on word boundaries so a
-    short class name does not match inside an unrelated word. A finding that names no row
+    (`bind-equality`, `fence/unsupported-operator`) is matched only as code in the title or
+    as a word in the tag, so a short class name in passing prose does not attribute it. A finding that names no row
     is reported unattributed by its caller, never dropped into an area.
     """
-    text = f"{finding.get('title', '')} {finding.get('tag', '')}"
+    title, tag = finding.get('title', ''), finding.get('tag', '')
+    text = f"{title} {tag}"
     areas = set()
     for r in rows:
         names = [r['id']]
@@ -234,10 +266,13 @@ def areas_of_finding(finding, rows):
             if not n:
                 continue
             if ':' in n:
-                pat = re.escape(n)
-            else:
-                pat = r'(?<![A-Za-z0-9_/:-])' + re.escape(n) + r'(?![A-Za-z0-9_/:-])'
-            if re.search(pat, text):
+                if re.search(re.escape(n), text):
+                    areas.add(r['area'])
+                continue
+            # A CON class name is a common word (`units`, `ground`, `bool`): it names the class
+            # only when written as code in the title or as a word in the tag, never in prose.
+            word = r'(?<![A-Za-z0-9_/:-])' + re.escape(n) + r'(?![A-Za-z0-9_/:-])'
+            if re.search('`' + re.escape(n) + '`', title) or re.search(word, tag):
                 areas.add(r['area'])
     return areas
 
@@ -263,6 +298,11 @@ def apply_false_counts(rows):
         if r.get('rows_against'):
             register_by_area[r['area']] = register_by_area.get(r['area'], 0) + r['rows_against']
             register_by_class[r['name']] = r['rows_against']
+    defects = load_register_defects(rows)
+    defects_by_area = {}
+    for d in defects:
+        for a in d['areas']:
+            defects_by_area[a] = defects_by_area.get(a, 0) + 1
     touched, unattributed = {}, []
     for f in findings:
         areas = areas_of_finding(f, rows)
@@ -275,12 +315,16 @@ def apply_false_counts(rows):
         tier_by_area[a] = tier_by_area.get(a, 0) + n
     # Sorted, because `areas_of_finding` returns a set: an unordered key order here would
     # make the written JSON depend on PYTHONHASHSEED and a regenerate-and-diff guard flaky.
-    by_area = {a: tier_by_area.get(a, 0) + register_by_area.get(a, 0)
-               for a in sorted(set(tier_by_area) | set(register_by_area))}
+    by_area = {a: tier_by_area.get(a, 0) + register_by_area.get(a, 0) + defects_by_area.get(a, 0)
+               for a in sorted(set(tier_by_area) | set(register_by_area) | set(defects_by_area))}
     return {
         'by_area': by_area,
         'by_area_tier': tier_by_area,
         'by_area_register': register_by_area,
+        'by_area_defects': defects_by_area,
+        'defect_count': len(defects),
+        'defect_ids': [d['id'] for d in defects],
+        'defect_unattributed': [d['id'] for d in defects if not d['areas']],
         'tier_count': len(findings),
         'tier_ids': [f.get('id') for f in findings],
         'tier_unattributed': unattributed,
@@ -642,8 +686,10 @@ def apply_evidence_links(rows):
     A measured row whose evidence names no file, or names one that no longer exists, is a
     hard error: the page must not carry a state with a dead or invented link, and a renamed
     probe or spec has to fail the build rather than silently leave the claim unlinked. The
-    href is relative to this script's directory, where the page is written, so the links
-    work in a checkout and in the self-contained dashboard.
+    href is relative to this script's directory, where the page is written: the links to
+    files under this folder (the probes) also work when the page is served alone, the
+    links into `test/` and `docs/` resolve in a full checkout only. A file that exists but
+    is git-ignored is rejected: it would not ship, so the link would be dead for everyone else.
     """
     for r in rows:
         r['evidence_links'] = []
@@ -656,6 +702,8 @@ def apply_evidence_links(rows):
             full = os.path.join(REPO, p)
             if not os.path.exists(full):
                 raise SystemExit(f'coverage.apply_evidence_links: {r["id"]} names a missing file: {p}')
+            if subprocess.run(['git', '-C', REPO, 'check-ignore', '-q', p]).returncode == 0:
+                raise SystemExit(f'coverage.apply_evidence_links: {r["id"]} names a git-ignored file: {p}')
             r['evidence_links'].append({'path': p, 'href': os.path.relpath(full, HERE).replace(os.sep, '/')})
 
 
@@ -663,7 +711,7 @@ COVERED_STATES = ('read', 'parsed', 'decided', 'rendered')
 
 
 def pct(n, d):
-    return round(100 * n / d, 1) if d else 0.0
+    return round(100 * n / d, 1) if d else None   # an empty measurement is n/a, never 0.0%
 
 
 def metrics(data):
@@ -704,7 +752,11 @@ def metrics(data):
         # finding once, plus the class register's per-class row-against entries (the same
         # differential row is charged to every class it rests on, so this is not a count of
         # distinct findings; the page says so).
-        'false': false_meta.get('tier_count', 0) + false_meta.get('register_entries', 0),
+        'false': (false_meta.get('tier_count', 0) + false_meta.get('register_entries', 0)
+                  + false_meta.get('defect_count', 0)),
+        'false_defects': false_meta.get('defect_count', 0),
+        'false_defect_ids': false_meta.get('defect_ids', []),
+        'false_by_area_defects': false_meta.get('by_area_defects', {}),
         'false_tier': false_meta.get('tier_count', 0),
         'false_register_entries': false_meta.get('register_entries', 0),
         'false_unattributed': len(false_meta.get('tier_unattributed', [])),
@@ -937,18 +989,23 @@ def write_html(data, m, history):
                      'but gives no row of its own, so they carry no state here; they are listed, not hidden:'
                      f'<ul>{items}</ul></div>')
     body_rows = []
+    def pc(v):
+        return 'n/a' if v is None else f'{v}%'
     false_by_area = m.get('false_by_area', {})
     tier_by_area = m.get('false_by_area_tier', {})
     register_by_area = m.get('false_by_area_register', {})
+    defects_by_area = m.get('false_by_area_defects', {})
     for area, rs in by_area.items():
         measured = sum(1 for r in rs if r['state'] != 'unmeasured')
         n_tier = tier_by_area.get(area, 0)
         n_register = register_by_area.get(area, 0)
+        n_defect = defects_by_area.get(area, 0)
         body_rows.append(f'<tr class="area"><td colspan="6"><b>{area}</b> — {len(rs)} rows, '
                          f'{measured} with measured evidence, {sum(1 for r in rs if r["state"] == "unmeasured")} unmeasured, '
                          f'<b>soundness {false_by_area.get(area, 0)}</b> ({n_tier} FALSE-tier '
                          f'finding{"" if n_tier == 1 else "s"} + {n_register} class-register '
-                         f'row-against entr{"y" if n_register == 1 else "ies"})</td></tr>')
+                         f'row-against entr{"y" if n_register == 1 else "ies"} + {n_defect} register wrong-statement '
+                         f'defect{"" if n_defect == 1 else "s"})</td></tr>')
         for r in rs:
             st = pill.get(r['state'], r['state'])
             ev = r['evidence'] or ''
@@ -990,7 +1047,10 @@ def write_html(data, m, history):
                   'its hand-computed answer, and its column is per class cell: the census charges '
                   'one row against to every class the row rests on, so a row resting on three '
                   'classes is three entries. The register half is therefore an entry count, not a '
-                  'count of distinct findings. '
+                  'count of distinct findings. The register\'s own open wrong-statement defects '
+                  '(<i>docs/constraint-class-defects.json</i>, kind <i>wrong-statement</i>) are a third '
+                  f'input, counted once in the area of the classes they cap ({m["false_defects"]} today: '
+                  f'{", ".join(m["false_defect_ids"]) or "none"}). '
                   f'{false_src[0].upper()}{false_src[1:]}; the register\'s entries are {reg_parts}. '
                   'Soundness is shown beside coverage and never folded into a percentage. ')
     html = f"""<!doctype html>
@@ -1001,7 +1061,7 @@ h1{{font-size:26px;margin:0 0 4px}} .lead{{color:#6e6a63;margin:0 0 18px}}
 .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:0 0 16px}}
 .card{{background:#fff;border:1px solid #e8e5dc;border-radius:8px;padding:14px 16px}}
 .card .k{{color:#6e6a63;font-size:12.5px}} .card .v{{font-size:26px;font-weight:600;margin-top:2px}}
-.card .v.eq{{font-size:20px;font-weight:500}} .card .vs{{font-size:12.5px;font-weight:500;color:#6e6a63}}
+.card .v.eq{{font-weight:600}} .card .vs{{font-size:12.5px;font-weight:500;color:#6e6a63}}
 table{{border-collapse:collapse;width:100%}} th,td{{text-align:left;padding:5px 8px;border-bottom:1px solid #f0ede5;vertical-align:top}}
 th{{font-size:12.5px;color:#6e6a63;font-weight:600}} td.n,th.n{{text-align:right;white-space:nowrap}}
 tr.area td{{background:#fcfbf8;padding-top:10px;border-bottom:1px solid #e8e5dc}}
@@ -1025,15 +1085,15 @@ The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> me
 <b>{m['unmeasured']}</b> unmeasured. <a href="standalone.html">← back to the dashboard</a></p>
 <div class="cards">
   <div class="card"><div class="k">Construct coverage — two weights</div>
-    <div class="v">{m['construct_weighted']}% <span class="vs">weighted</span></div>
-    <div class="v eq">{m['construct_equal']}% <span class="vs">equal</span></div>
-    <div class="k">read / parsed / decided / rendered over the {m['construct_measured_rows']} measured rows. Weighted uses each row's named weight (corpus usage / counted rows, floor 1: {m['construct_weighted_num']} of {m['construct_weighted_den']}); equal counts every measured row once ({m['construct_covered_rows']} of {m['construct_measured_rows']}).</div></div>
+    <div class="v">{pc(m['construct_weighted'])} <span class="vs">weighted</span></div>
+    <div class="v eq">{pc(m['construct_equal'])} <span class="vs">equal</span></div>
+    <div class="k">read / parsed / decided / rendered over the {m['construct_measured_rows']} measured rows. Weighted uses each row's named weight (corpus usage / counted rows, floor 1: {m['construct_weighted_num']} of {m['construct_weighted_den']}); equal counts every measured row once ({m['construct_covered_rows']} of {m['construct_measured_rows']}). The weighted total adds corpus models (TXT rows), counted worklist rows (CON rows) and floors of 1 (API, GRAPH), so it mixes units; the equal figure counts rows only.</div></div>
   <div class="card"><div class="k">Decision coverage (constraint lane) — two weights</div>
-    <div class="v">{m['decision_weighted']}% <span class="vs">weighted</span></div>
-    <div class="v eq">{m['decision_equal']}% <span class="vs">equal</span></div>
+    <div class="v">{pc(m['decision_weighted'])} <span class="vs">weighted</span></div>
+    <div class="v eq">{pc(m['decision_equal'])} <span class="vs">equal</span></div>
     <div class="k">decided of the {m['decision_rows']} measured constraint classes (level ≥ tested). Weighted uses the register's counted rows ({m['decision_weighted_num']} of {m['decision_weighted_den']}); equal counts every class once ({m['decision_decided']} of {m['decision_rows']}).</div></div>
   <div class="card"><div class="k">Soundness signals (not folded in)</div><div class="v">{m['false']}</div>
-    <div class="k">soundness not folded in: {false_src}, plus {m['false_register_entries']} per-class row-against entries in the class register (a differential-table row against is charged once for every class cell it rests on, so this half counts entries, not distinct findings); a FALSE-tier finding naming rows in two areas counts in both headers but once here; shown beside each area's row count, never in a percentage</div></div>
+    <div class="k">{m['false_tier']} FALSE-tier finding(s) + {m['false_register_entries']} register row-against entries + {m['false_defects']} register wrong-statement defect(s) = {m['false']}; entries are not distinct findings. Soundness not folded in: {false_src}, plus {m['false_register_entries']} per-class row-against entries in the class register (a differential-table row against is charged once for every class cell it rests on, so this half counts entries, not distinct findings); a FALSE-tier finding naming rows in two areas counts in both headers but once here; shown beside each area's row count, never in a percentage</div></div>
   <div class="card"><div class="k">Unmeasured</div><div class="v">{m['unmeasured']}</div>
     <div class="k">rows with no mechanical evidence yet (pinned probes fill them as they land)</div></div>
 </div>

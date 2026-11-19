@@ -1,6 +1,6 @@
 {
  "meta": {
-  "generated": "2026-11-19T02:43:52+01:00",
+  "generated": "2026-11-19T02:48:15+01:00",
   "sources": [
    "scripts/todo-dashboard/coverage-universe-source.json",
    "docs/CONFORMANCE.md",
@@ -111,7 +111,7 @@
   "false": {
    "by_area": {
     "API & services": 0,
-    "Constraints & parametrics": 6,
+    "Constraints & parametrics": 7,
     "Graphical notation": 0,
     "KerML kernel": 0,
     "Textual notation": 0
@@ -126,6 +126,14 @@
    "by_area_register": {
     "Constraints & parametrics": 6
    },
+   "by_area_defects": {
+    "Constraints & parametrics": 1
+   },
+   "defect_count": 1,
+   "defect_ids": [
+    "D-x-pow-neg"
+   ],
+   "defect_unattributed": [],
    "tier_count": 0,
    "tier_ids": [],
    "tier_unattributed": [],
@@ -2536,13 +2544,20 @@
   "decision_rows": 25,
   "decision_decided": 7,
   "decision_coverage": 28.0,
-  "false": 6,
+  "false": 7,
+  "false_defects": 1,
+  "false_defect_ids": [
+   "D-x-pow-neg"
+  ],
+  "false_by_area_defects": {
+   "Constraints & parametrics": 1
+  },
   "false_tier": 0,
   "false_register_entries": 6,
   "false_unattributed": 0,
   "false_by_area": {
    "API & services": 0,
-   "Constraints & parametrics": 6,
+   "Constraints & parametrics": 7,
    "Graphical notation": 0,
    "KerML kernel": 0,
    "Textual notation": 0
