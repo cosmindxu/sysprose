@@ -1726,6 +1726,21 @@
    "false": 8,
    "construct_coverage": 73.5,
    "decision_coverage": 28.0
+  },
+  {
+   "idx": 137,
+   "day": "2026-11-19",
+   "sha": "1326425",
+   "subject": "todo-dashboard: CU-7 is not a FALSE-tier item (override) and the datasets are refreshed",
+   "source": "coverage-snapshot",
+   "snapshot": "1326425",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 7,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
   }
  ]
 }
