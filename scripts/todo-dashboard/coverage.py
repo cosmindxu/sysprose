@@ -39,9 +39,20 @@ States are only set where a document *measures* it:
     whose endpoints this build does not ship stays `unmeasured` (`measure_known` says why).
   - KERML rows: `unmeasured` (no test pins the metaclass itself).
 
-The two headers:
-  construct coverage = corpus-weighted share of rows whose state is read/parsed/decided/rendered
+The two headers, each reported under two weightings (CU-8):
+  construct coverage = share of measured rows whose state is read/parsed/decided/rendered
   decision coverage  = share of measured CON rows the solver decides (level >= tested)
+
+Each header shows a corpus/generator-weighted variant and an equal-weight variant, so no
+single percentage hides the choice. The weighted variant counts each row's own weight:
+corpus usage for a TXT row (the corpus models that use the construct), the class
+register's `Rows` column for a CON row, and a floor of 1 where no count exists (API and
+GRAPH rows have none, and a TXT construct no corpus model uses still counts once). The
+register's `Rows` is a worklist row of the corpus, not a generator model count: no
+per-class generator-sweep count is recorded anywhere in this repository, so the corpus
+row count stands in for it. The equal-weight variant counts every measured row once.
+Each row's weight and its source are named in the Weight column; `weight` itself is left
+exactly as the corpus and the register set it.
 
 They are deliberately NOT a single "percent of all SysML": the denominators are stated on
 the page (rows defined, rows measured, rows unmeasured) and soundness is reported beside
@@ -241,12 +252,14 @@ def apply_false_counts(rows):
         if not areas:
             unattributed.append(f.get('id'))
             continue
-        for a in areas:
+        for a in sorted(areas):
             touched[a] = touched.get(a, 0) + 1
     for a, n in touched.items():
         tier_by_area[a] = tier_by_area.get(a, 0) + n
+    # Sorted, because `areas_of_finding` returns a set: an unordered key order here would
+    # make the written JSON depend on PYTHONHASHSEED and a regenerate-and-diff guard flaky.
     by_area = {a: tier_by_area.get(a, 0) + register_by_area.get(a, 0)
-               for a in set(tier_by_area) | set(register_by_area)}
+               for a in sorted(set(tier_by_area) | set(register_by_area))}
     return {
         'by_area': by_area,
         'by_area_tier': tier_by_area,
@@ -259,6 +272,42 @@ def apply_false_counts(rows):
         'register_by_area': register_by_area,
         'register_by_class': register_by_class,
     }
+
+
+# What each row's weight counts. TXT is corpus usage (of the 637-model corpus); CON is
+# the class register's counted worklist rows; API and GRAPH rows have no corpus or
+# generator count, so they carry the floor of 1, the same weight as equal-weight.
+WEIGHT_SOURCE = {'TXT': 'corpus usage', 'CON': 'counted rows', 'API': 'equal',
+                 'GRAPH': 'equal', 'KERML': 'equal'}
+
+
+def weight_of(row):
+    """The weight a measured row carries in the corpus/generator-weighted variant.
+
+    A zero count keeps a floor of 1, as `max(1, weight)` did before CU-8, so a measured
+    row never vanishes from the denominator (a TXT construct no corpus model uses counts
+    once, not zero).
+    """
+    return max(1, row['weight'])
+
+
+def apply_weights(rows):
+    """Name each row's weight and its source, for the Weight column and the JSON.
+
+    `weight` is left exactly as the corpus and the class register set it. `weight_used`
+    is the weight the weighted variant counts (the floor at 1) and `weight_source` says
+    what that weight counts. An unmeasured row is in no denominator, so it has neither.
+    """
+    for r in rows:
+        if r['state'] == 'unmeasured':
+            r['weight_used'] = None
+            r['weight_source'] = 'unmeasured'
+            continue
+        r['weight_used'] = weight_of(r)
+        if r['kind'] == 'TXT' and r['weight'] == 0:
+            r['weight_source'] = 'floor (no corpus use)'
+        else:
+            r['weight_source'] = WEIGHT_SOURCE.get(r['kind'], 'equal')
 
 
 def build_universe():
@@ -350,6 +399,7 @@ def build_universe():
             'rows': rows}
     measure_txt(rows)
     measure_known(rows)
+    apply_weights(rows)
     data['meta']['false'] = apply_false_counts(rows)
     return data
 
@@ -547,22 +597,47 @@ def measure_known(rows):
         print(f'coverage: no asserting test yet, left unmeasured: {unmeasured}')
 
 
+COVERED_STATES = ('read', 'parsed', 'decided', 'rendered')
+
+
+def pct(n, d):
+    return round(100 * n / d, 1) if d else 0.0
+
+
 def metrics(data):
     rows = data['rows']
     measured = [r for r in rows if r['state'] != 'unmeasured']
-    w_measured = sum(max(1, r['weight']) for r in measured)
-    w_cov = sum(max(1, r['weight']) for r in measured if r['state'] in ('read', 'parsed', 'decided', 'rendered'))
+    covered = [r for r in measured if r['state'] in COVERED_STATES]
+    w_measured = sum(r['weight_used'] for r in measured)
+    w_cov = sum(r['weight_used'] for r in covered)
     con = [r for r in rows if r['kind'] == 'CON' and r['state'] != 'unmeasured']
     con_decided = [r for r in con if r['state'] == 'decided']
+    w_con = sum(r['weight_used'] for r in con)
+    w_con_decided = sum(r['weight_used'] for r in con_decided)
     false_meta = data['meta'].get('false', {})
+    # CU-8: the two headers are each reported under both weightings. The weighted
+    # variant uses each row's named weight (corpus usage / counted rows / floor 1);
+    # the equal variant counts every measured row once. The old key names keep their
+    # old meaning (`construct_coverage` was weighted, `decision_coverage` equal) so
+    # the dataset's existing figures do not move.
     return {
         'rows': len(rows),
         'measured': len(measured),
         'unmeasured': len(rows) - len(measured),
-        'construct_coverage': round(100 * w_cov / w_measured, 1) if w_measured else 0.0,
+        'construct_weighted': pct(w_cov, w_measured),
+        'construct_equal': pct(len(covered), len(measured)),
+        'construct_covered_rows': len(covered),
+        'construct_measured_rows': len(measured),
+        'construct_weighted_num': w_cov,
+        'construct_weighted_den': w_measured,
+        'decision_weighted': pct(w_con_decided, w_con),
+        'decision_equal': pct(len(con_decided), len(con)),
+        'decision_weighted_num': w_con_decided,
+        'decision_weighted_den': w_con,
+        'construct_coverage': pct(w_cov, w_measured),
         'decision_rows': len(con),
         'decision_decided': len(con_decided),
-        'decision_coverage': round(100 * len(con_decided) / len(con), 1) if con else 0.0,
+        'decision_coverage': pct(len(con_decided), len(con)),
         # Soundness, reported beside coverage and never in its percentages: each FALSE-tier
         # finding once, plus the class register's per-class row-against entries (the same
         # differential row is charged to every class it rests on, so this is not a count of
@@ -617,9 +692,13 @@ def write_html(data, m):
                 cl = '<span class="cno">class register</span>'
             else:
                 cl = '<span class="cno">no normative clause</span>'
+            if r['weight_used'] is None:
+                wt = '—'
+            else:
+                wt = f'{r["weight_used"]} <span class="sub">· {r["weight_source"]}</span>'
             body_rows.append(f'<tr><td class="n">{r["kind"]}</td><td>{r["name"]}</td><td class="cl">{cl}</td>'
                              f'<td><span class="pill {r["state"]}">{st}</span></td>'
-                             f'<td class="n">{r["weight"] or "—"}</td><td class="ev">{ev}</td></tr>')
+                             f'<td class="n">{wt}</td><td class="ev">{ev}</td></tr>')
     false_src = (f"{m['false_tier']} open FALSE-tier finding{'' if m['false_tier'] == 1 else 's'} in the dashboard"
                  if m['false_tier'] else "the dashboard's FALSE tier is empty today")
     if m['false_unattributed']:
@@ -646,6 +725,7 @@ h1{{font-size:26px;margin:0 0 4px}} .lead{{color:#6e6a63;margin:0 0 18px}}
 .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:0 0 16px}}
 .card{{background:#fff;border:1px solid #e8e5dc;border-radius:8px;padding:14px 16px}}
 .card .k{{color:#6e6a63;font-size:12.5px}} .card .v{{font-size:26px;font-weight:600;margin-top:2px}}
+.card .v.eq{{font-size:20px;font-weight:500}} .card .vs{{font-size:12.5px;font-weight:500;color:#6e6a63}}
 table{{border-collapse:collapse;width:100%}} th,td{{text-align:left;padding:5px 8px;border-bottom:1px solid #f0ede5;vertical-align:top}}
 th{{font-size:12.5px;color:#6e6a63;font-weight:600}} td.n,th.n{{text-align:right;white-space:nowrap}}
 tr.area td{{background:#fcfbf8;padding-top:10px;border-bottom:1px solid #e8e5dc}}
@@ -663,17 +743,21 @@ tr.area td{{background:#fcfbf8;padding-top:10px;border-bottom:1px solid #e8e5dc}
 The denominators are stated: {m['rows']} rows defined, <b>{m['measured']}</b> measured,
 <b>{m['unmeasured']}</b> unmeasured. <a href="standalone.html">← back to the dashboard</a></p>
 <div class="cards">
-  <div class="card"><div class="k">Construct coverage (weighted)</div><div class="v">{m['construct_coverage']}%</div>
-    <div class="k">of the measured rows, corpus-weighted: read / parsed / decided / rendered over measured</div></div>
-  <div class="card"><div class="k">Decision coverage (constraint lane)</div><div class="v">{m['decision_coverage']}%</div>
-    <div class="k">{m['decision_decided']} of {m['decision_rows']} measured constraint classes are decided (level ≥ tested)</div></div>
+  <div class="card"><div class="k">Construct coverage — two weights</div>
+    <div class="v">{m['construct_weighted']}% <span class="vs">weighted</span></div>
+    <div class="v eq">{m['construct_equal']}% <span class="vs">equal</span></div>
+    <div class="k">read / parsed / decided / rendered over the {m['construct_measured_rows']} measured rows. Weighted uses each row's named weight (corpus usage / counted rows, floor 1: {m['construct_weighted_num']} of {m['construct_weighted_den']}); equal counts every measured row once ({m['construct_covered_rows']} of {m['construct_measured_rows']}).</div></div>
+  <div class="card"><div class="k">Decision coverage (constraint lane) — two weights</div>
+    <div class="v">{m['decision_weighted']}% <span class="vs">weighted</span></div>
+    <div class="v eq">{m['decision_equal']}% <span class="vs">equal</span></div>
+    <div class="k">decided of the {m['decision_rows']} measured constraint classes (level ≥ tested). Weighted uses the register's counted rows ({m['decision_weighted_num']} of {m['decision_weighted_den']}); equal counts every class once ({m['decision_decided']} of {m['decision_rows']}).</div></div>
   <div class="card"><div class="k">Soundness signals (not folded in)</div><div class="v">{m['false']}</div>
     <div class="k">soundness not folded in: {false_src}, plus {m['false_register_entries']} per-class row-against entries in the class register (a differential-table row against is charged once for every class cell it rests on, so this half counts entries, not distinct findings); shown beside each area's row count, never in a percentage</div></div>
   <div class="card"><div class="k">Unmeasured</div><div class="v">{m['unmeasured']}</div>
     <div class="k">rows with no mechanical evidence yet (pinned probes fill them as they land)</div></div>
 </div>
 <table>
-<thead><tr><th class="n">Kind</th><th>Construct / class</th><th>Clause</th><th>State</th><th class="n">Weight</th><th>Evidence</th></tr></thead>
+<thead><tr><th class="n">Kind</th><th>Construct / class</th><th>Clause</th><th>State</th><th class="n">Weight (source)</th><th>Evidence</th></tr></thead>
 <tbody>{''.join(body_rows)}</tbody></table>
 <div class="note"><b>How this was computed.</b> Rows come from
 <i>scripts/todo-dashboard/coverage-universe-source.json</i>, the normative clause inventory: KerML 8.3
@@ -692,8 +776,15 @@ row is <i>decided</i> when its class level is
 <i>differential-tested</i> or <i>tested</i>, <i>partial</i> when <i>experimental</i>, <i>refused</i> when
 <i>fenced</i>/<i>unpinned</i>; a GRAPH row is <i>rendered</i> where an E2E spec asserts the view kind's
 panel (<i>test/e2e/</i>); an API row is <i>decided</i> where a conformance test asserts the group's
-endpoints (<i>test/conformance/</i>, CONFORMANCE §3–4). Weights are corpus usage (TXT) or counted rows
-(CON). {false_rule}KERML rows stay unmeasured here: no test pins the metaclass itself, and an API group whose
+endpoints (<i>test/conformance/</i>, CONFORMANCE §3–4). <b>Weights are named per row.</b> The Weight
+column carries the weight the weighted variant counts and its source: a TXT row is weighted by
+<i>corpus usage</i> (the models of the 637-model corpus that use the construct; a construct no corpus
+model uses keeps a floor of 1, so a measured row never vanishes from the denominator); a CON row is
+weighted by the class register's <i>Rows</i> column (<i>counted rows</i> — a worklist row of the
+corpus; no per-class generator model count is recorded in this repository, so the corpus row count
+stands in for it); an API or GRAPH row has no such count, so it counts 1. Both headers report two
+variants so no single percentage hides the choice: <i>weighted</i> uses each row's named weight, and
+<i>equal</i> counts every measured row once. {false_rule}KERML rows stay unmeasured here: no test pins the metaclass itself, and an API group whose
 endpoints this build does not ship stays unmeasured too (the <i>Other</i> group: POST /transform and
 /validate). The app's 17 views include the 11 standard view rows here; the four annotation primitives the
 earlier 02 §2.2 extraction dropped now have rows of their own. Pinned probes fill the remaining unmeasured
@@ -711,8 +802,9 @@ def build():
     write_html(data, data['metrics'])
     m = data['metrics']
     print(f'universe: {m["rows"]} rows in {len(data["meta"]["areas"])} areas — measured {m["measured"]}, '
-          f'unmeasured {m["unmeasured"]}; construct coverage {m["construct_coverage"]}%, '
-          f'decision coverage {m["decision_coverage"]}% ({m["decision_decided"]}/{m["decision_rows"]} constraint classes)')
+          f'unmeasured {m["unmeasured"]}; construct coverage {m["construct_weighted"]}% weighted / '
+          f'{m["construct_equal"]}% equal; decision coverage {m["decision_weighted"]}% weighted / '
+          f'{m["decision_equal"]}% equal ({m["decision_decided"]}/{m["decision_rows"]} constraint classes)')
 
 
 if __name__ == '__main__':

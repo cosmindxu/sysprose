@@ -1,6 +1,6 @@
 {
  "meta": {
-  "generated": "2026-11-19T01:19:29+01:00",
+  "generated": "2026-11-19T01:33:02+01:00",
   "sources": [
    "scripts/todo-dashboard/coverage-universe-source.json",
    "docs/CONFORMANCE.md",
@@ -108,11 +108,11 @@
   ],
   "false": {
    "by_area": {
-    "Textual notation": 0,
-    "Graphical notation": 0,
     "API & services": 0,
+    "Constraints & parametrics": 6,
+    "Graphical notation": 0,
     "KerML kernel": 0,
-    "Constraints & parametrics": 6
+    "Textual notation": 0
    },
    "by_area_tier": {
     "KerML kernel": 0,
@@ -165,7 +165,9 @@
      "clause": "SysML v2 Part 1 7.2.2",
      "construct": "Elements \u2014 the SysML textual construct for every model element: element IDs and alias IDs, names and short names, and the leading kind keyword (7.2.1 overview)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:relationship",
@@ -198,7 +200,9 @@
      "clause": "SysML v2 Part 1 7.3.2",
      "construct": "Dependencies \u2014 `dependency from <client> to <supplier>`, a relationship asserting that the client relies on the supplier (7.3.1 overview)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:namespace",
@@ -219,7 +223,9 @@
      "clause": "KerML 8.3.2.4.5",
      "construct": "Namespace \u2014 an Element that contains members through memberships and exposes them by name; supports name resolution and imports."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:membership-owningmembership",
@@ -246,7 +252,9 @@
      "clause": "KerML 8.3.2.4.8",
      "construct": "OwningMembership \u2014 a Membership that additionally asserts composite ownership of its member."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:featuremembership",
@@ -267,7 +275,9 @@
      "clause": "KerML 8.3.3.1.6",
      "construct": "FeatureMembership \u2014 an OwningMembership specialized for a feature: a type owns a feature."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:import-membershipimport-namespaceimport",
@@ -300,7 +310,9 @@
      "clause": "KerML 8.3.2.4.6",
      "construct": "NamespaceImport \u2014 an Import of the members of another namespace, recursive where stated (`::**`)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:type",
@@ -321,7 +333,9 @@
      "clause": "KerML 8.3.3.1.10",
      "construct": "Type \u2014 anything that classifies: the abstract supertype of Classifier and Feature, owning features, specializations and multiplicity."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:classifier",
@@ -348,7 +362,9 @@
      "clause": "SysML v2 Part 1 7.6.2",
      "construct": "Definitions \u2014 `<kind> def <name>`: a Classifier declared with a kind keyword, optional `specializes`/`:>` subclassifications, and a namespace body."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:feature",
@@ -387,7 +403,9 @@
      "clause": "SysML v2 Part 1 7.6.6",
      "construct": "Feature chains \u2014 a dotted path of usages recording the intermediate features, not just a qualified name."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:specialization",
@@ -408,7 +426,9 @@
      "clause": "KerML 8.3.3.1.8",
      "construct": "Specialization \u2014 the generalization relationship between types: every instance of the specific type is also an instance of the general type (Subsetting, Redefinition and FeatureTyping are its specializations)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:subclassification",
@@ -429,7 +449,9 @@
      "clause": "KerML 8.3.3.2.3",
      "construct": "Subclassification \u2014 a Specialization between classifiers (textual `:>` or `specializes`)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:featuretyping",
@@ -450,7 +472,9 @@
      "clause": "KerML 8.3.3.3.7",
      "construct": "FeatureTyping \u2014 relates a Feature to the Type that types it (textual `:`)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:subsetting",
@@ -471,7 +495,9 @@
      "clause": "KerML 8.3.3.3.10",
      "construct": "Subsetting \u2014 a Specialization between features: one feature's values are a subset of another's (textual `:>`)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:redefinition",
@@ -492,7 +518,9 @@
      "clause": "KerML 8.3.3.3.8",
      "construct": "Redefinition \u2014 a Subsetting that replaces an inherited feature, keeping its value set but changing name, type, multiplicity or value (textual `:>>`)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:conjugation",
@@ -513,7 +541,9 @@
      "clause": "KerML 8.3.3.1.2",
      "construct": "Conjugation \u2014 produces a conjugated type with input and output directions reversed (textual `~`)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:multiplicity-multiplicityrange",
@@ -540,7 +570,9 @@
      "clause": "KerML 8.3.4.11.2",
      "construct": "MultiplicityRange \u2014 the lower and upper bound of a multiplicity (textual `[lo..hi]`, `[n]`, `[*]`)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:class-structure-datatype",
@@ -573,7 +605,9 @@
      "clause": "KerML 8.3.4.1.2",
      "construct": "DataType \u2014 a Classifier whose instances are pure data values."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:association-connector",
@@ -600,7 +634,9 @@
      "clause": "KerML 8.3.4.5.3",
      "construct": "Connector \u2014 a feature whose values are links between its ends; the basis of connections and interfaces."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:behavior-step-function",
@@ -633,7 +669,9 @@
      "clause": "KerML 8.3.4.7.4",
      "construct": "Function \u2014 a Behavior with a result parameter: a value-returning behavior."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:expression-subtypes",
@@ -654,7 +692,9 @@
      "clause": "KerML 8.3.4.7.3",
      "construct": "Expression \u2014 a Step that is computable; its subtypes (8.3.4.8.1\u201318) include literal, operator, invocation, feature-reference, constructor and collect expressions, the basis of calc and constraint bodies."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:succession-itemflow",
@@ -687,7 +727,9 @@
      "clause": "SysML v2 Part 1 7.16.2",
      "construct": "Flow definitions and usages \u2014 `flow def`, and `flow`/`message`/`succession flow` usages; messages declare their payload with `of`."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:package-metaclass-metadatafeature",
@@ -720,7 +762,9 @@
      "clause": "KerML 8.3.4.12.3",
      "construct": "MetadataFeature \u2014 a feature that is a metadata instance of a Metaclass."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:annotation",
@@ -747,7 +791,9 @@
      "clause": "SysML v2 Part 1 7.4.1",
      "construct": "Annotations \u2014 the SysML notation attaching a comment, documentation or textual representation to one or more model elements."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:comment",
@@ -774,7 +820,9 @@
      "clause": "SysML v2 Part 1 7.4.2",
      "construct": "Comments \u2014 `comment <name> /* \u2026 */`, a comment that may be named and is a member of its namespace."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:documentation",
@@ -801,7 +849,9 @@
      "clause": "SysML v2 Part 1 7.4.2",
      "construct": "Documentation \u2014 `doc /* \u2026 */`, a comment that documents its single owning element."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "KERML:textual-representation",
@@ -828,7 +878,9 @@
      "clause": "SysML v2 Part 1 7.4.3",
      "construct": "TextualRepresentation \u2014 a textual body in a named language (the `rep` notation) rendered as an annotation of its element."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "TXT:packages-imports",
@@ -855,7 +907,9 @@
      "clause": "SysML v2 Part 1 7.5.3",
      "construct": "Imports \u2014 public/private, membership and namespace (recursive `::**`) imports, with import filtering (7.5.4)."
     }
-   ]
+   ],
+   "weight_used": 637,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:parts-attributes",
@@ -882,7 +936,9 @@
      "clause": "SysML v2 Part 1 7.11",
      "construct": "Parts \u2014 part definitions and part usages, composite features owned by a definition or usage."
     }
-   ]
+   ],
+   "weight_used": 632,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:items",
@@ -903,7 +959,9 @@
      "clause": "SysML v2 Part 1 7.10",
      "construct": "Items \u2014 item definitions and item usages: things that flow or are conserved."
     }
-   ]
+   ],
+   "weight_used": 5,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:ports-direction",
@@ -924,7 +982,9 @@
      "clause": "SysML v2 Part 1 7.12",
      "construct": "Ports \u2014 port definitions and usages with direction (`in`/`out`/`inout`) and conjugation (7.12.3)."
     }
-   ]
+   ],
+   "weight_used": 101,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:interfaces-connections",
@@ -951,7 +1011,9 @@
      "clause": "SysML v2 Part 1 7.14",
      "construct": "Interfaces \u2014 interface definitions and usages, the port-to-port connection contract."
     }
-   ]
+   ],
+   "weight_used": 20,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:actions-control-nodes",
@@ -978,7 +1040,9 @@
      "clause": "SysML v2 Part 1 7.17.3",
      "construct": "Control nodes \u2014 fork, join, merge, decision and the initial/final nodes."
     }
-   ]
+   ],
+   "weight_used": 32,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:states-transitions",
@@ -1005,7 +1069,9 @@
      "clause": "SysML v2 Part 1 7.18.3",
      "construct": "Transition usages \u2014 trigger, guard and effect between states."
     }
-   ]
+   ],
+   "weight_used": 50,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:calculations-constraints",
@@ -1044,7 +1110,9 @@
      "clause": "SysML v2 Part 1 7.20.3",
      "construct": "Assert constraint usages \u2014 `assert constraint { \u2026 }`, a constraint usage that must hold."
     }
-   ]
+   ],
+   "weight_used": 596,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:requirements",
@@ -1065,7 +1133,9 @@
      "clause": "SysML v2 Part 1 7.21",
      "construct": "Requirements \u2014 requirement definitions and usages with subject, require and assume, concerns, and satisfy requirement usages (7.21.4)."
     }
-   ]
+   ],
+   "weight_used": 389,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:allocation",
@@ -1086,7 +1156,9 @@
      "clause": "SysML v2 Part 1 7.15",
      "construct": "Allocations \u2014 allocation definitions and usages, the cross-cutting allocate mapping."
     }
-   ]
+   ],
+   "weight_used": 5,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:views-viewpoints-rendering",
@@ -1107,7 +1179,9 @@
      "clause": "SysML v2 Part 1 7.26",
      "construct": "Views and viewpoints \u2014 view and viewpoint definitions and usages, renderings, compartments and diagrams as view usages (7.26.5)."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "floor (no corpus use)"
   },
   {
    "id": "TXT:enumerations",
@@ -1128,7 +1202,9 @@
      "clause": "SysML v2 Part 1 7.8",
      "construct": "Enumerations \u2014 enumeration definitions and usages with enumeration literals."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "floor (no corpus use)"
   },
   {
    "id": "TXT:occurrences",
@@ -1149,7 +1225,9 @@
      "clause": "SysML v2 Part 1 7.9",
      "construct": "Occurrences \u2014 occurrence definitions and usages, time slices and snapshots, individual and event occurrences (7.9.3\u20137.9.5)."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "floor (no corpus use)"
   },
   {
    "id": "TXT:metadata",
@@ -1170,7 +1248,9 @@
      "clause": "SysML v2 Part 1 7.27",
      "construct": "Metadata \u2014 metadata definitions and usages, semantic metadata and user-defined keywords (7.27.2\u20137.27.4)."
     }
-   ]
+   ],
+   "weight_used": 58,
+   "weight_source": "corpus usage"
   },
   {
    "id": "TXT:cases",
@@ -1209,7 +1289,9 @@
      "clause": "SysML v2 Part 1 7.25.2",
      "construct": "Use case definitions and usages \u2014 `use case def`/`use case`, a case with external actors and an include-use-case usage (7.25.3)."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "GRAPH:general-view-definition-view",
@@ -1230,7 +1312,9 @@
      "clause": "SysML v2 Part 1 8.2.3.5 (Table 34, 9.2.20.1)",
      "construct": "General View (gv) \u2014 the default compartment for a package; definitions and usages drawn as nodes and edges."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:interconnection-view-internal-view",
@@ -1251,7 +1335,9 @@
      "clause": "SysML v2 Part 1 8.2.3.11 (Table 34, 9.2.20.1)",
      "construct": "Interconnection View (iv) \u2014 the default compartment for a part: nested parts, their ports and the connections between them."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:action-flow-view-activity",
@@ -1272,7 +1358,9 @@
      "clause": "SysML v2 Part 1 8.2.3.17 (Table 34, 9.2.20.1)",
      "construct": "Action Flow View (afv) \u2014 the default compartment for an action: actions, parameters, control nodes and flows."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:state-transition-view",
@@ -1293,7 +1381,9 @@
      "clause": "SysML v2 Part 1 8.2.3.18 (Table 34, 9.2.20.1)",
      "construct": "State Transition View (stv) \u2014 the default compartment for a state: states and the transitions between them."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:sequence-view",
@@ -1314,7 +1404,9 @@
      "clause": "SysML v2 Part 1 8.2.3.9 (Table 34, 9.2.20.1)",
      "construct": "Sequence View (sv) \u2014 the default compartment for an occurrence: lifelines and time-ordered event occurrences (9.2.20.2.7)."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:requirement-view",
@@ -1335,7 +1427,9 @@
      "clause": "SysML v2 Part 1 8.2.3.21; GeneralView filter 9.2.20.2.3",
      "construct": "Requirement view \u2014 the GeneralView filter over requirement definitions/usages and satisfy/derive/refine, drawn by the requirements graphical notation."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:case-analysis-view",
@@ -1356,7 +1450,9 @@
      "clause": "SysML v2 Part 1 8.2.3.22\u20138.2.3.24",
      "construct": "Cases, analysis cases and verification cases \u2014 their graphical notation, including subjects, objectives and results."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:allocation-matrix",
@@ -1377,7 +1473,9 @@
      "clause": "SysML v2 Part 1 8.2.3.15",
      "construct": "Allocations graphical notation \u2014 the allocate mappings, typically rendered as a matrix or table."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:package-tree-browser-view",
@@ -1398,7 +1496,9 @@
      "clause": "SysML v2 Part 1 9.2.20.2.2 (Table 34, 9.2.20.1)",
      "construct": "Browser View (bv) \u2014 the ownership/membership hierarchy from an exposed root, rendered as a collapsible tree."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:grid-view",
@@ -1419,7 +1519,9 @@
      "clause": "SysML v2 Part 1 9.2.20.2.5 (Table 34, 9.2.20.1)",
      "construct": "Grid View (grv) \u2014 exposed elements and relationships arranged in a rectangular grid; Table 34 names no graphical rendering clause for it."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "GRAPH:geometry-view",
@@ -1440,7 +1542,9 @@
      "clause": "SysML v2 Part 1 9.2.20.2.4 (Table 34, 9.2.20.1)",
      "construct": "Geometry View (gev) \u2014 a 2D/3D visualization of exposed spatial items; Table 34 names no graphical rendering clause for it."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "API:projects",
@@ -1461,7 +1565,9 @@
      "clause": "API and Services 7.2.1; REST/HTTP PSM 8.1.3",
      "construct": "ProjectService \u2014 create, read, update and delete projects."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "API:branches",
@@ -1482,7 +1588,9 @@
      "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
      "construct": "ProjectDataVersioningService \u2014 branches and their lifecycle."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "API:tags",
@@ -1503,7 +1611,9 @@
      "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
      "construct": "ProjectDataVersioningService \u2014 tags and their lifecycle."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "API:commits",
@@ -1524,7 +1634,9 @@
      "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3",
      "construct": "ProjectDataVersioningService \u2014 commits, the write path for model content."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "API:elements-read-at-a-commit",
@@ -1545,7 +1657,9 @@
      "clause": "API and Services 7.2.2; REST/HTTP PSM 8.1.3",
      "construct": "ElementNavigationService \u2014 elements, roots and directional relationships read at a commit."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "API:queries",
@@ -1566,7 +1680,9 @@
      "clause": "API and Services 7.2.4; REST/HTTP PSM 8.1.3",
      "construct": "QueryService \u2014 stored queries and query results."
     }
-   ]
+   ],
+   "weight_used": 1,
+   "weight_source": "equal"
   },
   {
    "id": "API:external-relationships",
@@ -1587,7 +1703,9 @@
      "clause": "API and Services 7.2.5; REST/HTTP PSM 8.1.3",
      "construct": "ExternalRelationshipService \u2014 create, read and delete the relationships an element has to elements outside the project."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "API:project-usage",
@@ -1608,7 +1726,9 @@
      "clause": "API and Services 7.2.6; REST/HTTP PSM 8.1.3",
      "construct": "ProjectUsageService \u2014 create, read and delete usages of one project's content by another project."
     }
-   ]
+   ],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "API:other",
@@ -1621,7 +1741,9 @@
    "evidence": "",
    "weight": 0,
    "clause_ids": [],
-   "clauses": []
+   "clauses": [],
+   "weight_used": null,
+   "weight_source": "unmeasured"
   },
   {
    "id": "CON:ground",
@@ -1635,7 +1757,9 @@
    "weight": 1,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 1,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:bool",
@@ -1649,7 +1773,9 @@
    "weight": 54,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 54,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:lra",
@@ -1663,7 +1789,9 @@
    "weight": 486,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 2
+   "rows_against": 2,
+   "weight_used": 486,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:lira",
@@ -1677,7 +1805,9 @@
    "weight": 15,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 15,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:nra-poly-pinned",
@@ -1691,7 +1821,9 @@
    "weight": 6,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 6,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:nra-poly-free",
@@ -1705,7 +1837,9 @@
    "weight": 1,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 1,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:nra-div-pinned",
@@ -1719,7 +1853,9 @@
    "weight": 17,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 17,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:units",
@@ -1733,7 +1869,9 @@
    "weight": 100,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 100,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:text-as-real",
@@ -1747,7 +1885,9 @@
    "weight": 2,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 2,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:partial-context",
@@ -1761,7 +1901,9 @@
    "weight": 2,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 2
+   "rows_against": 2,
+   "weight_used": 2,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:stated-value",
@@ -1775,7 +1917,9 @@
    "weight": 311,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 311,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:defining-equation",
@@ -1789,7 +1933,9 @@
    "weight": 16,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 16,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:bind-equality",
@@ -1803,7 +1949,9 @@
    "weight": 9,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 9,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:asserted-fact",
@@ -1817,7 +1965,9 @@
    "weight": 28,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 28,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:requirement-clause",
@@ -1831,7 +1981,9 @@
    "weight": 236,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 236,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:per-instance",
@@ -1845,7 +1997,9 @@
    "weight": 1,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 2
+   "rows_against": 2,
+   "weight_used": 1,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-no-formal-clause",
@@ -1859,7 +2013,9 @@
    "weight": 40,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 40,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-unparseable",
@@ -1873,7 +2029,9 @@
    "weight": 1,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 1,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-unresolved-name",
@@ -1887,7 +2045,9 @@
    "weight": 3,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 3,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-unit-unresolved",
@@ -1901,7 +2061,9 @@
    "weight": 1,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 1,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-dimension-clash",
@@ -1915,7 +2077,9 @@
    "weight": 2,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 2,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-offset-arithmetic",
@@ -1929,7 +2093,9 @@
    "weight": 3,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 3,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-refused-derivation",
@@ -1943,7 +2109,9 @@
    "weight": 1,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 1,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-unsupported-operator",
@@ -1957,7 +2125,9 @@
    "weight": 6,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 6,
+   "weight_source": "counted rows"
   },
   {
    "id": "CON:fence-non-numeric-operand",
@@ -1971,13 +2141,25 @@
    "weight": 4,
    "clause_ids": [],
    "clauses": [],
-   "rows_against": 0
+   "rows_against": 0,
+   "weight_used": 4,
+   "weight_source": "counted rows"
   }
  ],
  "metrics": {
   "rows": 86,
   "measured": 56,
   "unmeasured": 30,
+  "construct_weighted": 73.5,
+  "construct_equal": 50.0,
+  "construct_covered_rows": 28,
+  "construct_measured_rows": 56,
+  "construct_weighted_num": 2861,
+  "construct_weighted_den": 3891,
+  "decision_weighted": 87.7,
+  "decision_equal": 28.0,
+  "decision_weighted_num": 1181,
+  "decision_weighted_den": 1346,
   "construct_coverage": 73.5,
   "decision_rows": 25,
   "decision_decided": 7,
@@ -1987,11 +2169,11 @@
   "false_register_entries": 6,
   "false_unattributed": 0,
   "false_by_area": {
-   "Textual notation": 0,
-   "Graphical notation": 0,
    "API & services": 0,
+   "Constraints & parametrics": 6,
+   "Graphical notation": 0,
    "KerML kernel": 0,
-   "Constraints & parametrics": 6
+   "Textual notation": 0
   },
   "false_by_area_tier": {
    "KerML kernel": 0,
