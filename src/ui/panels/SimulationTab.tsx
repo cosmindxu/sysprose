@@ -278,6 +278,15 @@ export function SimulationTab(): JSX.Element {
             {/* A step into the machine's own root or a node under an action is
                 not taken: the run stops there and says why (docs/06 §8.12), in
                 the words composed when the sample was captured. */}
+            {/* A machine whose start is not read does not start, and says why (the words of execute.ts). */}
+            {sample?.unopened && (
+              <div className="sim-line">
+                <span className="sim-k">Not started</span>
+                <span className="sim-v" data-testid="sim-unopened">
+                  {sample.unopened}
+                </span>
+              </div>
+            )}
             {sample?.refused && (
               <div className="sim-line">
                 <span className="sim-k">Stopped</span>
