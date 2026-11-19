@@ -3720,9 +3720,9 @@
   "open_raw": 78,
   "open": 78,
   "open_by": {
-   "FALSE": 1,
-   "WEAKER": 43,
-   "POLISH": 32,
+   "FALSE": 5,
+   "WEAKER": 41,
+   "POLISH": 30,
    "HELD": 2
   },
   "new": 2,
@@ -3738,6 +3738,38 @@
    "FALSE": 0,
    "WEAKER": 0,
    "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 321,
+  "cum_closed": 241
+ },
+ {
+  "idx": 117,
+  "sha": "6e3451d",
+  "when": "2026-11-19T03:57:17+01:00",
+  "day": "2026-11-19",
+  "subject": "merge spec-par-ps1: the SysML v2 parallel keyword is parsed and parallel machines are refused from text (stage 1 of the mandatory parallel-s",
+  "open_raw": 78,
+  "open": 78,
+  "open_by": {
+   "FALSE": 1,
+   "WEAKER": 43,
+   "POLISH": 32,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
    "HELD": 0
   },
   "cum_new": 321,
