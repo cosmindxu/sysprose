@@ -162,7 +162,8 @@ describe('bracket expression — feature value fold', () => {
     const text = roundTrip(src);
     expect(text).toContain('assign x := 5 [kg]');
     expect(text).toContain('return r = 6 [kg]');
-    expect(text).toContain('entry e = 7 [kg]');
+    // A named state action is written with `action` (SysML v2 §7.18.2 reads `entry e …` as a reference).
+    expect(text).toContain('entry action e = 7 [kg]');
   });
 
   it('keeps the source unit when the lexer skipped a character inside the bracket', () => {

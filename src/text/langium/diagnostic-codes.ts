@@ -151,7 +151,7 @@ const CODES = [
     code: 'parse/dangling-then',
     source: 'mapper',
     severity: 'error',
-    when: 'A bare `then X;` appears with no preceding succession in the same scope to chain from.',
+    when: 'A bare `then X;` appears with no preceding succession in the same scope to chain from, and not straight after an entry action (`entry; then off;` is the succession from the entry action to the initial state, SysML v2 §7.18.2, and is not reported).',
     hint: 'A bare `then X;` continues the previous succession. Start the chain with `first A then B;`, or write this one in full.',
   },
 

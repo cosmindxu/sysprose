@@ -495,7 +495,7 @@ function header(model: Model, el: ElementRecord): string {
   // that dropped the quotes turned that error into an OK file and left behind a
   // `split-declaration` warning that told the reader something false.
   // `quoteName('')` already emits `''`.
-  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
+  if (el.declaredName !== undefined) parts.push(stateDeclName(el, short));
 
   // Inline specializations.
   parts.push(...specializationFragments(model, el));
@@ -538,22 +538,33 @@ function header(model: Model, el: ElementRecord): string {
  * §7.18.2; the BNF writes `StateDefBody`/`StateUsageBody` as
  * `';' | ( isParallel ?= 'parallel' )? '{' … '}'`).
  *
- * Written only for a state declaration that has a NAME: the grammar reads
- * `state def parallel { … }` as a state named `parallel` so that identifiers
- * keep parsing, which means the modifier has no unambiguous spelling without a
- * name in front of it. The short-name-only spelling is narrowed the same way:
- * `state <M> parallel { … }` parses as a state NAMED `parallel` with short name
- * `M` (no error), not as a parallel state, so it cannot carry the keyword
- * either. A nameless state carrying `isParallel` (an API-built model — no text
- * can produce one) therefore keeps the flag in the model and does not write the
- * keyword; the sentinel-flagged `state <M> parallel { … }` case is recorded as
- * left undone rather than guessed at.
+ * Written only for a state declaration that has a name or a short name, and on
+ * a state definition, a state usage or an exhibit state usage (§7.18.4: an
+ * exhibit state ends in the same body). The grammar reads `state def parallel
+ * { … }` as a state named `parallel` so that identifiers keep parsing, which
+ * means the modifier has no unambiguous spelling with nothing in front of it.
+ * Behind a short name it has one: `state <M> parallel { … }` is read as the
+ * keyword (the mapper's `readsShortNameParallel`), and a state that is NAMED
+ * `parallel` behind a short name is written quoted ({@link stateDeclName}). A
+ * state with neither name nor short name carrying `isParallel` (an API-built
+ * model — no text can produce one) therefore keeps the flag in the model and
+ * does not write the keyword.
  */
 function parallelSuffix(el: ElementRecord): string[] {
   if (el.attrs.isParallel !== true) return [];
-  if (el.eClass !== 'StateDefinition' && el.eClass !== 'StateUsage') return [];
-  if (el.declaredName === undefined) return [];
+  if (el.eClass !== 'StateDefinition' && el.eClass !== 'StateUsage' && el.eClass !== 'ExhibitStateUsage') return [];
+  if (el.declaredName === undefined && el.declaredShortName === undefined) return [];
   return ['parallel'];
+}
+
+/**
+ * A declared name, quoted when it is `parallel` behind a short name: the mapper reads the bare word in that place,
+ * straight before a body, as the keyword (`state <M> parallel { … }`, SysML v2 §7.18.2), so a state NAMED `parallel`
+ * with a short name is written `state <M> 'parallel' …` and keeps its name on the next load.
+ */
+function stateDeclName(el: ElementRecord, short: string | undefined): string {
+  const name = el.declaredName ?? '';
+  return name === 'parallel' && short !== undefined ? "'parallel'" : quoteName(name);
 }
 
 /** The last segment of a qualified reference (`ScalarValues::Real` → `Real`). */
@@ -861,12 +872,16 @@ export function unitLexeme(unit: string): string {
 /** accept / send / assign / perform / exhibit / include / terminate action. */
 function behaviorLine(model: Model, el: ElementRecord, indent: number): string {
   const parts = [...successionPrefix(el), String(el.attrs.actionKind)];
+  // `exhibit state es parallel { … }`: the grammar reads `parallel` after `exhibit` only behind a name or a short
+  // name, and `exhibit state` is the spec's spelling of the usage that carries one (SysML v2 §7.18.4).
+  const parallel = el.attrs.actionKind === 'exhibit' ? parallelSuffix(el) : [];
+  if (parallel.length) parts.push('state');
   if (el.declaredShortName !== undefined) parts.push(`<${quoteName(el.declaredShortName)}>`);
-  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
+  if (el.declaredName !== undefined) parts.push(stateDeclName(el, el.declaredShortName));
   parts.push(...specializationFragments(model, el), ...multFragment(el));
   if (typeof el.attrs.via === 'string') parts.push('via', el.attrs.via);
   if (typeof el.attrs.actionTarget === 'string') parts.push('to', el.attrs.actionTarget);
-  parts.push(...valueClause(el));
+  parts.push(...valueClause(el), ...parallel);
   return renderWithBody(model, el, indent, parts.join(' '));
 }
 
@@ -1008,10 +1023,14 @@ function requirementClauseLine(model: Model, el: ElementRecord, indent: number):
   return renderWithBody(model, el, indent, parts.join(' '), negatedBody);
 }
 
-/** State behaviour: `entry` / `do` / `exit` (optionally named). */
+/**
+ * State behaviour: `entry` / `do` / `exit` (optionally named). A named one is written `entry action <name>`: SysML v2
+ * §7.18.2 reads `entry <name>;` without the `action` keyword as a REFERENCE to an existing action, and the model holds
+ * a declaration, so the keyword says what the model holds (this parser accepts both spellings for it).
+ */
 function stateBehaviorLine(model: Model, el: ElementRecord, indent: number): string {
   const parts = [String(el.attrs.stateSubaction)];
-  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
+  if (el.declaredName !== undefined) parts.push('action', quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el), ...valueClause(el));
   return renderWithBody(model, el, indent, parts.join(' '));
 }
@@ -1260,7 +1279,29 @@ function allocateLine(model: Model, el: ElementRecord, pad: string): string {
 }
 
 function successionLine(model: Model, el: ElementRecord, pad: string): string {
+  // `entry; then off;` — the succession from a state's entry action to the state it opens in (SysML v2 §7.18.2) is
+  // written as the bare `then` straight after that entry action, which is where the mapper reads it back from; the
+  // entry action need not have a name.
+  if (isEntryThen(model, el)) return `${pad}then ${endpoint(model, el, 'target')};`;
   return `${pad}succession first ${endpoint(model, el, 'source')} then ${endpoint(model, el, 'target')};`;
+}
+
+/**
+ * Is this succession an entry action's `then`, still written straight after it? The siblings between the two may be
+ * only other entry `then`s of the same action (BNF `EntryActionMember ( EntryTransitionMember )*`).
+ */
+function isEntryThen(model: Model, el: ElementRecord): boolean {
+  const from = el.source?.length === 1 ? model.get(el.source[0]) : undefined;
+  if (from === undefined || from.attrs.stateSubaction !== 'entry' || from.ownerId !== el.ownerId) return false;
+  if ((el.target ?? []).length > 1) return false;
+  const siblings = el.ownerId === null ? model.roots() : model.children(el.ownerId);
+  const at = siblings.findIndex((c) => c.id === el.id);
+  for (let i = at - 1; i >= 0; i--) {
+    const prev = siblings[i];
+    if (prev.id === from.id) return true;
+    if (prev.eClass !== 'Succession' || prev.source?.[0] !== from.id) return false;
+  }
+  return false;
 }
 
 function dependencyLine(model: Model, el: ElementRecord, pad: string): string {

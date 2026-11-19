@@ -645,6 +645,93 @@ describe('round-trip — the parallel state keyword (SysML v2 §7.18.2)', () => 
   });
 });
 
+describe('round-trip — the entry succession and `parallel` on exhibit and short-named states (SysML v2 §7.18)', () => {
+  /** Parse, save, re-parse; both loads error-free and the same element set. Returns the saved text. */
+  function roundTrip(text: string): { saved: string; back: Model } {
+    const first = parseModel(text);
+    expect(first.diagnostics).toEqual([]);
+    const saved = serializeModel(first.model);
+    const back = parseModel(saved);
+    expect(back.diagnostics, saved).toEqual([]);
+    expectSameElementSet(first.model, back.model);
+    return { saved, back: back.model };
+  }
+
+  it('writes §7.18.3 OnOff1 back with `then off;` straight after the nameless entry action', () => {
+    const { saved, back } = roundTrip(`package P {
+       state def OnOff1 {
+           entry;
+           then off;
+
+             state off;
+             state on;
+
+             transition off_on first off then on;
+             transition on_off first on then off;
+       }
+}`);
+    expect(saved).toMatch(/entry;\s*\n\s*then off;/);
+    const entry = back.all().find((el) => el.attrs.stateSubaction === 'entry')!;
+    const succ = back.all().find((el) => el.eClass === 'Succession')!;
+    expect(succ.source).toEqual([entry.id]);
+    expect(back.qualifiedName(succ.target![0])).toBe('P::OnOff1::off');
+  });
+
+  it('keeps a named, typed entry action and its succession, and spells the declaration with `action`', () => {
+    const { saved } = roundTrip(`package P {
+      action def Init;
+      state def M {
+        entry action init : Init;
+        then off;
+        state off;
+      }
+    }`);
+    expect(saved).toContain('entry action init : Init;');
+    expect(saved).toMatch(/entry action init : Init;\s*\n\s*then off;/);
+  });
+
+  it('keeps a do action body (§7.18.2 Exercising)', () => {
+    const { saved, back } = roundTrip(`package P {
+       action def Exercise;
+       state def Exercising {
+           do action exercise : Exercise {
+               action strengthTraining;
+               then action cardioTraining;
+           }
+       }
+}`);
+    expect(saved).toContain('do action exercise : Exercise {');
+    const doAction = back.all().find((el) => el.attrs.stateSubaction === 'do')!;
+    expect(back.children(doAction.id).filter((c) => c.eClass === 'ActionUsage').map((c) => c.declaredName)).toEqual([
+      'strengthTraining',
+      'cardioTraining',
+    ]);
+  });
+
+  it('writes `exhibit state es parallel { … }` back with the keyword before the body', () => {
+    const { saved, back } = roundTrip(`package P { part def V { exhibit state es parallel { state a; state b; } } }`);
+    expect(saved).toContain('exhibit state es parallel {');
+    const es = back.all().find((el) => el.eClass === 'ExhibitStateUsage')!;
+    expect(es.attrs.isParallel).toBe(true);
+  });
+
+  it('writes the short-name-only parallel state back, and quotes a short-named state NAMED `parallel`', () => {
+    const { saved, back } = roundTrip(`package P {
+      state <M> parallel { state a; }
+      state <N> 'parallel' { state b; }
+      part def V { exhibit state <E> parallel { state c; } }
+    }`);
+    expect(saved).toContain('state <M> parallel {');
+    expect(saved).toContain("state <N> 'parallel' {");
+    expect(saved).toContain('exhibit state <E> parallel {');
+    const flags = back
+      .all()
+      .filter((el) => el.declaredShortName !== undefined)
+      .map((el) => `<${el.declaredShortName}> ${String(el.declaredName)} ${String(el.attrs.isParallel)}`);
+    expect(flags).toEqual(['<M> undefined true', '<N> parallel undefined', '<E> undefined true']);
+  });
+});
+
 describe('round-trip — specialization relationships built from the model', () => {
   /** Count relationship elements of a given metaclass. */
   function count(model: Model, eClass: string): number {

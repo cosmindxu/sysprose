@@ -11,7 +11,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { parseDocument } from '@text/langium/module';
 import { parseModel } from '@text/index';
+import { validate } from '@validation/index';
 import {
+  isBehaviorStmt,
   isDefinition,
   isTransition,
   isFirstThen,
@@ -654,6 +656,227 @@ describe('Langium SysML grammar — the parallel state keyword (SysML v2 §7.18.
     expect(ops.declaredName).toBe('ops');
     expect(ops.attrs.isParallel).toBe(true);
     expect(model.children(modes.id).map((c) => c.declaredName)).toEqual(['a', 'b']);
+  });
+});
+
+/** Run `fn` and return the "Ambiguous Alternatives" lines Langium logged while it ran (it logs them at parse time). */
+function ambiguityLogged(fn: () => void): string[] {
+  const logged: string[] = [];
+  const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+    logged.push(a.map(String).join(' '));
+  });
+  try {
+    fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return logged.filter((l) => /Ambiguous Alternatives/i.test(l));
+}
+
+/** Every finding the load and the validator report on `src` (the parse's own diagnostics, then the rules'). */
+function allFindings(src: string): string[] {
+  const { model, diagnostics } = parseModel(src);
+  return [...diagnostics, ...validate(model)].map((d) => `${d.severity} ${d.code ?? ''}: ${d.message}`);
+}
+
+describe('Langium SysML grammar — the §7.18 state examples, verbatim (SysML v2 §7.18.2–7.18.4)', () => {
+  // Each text is the specification's own example, wrapped in a package where it needs
+  // the declarations the spec leaves out. Each must load with no finding at all.
+  const ON_OFF1 = `package P {
+       state def OnOff1 {
+           entry;
+           then off;
+
+             state off;
+             state on;
+
+             transition off_on first off then on;
+             transition on_off first on then off;
+       }
+}`;
+
+  it('§7.18.3 OnOff1: `entry; then off;` is the succession from the entry action to the initial state', () => {
+    expect(allFindings(ON_OFF1)).toEqual([]);
+    const { model } = parseModel(ON_OFF1);
+    const entry = model.all().find((el) => el.attrs.stateSubaction === 'entry')!;
+    expect(entry.eClass).toBe('ActionUsage');
+    expect(entry.declaredName).toBeUndefined();
+    const successions = model.all().filter((el) => el.eClass === 'Succession');
+    expect(successions).toHaveLength(1);
+    expect(successions[0].source).toEqual([entry.id]);
+    expect(model.qualifiedName(successions[0].target![0])).toBe('P::OnOff1::off');
+    expect(successions[0].ownerId).toBe(entry.ownerId);
+  });
+
+  it('§7.18.2 Exercising: entry / do / exit actions keep their type and their body', () => {
+    const src = `package P {
+       action def WarmUp; action def Exercise; action def Cooldown;
+       state def Exercising {
+           entry action warmup : WarmUp;
+           do action exercise : Exercise {
+               action strengthTraining;
+               then action cardioTraining;
+           }
+           exit action cooldown : Cooldown;
+       }
+}`;
+    expect(allFindings(src)).toEqual([]);
+    const { model } = parseModel(src);
+    const sub = (kind: string) => model.all().find((el) => el.attrs.stateSubaction === kind)!;
+    const typed = (el: { id: string; declaredName?: string }) =>
+      `${el.declaredName}:${model.typesOf(el.id).map((t) => t.declaredName).join(',')}`;
+    expect([sub('entry'), sub('do'), sub('exit')].map(typed)).toEqual([
+      'warmup:WarmUp',
+      'exercise:Exercise',
+      'cooldown:Cooldown',
+    ]);
+    const steps = model.children(sub('do').id).filter((c) => c.eClass === 'ActionUsage');
+    expect(steps.map((c) => c.declaredName)).toEqual(['strengthTraining', 'cardioTraining']);
+  });
+
+  it('§7.18.2 VehicleStates: `parallel` just before the body of a state definition', () => {
+    const src = `package P {
+       state def OperationalStates; state def HealthStates;
+       state def VehicleStates parallel {
+           // These substates are performed concurrently.
+           state OperationalStates;
+           state HealthStates;
+       }
+}`;
+    expect(allFindings(src)).toEqual([]);
+    const { model } = parseModel(src);
+    const vs = model.all().find((el) => el.declaredName === 'VehicleStates')!;
+    expect(vs.attrs.isParallel).toBe(true);
+    expect(model.children(vs.id).map((c) => c.declaredName)).toEqual(['OperationalStates', 'HealthStates']);
+  });
+
+  it('reads a named entry action the same way: `entry action initial; then off;` (with a name the grammar admits)', () => {
+    // The spec's own OperationalStates names its entry action `initial`, a reserved word of this grammar (the
+    // `initial` control node), so the example is pinned with another name; the succession is the point.
+    const { model, diagnostics } = parseModel(`package P {
+       state def OperationalStates {
+           entry action init;
+           then off;
+             state off;
+             state starting;
+             state on;
+       }
+}`);
+    expect(diagnostics).toEqual([]);
+    const entry = model.all().find((el) => el.attrs.stateSubaction === 'entry')!;
+    expect(entry.declaredName).toBe('init');
+    const succ = model.all().find((el) => el.eClass === 'Succession')!;
+    expect(succ.source).toEqual([entry.id]);
+    expect(model.qualifiedName(succ.target![0])).toBe('P::OperationalStates::off');
+  });
+
+  it('keeps a `then` that does not follow the entry action an ordinary chained succession, or a dangling one', () => {
+    const { diagnostics } = parseModel(`package P { state def M { entry; state a; then a; } }`);
+    expect(diagnostics.map((d) => d.code)).toEqual(['parse/dangling-then']);
+  });
+});
+
+describe('Langium SysML grammar — `parallel` on an exhibit state and behind a short name (SysML v2 §7.18)', () => {
+  it('reads `exhibit state es parallel { … }` as one parallel exhibit state that keeps its body', () => {
+    const src = `package P { part def Vehicle { exhibit state es parallel { state a; state b; } } }`;
+    const ast = parseClean(src);
+    const vehicle = (ast.members[0] as Definition).body!.members[0] as Definition;
+    const stmts = vehicle.body!.members;
+    expect(stmts).toHaveLength(1);
+    expect(isBehaviorStmt(stmts[0])).toBe(true);
+    const es = stmts[0] as { name?: string; isParallel: boolean; body?: { members: unknown[] } };
+    expect(es.name).toBe('es');
+    expect(es.isParallel).toBe(true);
+    expect(es.body?.members).toHaveLength(2);
+    const { model, diagnostics } = parseModel(src);
+    expect(diagnostics).toEqual([]);
+    const usage = model.all().find((el) => el.eClass === 'ExhibitStateUsage')!;
+    expect(usage.declaredName).toBe('es');
+    expect(usage.attrs.isParallel).toBe(true);
+    expect(model.children(usage.id).map((c) => c.declaredName)).toEqual(['a', 'b']);
+    expect(model.all().some((el) => el.declaredName === 'parallel')).toBe(false);
+  });
+
+  it('reads `state <M> parallel { … }` and `exhibit state <M> parallel { … }` as parallel states with short name M', () => {
+    const { model, diagnostics } = parseModel(`package P {
+      state <M> parallel { state a; state b; }
+      state def <D> parallel { state c; }
+      part def V { exhibit state <E> parallel { state d; } }
+    }`);
+    expect(diagnostics).toEqual([]);
+    const flagged = model
+      .all()
+      .filter((el) => el.declaredShortName !== undefined)
+      .map((el) => `${el.eClass} <${el.declaredShortName}> ${String(el.declaredName)} ${String(el.attrs.isParallel)}`);
+    expect(flagged).toEqual([
+      'StateUsage <M> undefined true',
+      'StateDefinition <D> undefined true',
+      'ExhibitStateUsage <E> undefined true',
+    ]);
+  });
+
+  it('keeps `parallel` a name behind a short name everywhere else', () => {
+    const { model, diagnostics } = parseModel(`package P {
+      state <A> parallel;
+      state <B> 'parallel' { state a; }
+      state <C> parallel : S { state b; }
+      state def S;
+    }`);
+    expect(diagnostics).toEqual([]);
+    const named = model
+      .all()
+      .filter((el) => el.declaredShortName !== undefined)
+      .map((el) => `<${el.declaredShortName}> ${String(el.declaredName)} ${String(el.attrs.isParallel)}`);
+    expect(named).toEqual(['<A> parallel undefined', '<B> parallel undefined', '<C> parallel undefined']);
+  });
+
+  it('keeps `parallel` an identifier on an exhibit state with no name in front of it', () => {
+    const { model, diagnostics } = parseModel(
+      `package P { part def V { exhibit state parallel { state a; } exhibit state parallel; perform action parallel; } }`,
+    );
+    expect(diagnostics).toEqual([]);
+    expect(
+      model
+        .all()
+        .filter((el) => el.declaredName === 'parallel')
+        .map((el) => `${el.eClass}:${String(el.attrs.isParallel)}`),
+    ).toEqual(['ExhibitStateUsage:undefined', 'ExhibitStateUsage:undefined', 'PerformActionUsage:undefined']);
+  });
+
+  it('reads `parallel` as the keyword on an exhibit STATE only, never after `exhibit action` or `exhibit use case`', () => {
+    // Review finding 5: these mapped to a parallel ExhibitStateUsage with no diagnostic. The spec has no
+    // `parallel` there; the word now takes no keyword reading after them.
+    for (const src of [
+      'package P { part def V { exhibit action ea parallel { action x; } } }',
+      'package P { part def V { exhibit use case u parallel { } } }',
+      'package P { part def V { exhibit <E> parallel { state a; } } }',
+    ]) {
+      const { model } = parseModel(src);
+      expect(
+        model.all().filter((el) => el.attrs.isParallel === true),
+        src,
+      ).toEqual([]);
+    }
+    const { model } = parseModel('package P { part def V { exhibit es parallel { state a; } } }');
+    expect(model.all().find((el) => el.declaredName === 'es')!.attrs.isParallel).toBe(true);
+  });
+
+  it('introduces no ALL(*) ambiguity for any of these spellings', () => {
+    expect(
+      ambiguityLogged(() => {
+        for (const src of [
+          'package P { part def V { exhibit state es parallel { state a; } } }',
+          'package P { part def V { exhibit state parallel { state a; } } }',
+          'package P { part def V { exhibit state <M> parallel { state a; } } }',
+          'package P { part def V { exhibit state parallel; exhibit es; perform action p { } } }',
+          'package P { part def V { exhibit action ea parallel { } exhibit use case u; exhibit <E> parallel { } } }',
+          'package P { state <M> parallel { state a; } state <N> parallel; state parallel { } }',
+          'package P { state def M { entry; then off; state off; } }',
+        ]) {
+          parseModel(src);
+        }
+      }),
+    ).toEqual([]);
   });
 });
 

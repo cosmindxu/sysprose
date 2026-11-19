@@ -340,6 +340,47 @@ describe('what the walk refuses to explore', () => {
     expect(finding!.message).toContain('sub');
   });
 
+  it('refuses a parallel exhibit state written in the notation (SysML v2 §7.18.4)', () => {
+    // PS2: `exhibit state es parallel { … }` used to lose its body to a keyword-less
+    // member named `parallel`, which this walk then published exhaustive.
+    const { model, diagnostics } = parseModel(`package P {
+      part def Vehicle {
+        exhibit state es parallel {
+          state nav { state off; state on; transition off accept go then on; }
+          state comms { state idle; state busy; transition idle accept send then busy; }
+        }
+      }
+    }`);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const es = model.all().find((el) => el.eClass === 'ExhibitStateUsage')!;
+    expect(es.declaredName).toBe('es');
+    expect(es.attrs.isParallel).toBe(true);
+    expect(model.all().some((el) => el.declaredName === 'parallel')).toBe(false);
+    const r = reachReport(model, { scopeId: es.id });
+    expect(r.machines).toHaveLength(1);
+    const only = r.machines[0];
+    expect(only.exhaustive).toBe(false);
+    expect(only.transitions.dead).toEqual([]);
+    expect(only.unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
+  });
+
+  it('refuses a parallel state spelled with only a short name, `state <M> parallel { … }`', () => {
+    const { model, diagnostics } = parseModel(`package P {
+      state <M> parallel {
+        state nav { state off; state on; transition off accept go then on; }
+        state comms { state idle; state busy; transition idle accept send then busy; }
+      }
+    }`);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const m = model.all().find((el) => el.declaredShortName === 'M')!;
+    expect(m.declaredName).toBeUndefined();
+    expect(m.attrs.isParallel).toBe(true);
+    const r = reachReport(model, { scopeId: m.id });
+    expect(r.machines).toHaveLength(1);
+    expect(r.machines[0].exhaustive).toBe(false);
+    expect(r.machines[0].unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
+  });
+
   it('a history state is unsupported for the same reason', () => {
     const m = new Model();
     const f = new ModelFactory(m);
@@ -4144,5 +4185,165 @@ describe('`machineRegion` draws the nested-definition boundary where the old rea
     expect(names(m, machineRegion(m, outer).transitions)).toEqual(['ax']);
     expect(isRegionNode(m, outer, edge.source![0])).toBe(true);
     expect(isRegionNode(m, outer, edge.target![0])).toBe(false);
+  });
+});
+
+describe('the initial state named by the entry succession (SysML v2 §7.18.2)', () => {
+  // `entry; then off;` — the spec indicates the initial state "by a succession from the entry action
+  // to that state usage". Before PS2 the `then` was a parse error (`parse/dangling-then`) and the
+  // walk opened at the first state written.
+  const ON_OFF1 = `package P {
+    state def OnOff1 {
+        entry;
+        then off;
+
+        state off;
+        state on;
+
+        transition off_on first off then on;
+        transition on_off first on then off;
+    }
+  }`;
+
+  it('walks the §7.18.3 example OnOff1 clean, the entry succession accounted as its opening', () => {
+    const { model, diagnostics } = parseModel(ON_OFF1);
+    expect(diagnostics).toEqual([]);
+    const machine = model.all().find((el) => el.eClass === 'StateDefinition')!;
+    const r = reachReport(model, { scopeId: machine.id });
+    expect(r.machines).toHaveLength(1);
+    expect(r.machines[0].exhaustive).toBe(true);
+    expect(r.machines[0].unsupported).toEqual([]);
+    const census = edgeCensus(model, machine.id);
+    expect(census.unaccounted).toEqual([]);
+    const opening = census.rows.filter((row) => row.account === 'opening');
+    expect(opening.map((row) => row.eClass)).toEqual(['Succession']);
+    expect(walkableTransitions(model, machine.id).map((t) => t.declaredName)).toEqual(['off_on', 'on_off']);
+  });
+
+  it('opens where the entry succession says, not at the first state written', () => {
+    const { model, diagnostics } = parseModel(`package P {
+      state def M {
+        entry; then b;
+        state a;
+        state b;
+        transition first a accept go then b;
+      }
+    }`);
+    expect(diagnostics).toEqual([]);
+    const machine = model.all().find((el) => el.eClass === 'StateDefinition')!;
+    const r = reachReport(model, { scopeId: machine.id });
+    const only = r.machines[0];
+    expect(only.exhaustive).toBe(true);
+    expect(only.states.unreachable.map((s) => s.name)).toEqual(['a']);
+    // The simulator reads the same start.
+    const run = runStateMachine(model, machine.id, []);
+    expect(model.get(run.visited[0])!.declaredName).toBe('b');
+  });
+
+  it('reads a named entry action and the long `first` spelling the same way', () => {
+    const { model, diagnostics } = parseModel(`package P {
+      state def M {
+        entry action init;
+        first init then b;
+        state a;
+        state b;
+        transition first a accept go then b;
+      }
+    }`);
+    expect(diagnostics).toEqual([]);
+    const machine = model.all().find((el) => el.eClass === 'StateDefinition')!;
+    const only = reachReport(model, { scopeId: machine.id }).machines[0];
+    expect(only.exhaustive).toBe(true);
+    expect(only.states.unreachable.map((s) => s.name)).toEqual(['a']);
+  });
+
+  it('opens a composite substate where its own entry succession says', () => {
+    const { model, diagnostics } = parseModel(`package P {
+      state def M {
+        state idle;
+        state busy {
+          entry; then y;
+          state x;
+          state y;
+          transition first x accept tick then y;
+        }
+        transition first idle accept go then busy;
+      }
+    }`);
+    expect(diagnostics).toEqual([]);
+    const machine = model.all().find((el) => el.eClass === 'StateDefinition')!;
+    const only = reachReport(model, { scopeId: machine.id }).machines[0];
+    expect(only.exhaustive).toBe(true);
+    expect(only.states.unreachable.map((s) => s.name)).toEqual(['x']);
+    expect(edgeCensus(model, machine.id).unaccounted).toEqual([]);
+  });
+
+  it('refuses a machine whose entry action names two successors — no start is guessed', () => {
+    const { model } = parseModel(`package P {
+      state def M {
+        entry; then a; then b;
+        state a;
+        state b;
+        transition first a accept go then b;
+      }
+    }`);
+    const machine = model.all().find((el) => el.eClass === 'StateDefinition')!;
+    const only = reachReport(model, { scopeId: machine.id }).machines[0];
+    expect(only.exhaustive).toBe(false);
+    // One refusal per entry successor: neither is read as the start.
+    expect(only.unsupported.map((u) => u.construct)).toEqual(['edge-not-walked', 'edge-not-walked']);
+    expect(only.states.unreachable).toEqual([]);
+  });
+
+  /** The machine `P::M` of `src`: its reach row and a simulator run with no events. */
+  function machineM(src: string) {
+    const { model } = parseModel(src);
+    const m = model.all().find((el) => model.qualifiedName(el.id) === 'P::M')!;
+    return { model, row: reachReport(model, { scopeId: m.id }).machines[0], run: runStateMachine(model, m.id, []) };
+  }
+
+  it('refuses, and does not start, a machine whose entry succession leads into something that is not a state', () => {
+    // Review finding 1: the edge was filed `off-stack`, the walk opened at `a` and published `c` unreachable
+    // (an absence pattern over `c` then PASSED); the simulator opened at `a` as well.
+    const { row, run } = machineM(`package P { state def M {
+      entry; then q; action q; state a; transition tz first a accept zz then a; state c; } }`);
+    expect(row.exhaustive).toBe(false);
+    expect(row.unsupported.map((u) => u.construct)).toEqual(['edge-not-walked']);
+    expect(row.states.unreachable).toEqual([]);
+    expect(run.visited).toEqual([]);
+    expect(run.complete).toBe(false);
+    expect(run.unopened).toContain('does not start');
+  });
+
+  it('refuses the same edge when the machine reads it through its general', () => {
+    const { row, run } = machineM(`package P {
+      state def G { entry; then q; action q; state a; state c; }
+      state def M :> G { transition t2 first a accept yy then c; } }`);
+    expect(row.exhaustive).toBe(false);
+    expect(row.unsupported.map((u) => u.construct)).toEqual(['edge-not-walked']);
+    expect(run.visited).toEqual([]);
+  });
+
+  it('does not start the simulator at the first state when the entry succession is not read', () => {
+    // Review finding 2: nested target, two entry actions — the explorer refused, the simulator opened at `a`.
+    for (const body of [
+      'entry; then b::b2; state a; transition tz first a accept zz then a; state b { state b1; state b2; }',
+      'entry; then c; entry; then b; state a; transition tz first a accept zz then a; state b; state c;',
+    ]) {
+      const { row, run } = machineM(`package P { state def M { ${body} } }`);
+      expect(row.exhaustive, body).toBe(false);
+      expect(run.visited, body).toEqual([]);
+      expect(run.unopened, body).toBeDefined();
+    }
+  });
+
+  it('keeps what a do action holds out of the machine: no state of it is reported or started in', () => {
+    // Review finding 3: `z` was published unreachable and the flat simulator path opened at `P::M::d::z`.
+    const { model, row, run } = machineM(`package P { state def M {
+      do action d { state z; } state a; state b; transition t first a accept g then b; } }`);
+    expect(row.exhaustive).toBe(true);
+    expect(row.states.unreachable).toEqual([]);
+    expect(row.states.reachable.map((s) => s.name)).toEqual(['a', 'b']);
+    expect(model.qualifiedName(run.visited[0])).toBe('P::M::a');
   });
 });

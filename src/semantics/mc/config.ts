@@ -447,9 +447,14 @@ function ownRegion(model: Model, regionId: ElementId): MachineRegion {
   // A composite state USAGE that owns transitions is unaffected: it is a region of
   // its parent and stays inside it, which is the distinction the metaclass draws
   // (`StateDefinition` vs `StateUsage`).
+  //
+  // It stops below an entry, do or exit action as well (`do action d { state z; }`): what such an action holds is the
+  // action's own behaviour, performed while its state is active, and not a state of this machine. Read as one, `z`
+  // was published unreachable by the walk and taken as the start by the simulator's flat path.
   const descendants = model.descendants(regionId).filter((el) => {
     for (let p: ElementId | null = el.ownerId; p != null && p !== regionId; p = model.get(p)?.ownerId ?? null) {
-      if (model.get(p)?.eClass === 'StateDefinition') return false;
+      const owner = model.get(p);
+      if (owner?.eClass === 'StateDefinition' || owner?.attrs.stateSubaction !== undefined) return false;
     }
     return true;
   });
@@ -770,46 +775,148 @@ export function isFinalState(model: Model, stateId: ElementId): boolean {
   return s.attrs.kind === 'final' || s.attrs.isFinal === true || s.declaredName === 'final';
 }
 
-/** Resolve the initial state: an InitialNode's target, else the first StateUsage. */
+/**
+ * Resolve the initial state: an InitialNode's target, else the target of the entry succession
+ * ({@link entryOpening}), else the first StateUsage.
+ */
 export function initialState(
   model: Model,
   stateId: ElementId,
   states: readonly ElementRecord[],
   desc: readonly ElementRecord[],
   declIndex: Map<ElementId, number>,
+  owners: readonly ElementId[] = [stateId],
 ): ElementId | null {
+  return regionStart(model, states, desc, declIndex, owners).state;
+}
+
+/** The start of a region and, when an entry succession named it, that succession. */
+function regionStart(
+  model: Model,
+  states: readonly ElementRecord[],
+  desc: readonly ElementRecord[],
+  declIndex: Map<ElementId, number>,
+  owners: readonly ElementId[],
+): RegionStart {
   const initialNode = desc.find((e) => e.eClass === 'InitialNode');
+  // An entry action with an edge leaving it says where the region opens (SysML v2 §7.18.2). When that is not the one
+  // plain succession {@link entryOpening} reads — a second or a guarded successor, a target that is not a direct state,
+  // an `initial` node beside it, entry successions on two owners — the start is NOT read at all: falling back to the
+  // first declared state opened the run somewhere the text does not say.
+  const withEntry = owners.filter((o) => entryControlEdges(model, o).length > 0);
+  if (withEntry.length > 0) {
+    const entryEdge = initialNode || withEntry.length > 1 ? undefined : entryOpening(model, withEntry[0], states);
+    return entryEdge ? { state: entryEdge.target![0], entryEdge } : { state: null, unread: true };
+  }
   if (initialNode) {
     const edge = model
       .edgesFrom(initialNode.id)
       .find((e) => SUCCESSION_KINDS.has(e.eClass) || e.eClass === 'TransitionUsage');
     const to = edge?.target?.[0];
-    if (to && states.some((s) => s.id === to)) return to;
+    if (to && states.some((s) => s.id === to)) return { state: to };
   }
   if (states.length) {
-    return states
-      .slice()
-      .sort((a, b) => (declIndex.get(a.id) ?? 0) - (declIndex.get(b.id) ?? 0))[0].id;
+    return {
+      state: states.slice().sort((a, b) => (declIndex.get(a.id) ?? 0) - (declIndex.get(b.id) ?? 0))[0].id,
+    };
   }
-  return null;
+  return { state: null };
+}
+
+/** Where a region opens; `unread` when an entry action names a start this reading does not take (no start, then). */
+interface RegionStart {
+  state: ElementId | null;
+  entryEdge?: ElementRecord;
+  unread?: true;
+}
+
+/** The control edges ({@link CONTROL_EDGE_KINDS}) leaving any entry action written directly in `ownerId`. */
+export function entryControlEdges(model: Model, ownerId: ElementId): ElementRecord[] {
+  return model
+    .children(ownerId)
+    .filter((c) => c.attrs.stateSubaction === 'entry')
+    .flatMap((c) => model.edgesFrom(c.id).filter((e) => CONTROL_EDGE_KINDS.has(e.eClass)));
+}
+
+/**
+ * The succession that names where `ownerId` opens: SysML v2 §7.18.2 indicates the initial substate "by a succession
+ * from the entry action to that state usage" — `entry; then off;`, or `entry action init; first init then off;`.
+ *
+ * Read only on the plain shape: `ownerId` has exactly ONE entry action, and exactly one edge leaves it, an unguarded
+ * succession with no payload into one of `states` (edges outside {@link CONTROL_EDGE_KINDS}, such as the entry
+ * action's typing, are not counted). Anything else — two entry actions, a second or a guarded
+ * successor (`transition first init if c then off;`, a conditional start), a target that is not one of the region's
+ * direct states — names no start here, and the edge is left for the explorer's edge census, which refuses the machine
+ * over an edge it does not walk rather than opening it somewhere the text does not say.
+ */
+export function entryOpening(
+  model: Model,
+  ownerId: ElementId,
+  states: readonly ElementRecord[],
+): ElementRecord | undefined {
+  const entries = model.children(ownerId).filter((c) => c.attrs.stateSubaction === 'entry');
+  if (entries.length !== 1) return undefined;
+  // Only the edges that carry the control token count: `entry action init : Init;` also has a typing edge.
+  const edges = model.edgesFrom(entries[0].id).filter((e) => CONTROL_EDGE_KINDS.has(e.eClass));
+  if (edges.length !== 1) return undefined;
+  const edge = edges[0];
+  if (!SUCCESSION_KINDS.has(edge.eClass) || payloadOf(edge) !== undefined) return undefined;
+  if (edge.attrs.guard !== undefined || (edge.target ?? []).length !== 1) return undefined;
+  // A DIRECT state of the owner: `then b::b2;` names a state below one, which a start cannot enter here.
+  const to = edge.target![0];
+  return model.get(to)?.ownerId === ownerId && states.some((s) => s.id === to) ? edge : undefined;
 }
 
 /**
  * The state a region opens in, read from the region's view: an InitialNode's
- * target, else the first of `states` in the region's declaration order. The
+ * target, else the target of the region's entry succession (its root's, or a
+ * general machine's it is read through), else the first of `states` in the
+ * region's declaration order. The
  * one reader of a region's start — `initialSubstate` (the walk, over the
  * region's direct states) and the interpreter's flat path (over its states)
  * both ask it, so the two cannot read two starts.
  */
 export function initialStateOf(
   model: Model,
-  region: Pick<MachineRegion, 'root' | 'descendants'>,
+  region: Pick<MachineRegion, 'root' | 'descendants'> & Partial<Pick<MachineRegion, 'bases'>>,
   states: readonly ElementRecord[],
 ): ElementId | null {
+  return regionStartOf(model, region, states).state;
+}
+
+/**
+ * The entry succession a region's start was read from, if it was read from one — the edge the explorer's census
+ * accounts for as `opening`, because the start consumes it and no step fires it.
+ */
+export function entryOpeningOf(
+  model: Model,
+  region: Pick<MachineRegion, 'root' | 'descendants'> & Partial<Pick<MachineRegion, 'bases'>>,
+  states: readonly ElementRecord[],
+): ElementRecord | undefined {
+  return regionStartOf(model, region, states).entryEdge;
+}
+
+/**
+ * Whether the region's start is NOT read because of its entry action ({@link regionStart}): an entry action names a
+ * start, and not in the one plain shape this reading takes, so the region opens nowhere rather than at a guess.
+ */
+export function entryStartUnreadOf(
+  model: Model,
+  region: Pick<MachineRegion, 'root' | 'descendants'> & Partial<Pick<MachineRegion, 'bases'>>,
+  states: readonly ElementRecord[],
+): boolean {
+  return regionStartOf(model, region, states).unread === true;
+}
+
+function regionStartOf(
+  model: Model,
+  region: Pick<MachineRegion, 'root' | 'descendants'> & Partial<Pick<MachineRegion, 'bases'>>,
+  states: readonly ElementRecord[],
+): RegionStart {
   const desc = region.descendants;
   const declIndex = new Map<ElementId, number>();
   desc.forEach((e, i) => declIndex.set(e.id, i));
-  return initialState(model, region.root, states, desc, declIndex);
+  return regionStart(model, states, desc, declIndex, [region.root, ...(region.bases ?? [])]);
 }
 
 /** The initial substate of a container (InitialNode target, else first state). */

@@ -463,6 +463,9 @@ const splitDeclaration: ValidationRule = {
         // already reported once by the parser or the mapper. Reporting it
         // again here pointed the author at a completely different repair.
         attrs.unparsedText !== undefined ||
+        // `entry;` (and `do;`, `exit;`) is the spec's EMPTY state action (SysML v2 §7.18.2, BNF `StateActionUsage`:
+        // `EmptyActionUsage ';'`), the source an initial-state `then` succession leaves from — written on purpose.
+        attrs.stateSubaction !== undefined ||
         attrs.type !== undefined ||
         attrs.typeRef !== undefined ||
         attrs.value !== undefined ||
