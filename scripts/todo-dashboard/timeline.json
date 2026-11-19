@@ -3816,9 +3816,9 @@
   "open_raw": 81,
   "open": 81,
   "open_by": {
-   "FALSE": 1,
+   "FALSE": 0,
    "WEAKER": 43,
-   "POLISH": 35,
+   "POLISH": 36,
    "HELD": 2
   },
   "new": 0,

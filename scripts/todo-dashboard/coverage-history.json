@@ -1696,6 +1696,36 @@
    "false": 9,
    "construct_coverage": 73.5,
    "decision_coverage": 28.0
+  },
+  {
+   "idx": 135,
+   "day": "2026-11-19",
+   "sha": "240592c",
+   "subject": "todo-dashboard: refresh the datasets and the standalone page",
+   "source": "coverage-snapshot",
+   "snapshot": "240592c",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 9,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 136,
+   "day": "2026-11-19",
+   "sha": "88a0507",
+   "subject": "todo-dashboard: refresh the datasets against main 240592c",
+   "source": "coverage-snapshot",
+   "snapshot": "88a0507",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 8,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
   }
  ]
 }

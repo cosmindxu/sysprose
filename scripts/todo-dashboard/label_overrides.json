@@ -47,5 +47,9 @@
   "cls_first": "WEAKER",
   "cls_last": "WEAKER",
   "note": "2026-11-09: a rollup of abstentions (sound, weaker); the keyword rule mislabelled it FALSE"
+ },
+ "341": {
+  "cls_last": "POLISH",
+  "note": "coverage triage 2026-11-19: CU-7 is a CI drift gate for the coverage page, not a wrong answer; the keyword rule read 'the false count rises' in its text as a wrong-statement finding"
  }
 }
