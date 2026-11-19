@@ -156,6 +156,14 @@ const CODES = [
   },
 
   {
+    code: 'parse/parallel-not-on-state',
+    source: 'mapper',
+    severity: 'error',
+    when: 'The bare word `parallel` stands before a `{ … }` body on a statement that is not a state: `exhibit action ea parallel { … }`, `exhibit use case u parallel { … }`, `perform action p parallel { … }`, `include use case u parallel { … }`, `action a parallel { … }`, `part p parallel { … }`. SysML v2 §7.18.2 gives `parallel` only to state definitions and state usages (`isParallel ?= \'parallel\'` in the state body), so there it is no keyword; read as a name it would be a separate keyword-less usage `parallel` that swallows the body. An identifier named `parallel` after a keyword (`attribute parallel : Real;`, `part parallel;`, `state parallel;`, `exhibit state parallel { … }`) is not reported.',
+    hint: 'Remove {found} here: it is valid only on `state` / `state def` / `exhibit state`. To name an element parallel, give it a keyword (`part parallel { … }`) or quote the name (`\'parallel\'`).',
+  },
+
+  {
     code: 'parse/conflicting-direction',
     source: 'mapper',
     severity: 'warning',

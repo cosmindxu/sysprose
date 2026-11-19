@@ -880,6 +880,74 @@ describe('Langium SysML grammar — `parallel` on an exhibit state and behind a 
   });
 });
 
+// A `/* … */` comment between a declaration's header and its `{` or `;` used to end the
+// declaration there: the braced body fell to the enclosing body's trailing expression slot
+// and vanished, with no diagnostic. The lexer now hides such a comment.
+describe('a block comment between a declaration header and its body', () => {
+  const names = (src: string) => {
+    const { model, diagnostics } = parseModel(src);
+    expect(diagnostics.filter((d) => d.severity === 'error'), src).toEqual([]);
+    return model.all().map((el) => el.declaredName).filter((n) => n);
+  };
+
+  it('keeps the body of a state definition (the reported shape)', () => {
+    expect(names('package P { part def Ctl { state def M /* c */ { state a; state b; transition t first a accept go then b; } } }'))
+      .toEqual(expect.arrayContaining(['M', 'a', 'b', 't']));
+  });
+
+  it.each([
+    ['a usage', 'package P { state x /* c */ { state a; } }', 'a'],
+    ['a definition', 'package P { part def A /* c */ { attribute m : Real; } }', 'm'],
+    ['after a specialization', 'package P { part def A; part def B :> A /* c */ { attribute m : Real; } part def Z; }', 'm'],
+    ['a // line comment', 'package P { state x // c\n { state a; } }', 'a'],
+    ['a comment that holds a brace', 'package P { state <M1> /* } */ { state a; } }', 'a'],
+    ['a comment holding `{`, then more members', 'package P { part def A /* { */ { attribute m : Real; } part def Z; }', 'm'],
+  ])('keeps the body: %s', (_label, src, inner) => {
+    expect(names(src)).toContain(inner);
+  });
+
+  it('leaves a comment before `;` as it was: a loud parse error', () => {
+    const { diagnostics } = parseModel('package P { part def A /* c */ ; part def Z; }');
+    expect(diagnostics.map((d) => d.code)).toContain('parse/mismatched-token');
+  });
+
+  it('leaves doc / comment bodies and free-standing comments as they were', () => {
+    const { model } = parseModel('package P { part def A { doc /* d */ attribute m : Real; } /* free */ comment C /* body */ part def Z; }');
+    // P, A, the doc, m, the free-standing comment, C, Z — the same seven as before the lexer rule.
+    expect(model.all().length).toBe(7);
+    expect(model.all().some((el) => el.declaredName === 'm')).toBe(true);
+  });
+});
+
+// `parallel` is valid only on a state (SysML v2 §7.18.2). On any other statement it used to read
+// silently as a separate keyword-less usage named `parallel` that swallowed the body.
+describe('`parallel` on a statement that is not a state', () => {
+  const codes = (src: string) => parseModel(src).diagnostics.map((d) => d.code);
+
+  it.each([
+    'exhibit action ea parallel { action x; }',
+    'exhibit use case u parallel { }',
+    'perform action p parallel { action x; }',
+    'include use case u parallel { }',
+    'action a parallel { action x; }',
+    'part p parallel { part q; }',
+  ])('reports %s', (stmt) => {
+    expect(codes(`package P { part def V { ${stmt} } }`)).toEqual(['parse/parallel-not-on-state']);
+  });
+
+  it.each([
+    'attribute parallel : Real;',
+    'part parallel;',
+    'state parallel;',
+    'exhibit state parallel { state a; }',
+    'state s parallel { state a; }',
+    'exhibit state es parallel { }',
+    "state <M> parallel { state a; }",
+  ])('does not report %s', (stmt) => {
+    expect(codes(`package P { part def V { ${stmt} } }`)).toEqual([]);
+  });
+});
+
 // The parser is built the first time something asks for it (Chevrotain's lookahead analysis,
 // about 1.3 s in a browser); `warmParser` lets a page pay that before the click that needs a
 // parse (`src/ui/parser-warmup.ts`, docs/UI-ROADMAP.md P3).

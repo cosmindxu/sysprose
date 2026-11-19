@@ -2895,3 +2895,14 @@ describe('round-trip — a binding to an unnamed redefinition is saved under a n
     expect(text).toContain('part m : A::s::inner;');
   });
 });
+
+describe('a block comment between a declaration header and its body', () => {
+  it('survives parse -> serialize -> parse with the body kept', () => {
+    const { model } = parseModel('package P { part def Ctl { state def M /* c */ { state a; state b; transition t first a accept go then b; } } }');
+    const names = (m: Model) => m.all().map((el) => el.declaredName).filter((n) => n).sort();
+    expect(names(model)).toEqual(expect.arrayContaining(['M', 'a', 'b', 't']));
+    const again = parseModel(serializeModel(model));
+    expect(again.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(names(again.model)).toEqual(names(model));
+  });
+});

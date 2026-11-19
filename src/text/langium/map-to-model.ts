@@ -2612,6 +2612,25 @@ class Mapper {
   /* ─────────────────────── definitions / usages ────────────────────────── */
 
   private mapDefinition(node: Definition, ownerId: ElementId | null): void {
+    // A bare `parallel { … }` with no keyword of its own: `parallel` is valid only on a state (SysML v2 §7.18.2), so it is
+    // the tail of the statement before it (`exhibit action ea parallel { … }`, `part p parallel { … }`), not an element.
+    if (node.keyword === undefined && node.name === 'parallel' && node.body !== undefined) {
+      const cst = node.$cstNode;
+      const head = cst ? cst.root.fullText.slice(cst.offset, cst.offset + 8) : '';
+      if (/^parallel(?![A-Za-z0-9_])/.test(head)) {
+        const code = 'parse/parallel-not-on-state';
+        this.diagnostics.push({
+          message: `'parallel' is valid only on a state definition or state usage (SysML v2 §7.18.2); here it follows another kind of statement, so it would read as a separate usage named 'parallel' that takes the body.`,
+          ...posOf(node),
+          severity: 'error',
+          source: 'mapper',
+          code,
+          found: 'parallel',
+          hint: renderHint(code, { found: 'parallel' }),
+          ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+        });
+      }
+    }
     const prefixes = node.prefixes ?? [];
     const direction = prefixes.find((p) => DIRECTIONS.has(p));
     // `in port out x` — two different directions on one feature. The first

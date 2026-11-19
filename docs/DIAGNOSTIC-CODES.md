@@ -150,6 +150,13 @@ The tokens do not form a legal declaration. `expected` lists what would have bee
 - **Fires when:** A bare `then X;` appears with no preceding succession in the same scope to chain from, and not straight after an entry action (`entry; then off;` is the succession from the entry action to the initial state, SysML v2 §7.18.2, and is not reported).
 - **Hint given:** A bare `then X;` continues the previous succession. Start the chain with `first A then B;`, or write this one in full.
 
+### `parse/parallel-not-on-state`
+
+- **Severity:** error
+- **Source:** mapper
+- **Fires when:** The bare word `parallel` stands before a `{ … }` body on a statement that is not a state: `exhibit action ea parallel { … }`, `exhibit use case u parallel { … }`, `perform action p parallel { … }`, `include use case u parallel { … }`, `action a parallel { … }`, `part p parallel { … }`. SysML v2 §7.18.2 gives `parallel` only to state definitions and state usages (`isParallel ?= 'parallel'` in the state body), so there it is no keyword; read as a name it would be a separate keyword-less usage `parallel` that swallows the body. An identifier named `parallel` after a keyword (`attribute parallel : Real;`, `part parallel;`, `state parallel;`, `exhibit state parallel { … }`) is not reported.
+- **Hint given:** Remove {found} here: it is valid only on `state` / `state def` / `exhibit state`. To name an element parallel, give it a keyword (`part parallel { … }`) or quote the name (`'parallel'`).
+
 ### `parse/conflicting-direction`
 
 - **Severity:** warning
@@ -964,4 +971,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*124 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*125 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

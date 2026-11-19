@@ -43,6 +43,7 @@ class SysmlLexer extends DefaultLexer {
   override tokenize(text: string, options?: TokenizeOptions): LexerResult {
     const result = super.tokenize(text, options);
     const d = this.definition;
+    this.hideMidDeclarationComments(result);
     const [id, kwIn, lb, rb, lc, rc, lp, rp, semi] = ['ID', 'in', '[', ']', '{', '}', '(', ')', ';'].map((n) => d[n]);
     if (!id || !kwIn || !lb || !rb || !lc || !rc || !lp || !rp || !semi) return result;
     const open: unknown[] = [];
@@ -67,7 +68,52 @@ class SysmlLexer extends DefaultLexer {
     }
     return result;
   }
+
+  /**
+   * A `/* … *\/` comment in the MIDDLE of a declaration, directly before its
+   * `{` (`state def M /* c *\/ { … }`), is
+   * not a free-standing element: left in the stream it ended the declaration at
+   * its name and the braced body fell to the enclosing body's trailing
+   * expression slot, so the body vanished with no diagnostic. Such a comment is
+   * moved to the hidden channel, so the body stays the declaration's own.
+   * Untouched: a comment that starts its statement (a free-standing element), and
+   * the body of `doc` / `comment` / `rep` / `language`, whose `/* … *\/` is their
+   * text.
+   */
+  private hideMidDeclarationComments(result: LexerResult): void {
+    const d = this.definition;
+    const [ml, lc, rc, semi] = ['ML_COMMENT', '{', '}', ';'].map((n) => d[n]);
+    if (!ml || !lc || !rc || !semi) return;
+    const tokens = result.tokens;
+    const drop = new Set<number>();
+    for (let i = 1; i < tokens.length - 1; i++) {
+      if (tokens[i].tokenType !== ml) continue;
+      if (tokens[i + 1].tokenType !== lc) continue;
+      let start = i;
+      while (start > 0) {
+        const t = tokens[start - 1].tokenType;
+        if (t === lc || t === rc || t === semi) break;
+        start--;
+      }
+      if (start === i) continue; // starts its statement: a free-standing comment
+      let own = false;
+      for (let k = start; k < i; k++) {
+        if (OWN_TEXT_KEYWORDS.has(tokens[k].image)) own = true;
+      }
+      if (!own) drop.add(i);
+    }
+    if (drop.size === 0) return;
+    const kept: typeof tokens = [];
+    tokens.forEach((t, i) => {
+      if (drop.has(i)) result.hidden.push(t);
+      else kept.push(t);
+    });
+    result.tokens = kept;
+  }
 }
+
+/** Keywords whose statement carries a `/* … *\/` body as its own text. */
+const OWN_TEXT_KEYWORDS = new Set(['doc', 'comment', 'rep', 'language']);
 
 /**
  * Custom, language-specific service overrides: the lexer above. The generated

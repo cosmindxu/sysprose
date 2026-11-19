@@ -1602,8 +1602,8 @@ tagged `[O1 …]` are what its steps and reviews left open.
       `validateStateUsageParallelSubactions`: a parallel state's own substates have no transitions in
       or out); nested parallel states still run as exclusive in the simulator (only the explorer
       refuses them); `exhibit action ea parallel {…}` / `exhibit use case u parallel {…}` /
-      `perform action p parallel {…}` still split silently into a keyword-less `parallel` member (a
-      wrong statement: it needs a diagnostic code).
+      `perform action p parallel {…}` are now an error (`parse/parallel-not-on-state`, fence-comment
+      2026-11-19; the body is still kept under a usage named `parallel`, only the diagnostic is new).
 
 - [ ] **The spec's own state-machine example does not parse: `entry; then off;` is an error.** SysML v2
       Part 1 §7.18.3's `state def OnOff1 { entry; then off; state off; state on; transition off_on
@@ -1671,10 +1671,15 @@ tagged `[O1 …]` are what its steps and reviews left open.
       relied on it still gets the same verdict (check the corpus). [spec-par-ps2 2026-11-19; spec
       conformance mandatory]
 
-- [ ] **A comment just before a body silently drops the body.** `state x /* c */ { state a; }` (and
+- [x] **A comment just before a body silently drops the body.** `state x /* c */ { state a; }` (and
       `state <M1> parallel /* } */ { … }`) parse with `ok: true` and no diagnostic; the body is lost,
       identically on main before spec-par-ps2. A wrong statement: fence first. Done: the body is kept or
       a diagnostic names the loss, with the probes pinned. [spec-par-ps2 2026-11-19; wrong statement]
+      CLOSED 2026-11-19 (fence-comment): a `/* … */` between a declaration's name and its `{` body
+      (`state def M /* c */ { … }`, after a specialization, holding a `{` or `}`) is moved to the hidden
+      channel, so the body is kept; free-standing comments and `doc`/`comment`/`rep`/`language` bodies are
+      untouched. A comment before `;` was already a loud `parse/mismatched-token` and stays one (hiding it
+      changed what the load-health check's texts parse to — caught by the full gate).
 
 - [ ] **The app's step-by-step Simulation Play path, for a machine whose entry start is not read.**
       `runStateMachine` now returns no run with `Not started: …`, but the UI's Play path builds its start
