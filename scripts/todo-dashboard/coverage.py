@@ -94,7 +94,8 @@ def strip_md(s):
 def corpus_usage(keywords):
     """How many of the 637 corpus models contain one of the keywords."""
     if not os.path.isdir(CORPUS):
-        return 0, 0
+        raise SystemExit(f'coverage.corpus_usage: corpus directory not found: {CORPUS} '
+                         '(every TXT weight would silently become 0)')
     files = [f for f in os.listdir(CORPUS) if f.endswith('.sysml')]
     hit = 0
     for f in files:
@@ -123,8 +124,15 @@ def load_source():
             raise SystemExit(f'coverage.load_source: duplicate row id {r["id"]}')
         by_id[r['id']] = r
         order.append(r['id'])
+    for r in src.get('rows', []):
+        if r['area'] not in src.get('areas', []):
+            raise SystemExit(f'coverage.load_source: row {r["id"]} has area {r["area"]!r} not in areas')
+        if not r['id'].startswith(r['kind'] + ':'):
+            raise SystemExit(f'coverage.load_source: row {r["id"]} does not match its kind {r["kind"]}')
     clauses_by_row, seen = {}, set()
     for c in src.get('clauses', []):
+        if not c.get('clause', '').strip() or not c.get('construct', '').strip():
+            raise SystemExit(f'coverage.load_source: clause {c.get("id")} has an empty clause or construct')
         if c['row'] not in by_id:
             raise SystemExit(f'coverage.load_source: clause {c["id"]} names no row: {c["row"]}')
         if c['id'] in seen:
@@ -135,7 +143,14 @@ def load_source():
     for u in src.get('unclaused', []):
         if u['row'] not in by_id:
             raise SystemExit(f'coverage.load_source: unclaused entry names no row: {u["row"]}')
+        if u['row'] in unclaused:
+            raise SystemExit(f'coverage.load_source: duplicate unclaused entry for {u["row"]}')
+        if u['row'] in clauses_by_row:
+            raise SystemExit(f'coverage.load_source: {u["row"]} has clauses and an unclaused note')
         unclaused[u['row']] = u['note']
+    for g in src.get('gaps', []):
+        if not (g.get('area') in src.get('areas', []) and g.get('clause') and g.get('title') and g.get('reason')):
+            raise SystemExit(f'coverage.load_source: malformed gap entry: {g}')
     return src, by_id, order, clauses_by_row, unclaused
 
 
@@ -201,8 +216,7 @@ def build_universe():
     notes = {
         'KerML kernel': 'the 26 metaclass rows are the KerML 8.3 abstract-syntax metaclasses this tool '
                         'stands on; where SysML v2 Part 1 §7 defines the same construct, its textual clause '
-                        'is attached beside the KerML clause (and one row, ItemFlow, cites KerML Flow, not a '
-                        'SysML abstract-syntax clause). The four annotation primitives the earlier 02 §2.2 '
+                        'is attached beside the KerML clause (and one row, ItemFlow, cites KerML Flow beside SysML 7.16.2). The four annotation primitives the earlier 02 §2.2 '
                         'extraction dropped are rows here (8.3.2.3.3–8.3.2.3.6). No test pins a metaclass '
                         'itself, so the rows stay unmeasured (CU-4 is their probe)',
         'Textual notation': 'each TXT row is read or partial from a pinned probe under '
@@ -219,11 +233,11 @@ def build_universe():
                           'specification, so it stays unmeasured; the OSLC PSM has its own suite '
                           '(CONFORMANCE §4, test/conformance/oslc-conformance.test.ts)',
     }
-    data = {'meta': {'generated': '', 'sources': ['scripts/todo-dashboard/coverage-universe-source.json',
+    data = {'meta': {'generated': '', 'sources': ['scripts/todo-dashboard/coverage-universe-source.json', 'docs/CONFORMANCE.md',
                                                     'docs/CONSTRAINT-CLASSES.md', 'corpus (637 models)',
                                                     'test/conformance/', 'test/e2e/', 'scripts/todo-dashboard/probes/'],
                      'standards': src.get('standards', []),
-                     'areas': areas, 'notes': notes},
+                     'areas': areas, 'notes': notes, 'gaps': src.get('gaps', [])},
             'rows': rows}
     measure_txt(rows)
     measure_known(rows)
@@ -241,6 +255,12 @@ def build_universe():
 # each says so; the two that needed a read added say so); the other six are
 # constructed here. A `partial` whose sentence begins "the construct itself reaches
 # no row" means the surfaces read nothing of the construct, not that some shapes are decided.
+# TXT rows added by CU-3 that no probe reads yet: they stay `unmeasured` with this sentence.
+UNPROBED_TXT = {
+    'TXT:cases': 'no probe yet: the case, analysis, verification and use-case constructs (7.22-7.25) are '
+                 'not read on any surface; CU-2 probed the 14 original textual rows only',
+}
+
 TXT_PROBES = {
     'TXT:packages-imports': ('read', 'scripts/todo-dashboard/probes/packages-imports.sysml',
                              '`Use::SizeLimit::«ConstraintUsage»` reads `a.w.size <= a.limit`, '
@@ -313,7 +333,12 @@ def measure_txt(rows):
     stale = [k for k in TXT_PROBES if k not in by_id]
     if stale:
         raise SystemExit(f'coverage.measure_txt: ids with no row: {sorted(stale)}')
-    missing = [rid for rid in txt if rid not in TXT_PROBES]
+    stale_un = [k for k in UNPROBED_TXT if k not in by_id]
+    if stale_un:
+        raise SystemExit(f'coverage.measure_txt: unprobed ids with no row: {sorted(stale_un)}')
+    for rid, why in UNPROBED_TXT.items():
+        append_note(by_id[rid], why)
+    missing = [rid for rid in txt if rid not in TXT_PROBES and rid not in UNPROBED_TXT]
     if missing:
         raise SystemExit(f'coverage.measure_txt: TXT rows with no probe: {sorted(missing)}')
     for rid, (state, probe, sentence) in TXT_PROBES.items():
@@ -437,6 +462,14 @@ def write_html(data, m):
         by_area.setdefault(r['area'], []).append(r)
     pill = {'read': 'read', 'parsed': 'parsed', 'decided': 'decided', 'rendered': 'rendered', 'partial': 'partial',
             'refused': 'refused', 'unmeasured': 'unmeasured'}
+    gaps = data['meta'].get('gaps', [])
+    gaps_html = ''
+    if gaps:
+        items = ''.join(f"<li><b>{g['area']}</b> — {g['clause']}: {g['title']} <i>({g['reason']})</i></li>"
+                        for g in gaps)
+        gaps_html = ('<div class="note"><b>Known gaps in the universe.</b> Clauses the inventory names '
+                     'but gives no row of its own, so they carry no state here; they are listed, not hidden:'
+                     f'<ul>{items}</ul></div>')
     body_rows = []
     for area, rs in by_area.items():
         measured = sum(1 for r in rs if r['state'] != 'unmeasured')
@@ -517,6 +550,7 @@ endpoints this build does not ship stays unmeasured too (the <i>Other</i> group:
 /validate). The app's 17 views include the 11 standard view rows here; the four annotation primitives the
 earlier 02 §2.2 extraction dropped now have rows of their own. Pinned probes fill the remaining unmeasured
 rows as they land.</div>
+{gaps_html}
 </body></html>"""
     open(OUT_HTML, 'w', encoding='utf-8').write(html)
 

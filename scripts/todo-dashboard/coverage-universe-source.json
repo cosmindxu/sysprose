@@ -54,7 +54,6 @@
   {"id": "KERML:comment", "area": "KerML kernel", "kind": "KERML", "name": "Comment", "keywords": []},
   {"id": "KERML:documentation", "area": "KerML kernel", "kind": "KERML", "name": "Documentation", "keywords": []},
   {"id": "KERML:textual-representation", "area": "KerML kernel", "kind": "KERML", "name": "TextualRepresentation", "keywords": []},
-
   {"id": "TXT:packages-imports", "area": "Textual notation", "kind": "TXT", "name": "Packages & imports", "keywords": ["package ", "import "]},
   {"id": "TXT:parts-attributes", "area": "Textual notation", "kind": "TXT", "name": "Parts & attributes", "keywords": ["part def", "part ", "attribute "]},
   {"id": "TXT:items", "area": "Textual notation", "kind": "TXT", "name": "Items", "keywords": ["item def", "item "]},
@@ -69,7 +68,7 @@
   {"id": "TXT:enumerations", "area": "Textual notation", "kind": "TXT", "name": "Enumerations", "keywords": ["enum def", "enum "]},
   {"id": "TXT:occurrences", "area": "Textual notation", "kind": "TXT", "name": "Occurrences", "keywords": ["occurrence def", "occurrence "]},
   {"id": "TXT:metadata", "area": "Textual notation", "kind": "TXT", "name": "Metadata", "keywords": ["metadata def", "metadata ", "@"]},
-
+  {"id": "TXT:cases", "area": "Textual notation", "kind": "TXT", "name": "Cases (case, analysis, verification, use case)", "keywords": ["case def", "analysis def", "verification def", "use case def", "use case "]},
   {"id": "GRAPH:general-view-definition-view", "area": "Graphical notation", "kind": "GRAPH", "name": "General view / Definition view", "keywords": []},
   {"id": "GRAPH:interconnection-view-internal-view", "area": "Graphical notation", "kind": "GRAPH", "name": "Interconnection view / Internal view", "keywords": []},
   {"id": "GRAPH:action-flow-view-activity", "area": "Graphical notation", "kind": "GRAPH", "name": "Action Flow view (Activity)", "keywords": []},
@@ -81,7 +80,6 @@
   {"id": "GRAPH:package-tree-browser-view", "area": "Graphical notation", "kind": "GRAPH", "name": "Package / tree (Browser) view", "keywords": []},
   {"id": "GRAPH:grid-view", "area": "Graphical notation", "kind": "GRAPH", "name": "Grid view", "keywords": []},
   {"id": "GRAPH:geometry-view", "area": "Graphical notation", "kind": "GRAPH", "name": "Geometry view", "keywords": []},
-
   {"id": "API:projects", "area": "API & services", "kind": "API", "name": "Projects", "keywords": []},
   {"id": "API:branches", "area": "API & services", "kind": "API", "name": "Branches", "keywords": []},
   {"id": "API:tags", "area": "API & services", "kind": "API", "name": "Tags", "keywords": []},
@@ -112,7 +110,7 @@
   {"row": "KERML:feature", "id": "SysML:Usages", "clause": "SysML v2 Part 1 7.6.3", "construct": "Usages — `<kind> <name> : <Type>`: a Feature declared with a kind keyword, a type and an optional body, the reuse pattern of every SysML usage."},
   {"row": "KERML:feature", "id": "SysML:ReferenceUsages", "clause": "SysML v2 Part 1 7.6.4", "construct": "Reference usages — a usage declared with no kind keyword (or `ref`), referential by definition."},
   {"row": "KERML:feature", "id": "SysML:FeatureChains", "clause": "SysML v2 Part 1 7.6.6", "construct": "Feature chains — a dotted path of usages recording the intermediate features, not just a qualified name."},
-  {"row": "KERML:specialization", "id": "KERML:Specialization", "clause": "KerML 8.3.3.1.8", "construct": "Specialization — the general subsetting relationship: instances of the specific type are a subset of the general type's instances."},
+  {"row": "KERML:specialization", "id": "KERML:Specialization", "clause": "KerML 8.3.3.1.8", "construct": "Specialization — the generalization relationship between types: every instance of the specific type is also an instance of the general type (Subsetting, Redefinition and FeatureTyping are its specializations)."},
   {"row": "KERML:subclassification", "id": "KERML:Subclassification", "clause": "KerML 8.3.3.2.3", "construct": "Subclassification — a Specialization between classifiers (textual `:>` or `specializes`)."},
   {"row": "KERML:featuretyping", "id": "KERML:FeatureTyping", "clause": "KerML 8.3.3.3.7", "construct": "FeatureTyping — relates a Feature to the Type that types it (textual `:`)."},
   {"row": "KERML:subsetting", "id": "KERML:Subsetting", "clause": "KerML 8.3.3.3.10", "construct": "Subsetting — a Specialization between features: one feature's values are a subset of another's (textual `:>`)."},
@@ -123,7 +121,7 @@
   {"row": "KERML:class-structure-datatype", "id": "KERML:Class", "clause": "KerML 8.3.4.2.2", "construct": "Class — a Classifier whose instances are identity-bearing objects."},
   {"row": "KERML:class-structure-datatype", "id": "KERML:Structure", "clause": "KerML 8.3.4.3.2", "construct": "Structure — a Class whose instances are composite structures."},
   {"row": "KERML:class-structure-datatype", "id": "KERML:DataType", "clause": "KerML 8.3.4.1.2", "construct": "DataType — a Classifier whose instances are pure data values."},
-  {"row": "KERML:association-connector", "id": "KERML:Association", "clause": "KerML 8.3.4.4.2", "construct": "Association — a Classifier typed relationship between features."},
+  {"row": "KERML:association-connector", "id": "KERML:Association", "clause": "KerML 8.3.4.4.2", "construct": "Association — a Classifier that is also a Relationship: it relates two or more types (its association ends) and can have instances that are the links."},
   {"row": "KERML:association-connector", "id": "KERML:Connector", "clause": "KerML 8.3.4.5.3", "construct": "Connector — a feature whose values are links between its ends; the basis of connections and interfaces."},
   {"row": "KERML:behavior-step-function", "id": "KERML:Behavior", "clause": "KerML 8.3.4.6.2", "construct": "Behavior — a Class that classifies performances."},
   {"row": "KERML:behavior-step-function", "id": "KERML:Step", "clause": "KerML 8.3.4.6.3", "construct": "Step — a Feature that is a usage of a Behavior."},
@@ -143,7 +141,6 @@
   {"row": "KERML:documentation", "id": "SysML:Documentation", "clause": "SysML v2 Part 1 7.4.2", "construct": "Documentation — `doc /* … */`, a comment that documents its single owning element."},
   {"row": "KERML:textual-representation", "id": "KERML:TextualRepresentation", "clause": "KerML 8.3.2.3.6", "construct": "TextualRepresentation — an annotating element carrying a textual rendering of its annotated element in a stated language."},
   {"row": "KERML:textual-representation", "id": "SysML:TextualRepresentation", "clause": "SysML v2 Part 1 7.4.3", "construct": "TextualRepresentation — a textual body in a named language (the `rep` notation) rendered as an annotation of its element."},
-
   {"row": "TXT:packages-imports", "id": "TXT:namespaces", "clause": "SysML v2 Part 1 7.5", "construct": "Namespaces and packages: package definitions and usages, owned members and aliases (7.5.1–7.5.2)."},
   {"row": "TXT:packages-imports", "id": "TXT:imports", "clause": "SysML v2 Part 1 7.5.3", "construct": "Imports — public/private, membership and namespace (recursive `::**`) imports, with import filtering (7.5.4)."},
   {"row": "TXT:parts-attributes", "id": "TXT:attributes", "clause": "SysML v2 Part 1 7.7", "construct": "Attributes — attribute definitions (DataTypes) and attribute usages with types and values."},
@@ -166,7 +163,6 @@
   {"row": "TXT:enumerations", "id": "TXT:enumerations", "clause": "SysML v2 Part 1 7.8", "construct": "Enumerations — enumeration definitions and usages with enumeration literals."},
   {"row": "TXT:occurrences", "id": "TXT:occurrences", "clause": "SysML v2 Part 1 7.9", "construct": "Occurrences — occurrence definitions and usages, time slices and snapshots, individual and event occurrences (7.9.3–7.9.5)."},
   {"row": "TXT:metadata", "id": "TXT:metadata", "clause": "SysML v2 Part 1 7.27", "construct": "Metadata — metadata definitions and usages, semantic metadata and user-defined keywords (7.27.2–7.27.4)."},
-
   {"row": "GRAPH:general-view-definition-view", "id": "GRAPH:general-view", "clause": "SysML v2 Part 1 8.2.3.5 (Table 34, 9.2.20.1)", "construct": "General View (gv) — the default compartment for a package; definitions and usages drawn as nodes and edges."},
   {"row": "GRAPH:interconnection-view-internal-view", "id": "GRAPH:interconnection", "clause": "SysML v2 Part 1 8.2.3.11 (Table 34, 9.2.20.1)", "construct": "Interconnection View (iv) — the default compartment for a part: nested parts, their ports and the connections between them."},
   {"row": "GRAPH:action-flow-view-activity", "id": "GRAPH:action-flow", "clause": "SysML v2 Part 1 8.2.3.17 (Table 34, 9.2.20.1)", "construct": "Action Flow View (afv) — the default compartment for an action: actions, parameters, control nodes and flows."},
@@ -174,15 +170,14 @@
   {"row": "GRAPH:sequence-view", "id": "GRAPH:sequence", "clause": "SysML v2 Part 1 8.2.3.9 (Table 34, 9.2.20.1)", "construct": "Sequence View (sv) — the default compartment for an occurrence: lifelines and time-ordered event occurrences (9.2.20.2.7)."},
   {"row": "GRAPH:requirement-view", "id": "GRAPH:requirement", "clause": "SysML v2 Part 1 8.2.3.21; GeneralView filter 9.2.20.2.3", "construct": "Requirement view — the GeneralView filter over requirement definitions/usages and satisfy/derive/refine, drawn by the requirements graphical notation."},
   {"row": "GRAPH:case-analysis-view", "id": "GRAPH:case-analysis", "clause": "SysML v2 Part 1 8.2.3.22–8.2.3.24", "construct": "Cases, analysis cases and verification cases — their graphical notation, including subjects, objectives and results."},
-  {"row": "GRAPH:case-analysis-view", "id": "SysML:Cases", "clause": "SysML v2 Part 1 7.22.2", "construct": "Case definitions and usages — `case def`/`case`, a calculation-like construct with a subject parameter, actor parameters and an objective."},
-  {"row": "GRAPH:case-analysis-view", "id": "SysML:AnalysisCases", "clause": "SysML v2 Part 1 7.23.2", "construct": "Analysis case definitions and usages — `analysis def`/`analysis`, a case whose objective concerns its analysis result."},
-  {"row": "GRAPH:case-analysis-view", "id": "SysML:VerificationCases", "clause": "SysML v2 Part 1 7.24.2", "construct": "Verification case definitions and usages — `verification def`/`verification`, a case whose result is a pass/fail/inconclusive/error verdict."},
-  {"row": "GRAPH:case-analysis-view", "id": "SysML:UseCases", "clause": "SysML v2 Part 1 7.25.2", "construct": "Use case definitions and usages — `use case def`/`use case`, a case with external actors and an include-use-case usage (7.25.3)."},
+  {"row": "TXT:cases", "id": "SysML:Cases", "clause": "SysML v2 Part 1 7.22.2", "construct": "Case definitions and usages — `case def`/`case`, a calculation-like construct with a subject parameter, actor parameters and an objective."},
+  {"row": "TXT:cases", "id": "SysML:AnalysisCases", "clause": "SysML v2 Part 1 7.23.2", "construct": "Analysis case definitions and usages — `analysis def`/`analysis`, a case whose objective concerns its analysis result."},
+  {"row": "TXT:cases", "id": "SysML:VerificationCases", "clause": "SysML v2 Part 1 7.24.2", "construct": "Verification case definitions and usages — `verification def`/`verification`, a case whose result is a pass/fail/inconclusive/error verdict."},
+  {"row": "TXT:cases", "id": "SysML:UseCases", "clause": "SysML v2 Part 1 7.25.2", "construct": "Use case definitions and usages — `use case def`/`use case`, a case with external actors and an include-use-case usage (7.25.3)."},
   {"row": "GRAPH:allocation-matrix", "id": "GRAPH:allocation", "clause": "SysML v2 Part 1 8.2.3.15", "construct": "Allocations graphical notation — the allocate mappings, typically rendered as a matrix or table."},
   {"row": "GRAPH:package-tree-browser-view", "id": "GRAPH:browser-view", "clause": "SysML v2 Part 1 9.2.20.2.2 (Table 34, 9.2.20.1)", "construct": "Browser View (bv) — the ownership/membership hierarchy from an exposed root, rendered as a collapsible tree."},
   {"row": "GRAPH:grid-view", "id": "GRAPH:grid-view", "clause": "SysML v2 Part 1 9.2.20.2.5 (Table 34, 9.2.20.1)", "construct": "Grid View (grv) — exposed elements and relationships arranged in a rectangular grid; Table 34 names no graphical rendering clause for it."},
   {"row": "GRAPH:geometry-view", "id": "GRAPH:geometry-view", "clause": "SysML v2 Part 1 9.2.20.2.4 (Table 34, 9.2.20.1)", "construct": "Geometry View (gev) — a 2D/3D visualization of exposed spatial items; Table 34 names no graphical rendering clause for it."},
-
   {"row": "API:projects", "id": "API:projects", "clause": "API and Services 7.2.1; REST/HTTP PSM 8.1.3", "construct": "ProjectService — create, read, update and delete projects."},
   {"row": "API:branches", "id": "API:branches", "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3", "construct": "ProjectDataVersioningService — branches and their lifecycle."},
   {"row": "API:tags", "id": "API:tags", "clause": "API and Services 7.2.3; REST/HTTP PSM 8.1.3", "construct": "ProjectDataVersioningService — tags and their lifecycle."},
@@ -194,5 +189,16 @@
  ],
  "unclaused": [
   {"row": "API:other", "note": "No normative clause: 02-omg-standard-reference §5.7's \"Other\" group is the reference server's POST /transform and POST /validate, which the API and Services specification does not define. The row is kept as an existing alias and stays unmeasured; no clause is invented for it."}
+ ],
+ "gaps": [
+  {"area": "Textual notation", "clause": "SysML v2 Part 1 7.6.5", "title": "Effective Names", "reason": "no row of its own; not read by any probe"},
+  {"area": "Textual notation", "clause": "SysML v2 Part 1 7.6.7", "title": "Variations and Variants", "reason": "no row of its own; variability is a later item"},
+  {"area": "Textual notation", "clause": "SysML v2 Part 1 7.6.8", "title": "Implicit Specialization", "reason": "no row of its own"},
+  {"area": "Textual notation", "clause": "SysML v2 Part 1 7.23.3", "title": "Trade-Off Analyses", "reason": "no row of its own"},
+  {"area": "Textual notation", "clause": "SysML v2 Part 1 7.17.4–7.17.12, 7.21.2–7.21.3, 7.26.2–7.26.4, 7.5.5, 7.9.2, 7.18.4", "title": "sub-clauses cited only through their section", "reason": "folded into the row that cites the parent section (TXT:actions 7.17, TXT:requirements 7.21, TXT:views 7.26, TXT:namespaces 7.5, TXT:states 7.18); no row of their own"},
+  {"area": "Graphical notation", "clause": "SysML v2 Part 1 8.2.3.2–4, .6–.8, .10, .12–.14, .16, .19, .20, .25–.27", "title": "graphical clauses without a row", "reason": "the area carries the 11 view kinds the app renders, not every graphical clause"},
+  {"area": "KerML kernel", "clause": "KerML 8.3", "title": "metaclasses without a row: Dependency, Predicate, Invariant, BindingConnector, FeatureValue, ReferenceSubsetting, FeatureChaining, LibraryPackage, Interaction, PayloadFeature, the 8.3.4.8.x expressions and others", "reason": "the 26 rows are the metaclasses the tool stands on; the rest are not rows yet (CU-4 probes the existing 26)"},
+  {"area": "KerML kernel", "clause": "KerML 9", "title": "model libraries", "reason": "the pinned stdlib (src/library/std/manifest.json), not row-per-element"},
+  {"area": "API & services", "clause": "API and Services 7.1 and 8.2", "title": "API Model and the OSLC PSM", "reason": "no row, although an OSLC conformance suite exists (CONFORMANCE §4)"}
  ]
 }

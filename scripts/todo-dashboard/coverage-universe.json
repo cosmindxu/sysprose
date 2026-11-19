@@ -1,8 +1,9 @@
 {
  "meta": {
-  "generated": "2026-11-19T00:58:06+01:00",
+  "generated": "2026-11-19T01:03:33+01:00",
   "sources": [
    "scripts/todo-dashboard/coverage-universe-source.json",
+   "docs/CONFORMANCE.md",
    "docs/CONSTRAINT-CLASSES.md",
    "corpus (637 models)",
    "test/conformance/",
@@ -43,11 +44,67 @@
    "Constraints & parametrics"
   ],
   "notes": {
-   "KerML kernel": "the 26 metaclass rows are the KerML 8.3 abstract-syntax metaclasses this tool stands on; where SysML v2 Part 1 \u00a77 defines the same construct, its textual clause is attached beside the KerML clause (and one row, ItemFlow, cites KerML Flow, not a SysML abstract-syntax clause). The four annotation primitives the earlier 02 \u00a72.2 extraction dropped are rows here (8.3.2.3.3\u20138.3.2.3.6). No test pins a metaclass itself, so the rows stay unmeasured (CU-4 is their probe)",
+   "KerML kernel": "the 26 metaclass rows are the KerML 8.3 abstract-syntax metaclasses this tool stands on; where SysML v2 Part 1 \u00a77 defines the same construct, its textual clause is attached beside the KerML clause (and one row, ItemFlow, cites KerML Flow beside SysML 7.16.2). The four annotation primitives the earlier 02 \u00a72.2 extraction dropped are rows here (8.3.2.3.3\u20138.3.2.3.6). No test pins a metaclass itself, so the rows stay unmeasured (CU-4 is their probe)",
    "Textual notation": "each TXT row is read or partial from a pinned probe under scripts/todo-dashboard/probes/ (reported by probes/run.ts over the four decision surfaces); a construct that files no row, or only a structural read, says so and is partial, never read",
    "Graphical notation": "the 11 view rows cover 11 of the app's 17 views; each is rendered where an E2E spec asserts its panel (test/e2e/), and each cites a SysML v2 Part 1 Standard View Definition (9.2.20) and/or a graphical clause (8.2.3) where one exists",
    "API & services": "the service groups are decided where the API conformance tests assert their contracts (CONFORMANCE \u00a73); the \"Other\" group's POST /transform and /validate are not shipped here and have no clause in the API and Services specification, so it stays unmeasured; the OSLC PSM has its own suite (CONFORMANCE \u00a74, test/conformance/oslc-conformance.test.ts)"
-  }
+  },
+  "gaps": [
+   {
+    "area": "Textual notation",
+    "clause": "SysML v2 Part 1 7.6.5",
+    "title": "Effective Names",
+    "reason": "no row of its own; not read by any probe"
+   },
+   {
+    "area": "Textual notation",
+    "clause": "SysML v2 Part 1 7.6.7",
+    "title": "Variations and Variants",
+    "reason": "no row of its own; variability is a later item"
+   },
+   {
+    "area": "Textual notation",
+    "clause": "SysML v2 Part 1 7.6.8",
+    "title": "Implicit Specialization",
+    "reason": "no row of its own"
+   },
+   {
+    "area": "Textual notation",
+    "clause": "SysML v2 Part 1 7.23.3",
+    "title": "Trade-Off Analyses",
+    "reason": "no row of its own"
+   },
+   {
+    "area": "Textual notation",
+    "clause": "SysML v2 Part 1 7.17.4\u20137.17.12, 7.21.2\u20137.21.3, 7.26.2\u20137.26.4, 7.5.5, 7.9.2, 7.18.4",
+    "title": "sub-clauses cited only through their section",
+    "reason": "folded into the row that cites the parent section (TXT:actions 7.17, TXT:requirements 7.21, TXT:views 7.26, TXT:namespaces 7.5, TXT:states 7.18); no row of their own"
+   },
+   {
+    "area": "Graphical notation",
+    "clause": "SysML v2 Part 1 8.2.3.2\u20134, .6\u2013.8, .10, .12\u2013.14, .16, .19, .20, .25\u2013.27",
+    "title": "graphical clauses without a row",
+    "reason": "the area carries the 11 view kinds the app renders, not every graphical clause"
+   },
+   {
+    "area": "KerML kernel",
+    "clause": "KerML 8.3",
+    "title": "metaclasses without a row: Dependency, Predicate, Invariant, BindingConnector, FeatureValue, ReferenceSubsetting, FeatureChaining, LibraryPackage, Interaction, PayloadFeature, the 8.3.4.8.x expressions and others",
+    "reason": "the 26 rows are the metaclasses the tool stands on; the rest are not rows yet (CU-4 probes the existing 26)"
+   },
+   {
+    "area": "KerML kernel",
+    "clause": "KerML 9",
+    "title": "model libraries",
+    "reason": "the pinned stdlib (src/library/std/manifest.json), not row-per-element"
+   },
+   {
+    "area": "API & services",
+    "clause": "API and Services 7.1 and 8.2",
+    "title": "API Model and the OSLC PSM",
+    "reason": "no row, although an OSLC conformance suite exists (CONFORMANCE \u00a74)"
+   }
+  ]
  },
  "rows": [
   {
@@ -316,7 +373,7 @@
     {
      "id": "KERML:Specialization",
      "clause": "KerML 8.3.3.1.8",
-     "construct": "Specialization \u2014 the general subsetting relationship: instances of the specific type are a subset of the general type's instances."
+     "construct": "Specialization \u2014 the generalization relationship between types: every instance of the specific type is also an instance of the general type (Subsetting, Redefinition and FeatureTyping are its specializations)."
     }
    ]
   },
@@ -503,7 +560,7 @@
     {
      "id": "KERML:Association",
      "clause": "KerML 8.3.4.4.2",
-     "construct": "Association \u2014 a Classifier typed relationship between features."
+     "construct": "Association \u2014 a Classifier that is also a Relationship: it relates two or more types (its association ends) and can have instances that are the links."
     },
     {
      "id": "KERML:Connector",
@@ -1083,6 +1140,45 @@
    ]
   },
   {
+   "id": "TXT:cases",
+   "area": "Textual notation",
+   "kind": "TXT",
+   "name": "Cases (case, analysis, verification, use case)",
+   "source": "SysML v2 Part 1 7.22.2; SysML v2 Part 1 7.23.2; SysML v2 Part 1 7.24.2; SysML v2 Part 1 7.25.2",
+   "note": "used by 25 of 637 corpus models; parse conformance proven by corpus.test.ts; no probe yet: the case, analysis, verification and use-case constructs (7.22-7.25) are not read on any surface; CU-2 probed the 14 original textual rows only",
+   "state": "unmeasured",
+   "evidence": "",
+   "weight": 25,
+   "clause_ids": [
+    "SysML:Cases",
+    "SysML:AnalysisCases",
+    "SysML:VerificationCases",
+    "SysML:UseCases"
+   ],
+   "clauses": [
+    {
+     "id": "SysML:Cases",
+     "clause": "SysML v2 Part 1 7.22.2",
+     "construct": "Case definitions and usages \u2014 `case def`/`case`, a calculation-like construct with a subject parameter, actor parameters and an objective."
+    },
+    {
+     "id": "SysML:AnalysisCases",
+     "clause": "SysML v2 Part 1 7.23.2",
+     "construct": "Analysis case definitions and usages \u2014 `analysis def`/`analysis`, a case whose objective concerns its analysis result."
+    },
+    {
+     "id": "SysML:VerificationCases",
+     "clause": "SysML v2 Part 1 7.24.2",
+     "construct": "Verification case definitions and usages \u2014 `verification def`/`verification`, a case whose result is a pass/fail/inconclusive/error verdict."
+    },
+    {
+     "id": "SysML:UseCases",
+     "clause": "SysML v2 Part 1 7.25.2",
+     "construct": "Use case definitions and usages \u2014 `use case def`/`use case`, a case with external actors and an include-use-case usage (7.25.3)."
+    }
+   ]
+  },
+  {
    "id": "GRAPH:general-view-definition-view",
    "area": "Graphical notation",
    "kind": "GRAPH",
@@ -1213,43 +1309,19 @@
    "area": "Graphical notation",
    "kind": "GRAPH",
    "name": "Case / Analysis view",
-   "source": "SysML v2 Part 1 8.2.3.22\u20138.2.3.24; SysML v2 Part 1 7.22.2; SysML v2 Part 1 7.23.2; SysML v2 Part 1 7.24.2; SysML v2 Part 1 7.25.2",
+   "source": "SysML v2 Part 1 8.2.3.22\u20138.2.3.24",
    "note": "the case view draws its React Flow canvas; the analysis view draws its graph and DSM",
    "state": "rendered",
    "evidence": "test/e2e/diagram-views3.spec.ts, test/e2e/graph-analysis.spec.ts",
    "weight": 0,
    "clause_ids": [
-    "GRAPH:case-analysis",
-    "SysML:Cases",
-    "SysML:AnalysisCases",
-    "SysML:VerificationCases",
-    "SysML:UseCases"
+    "GRAPH:case-analysis"
    ],
    "clauses": [
     {
      "id": "GRAPH:case-analysis",
      "clause": "SysML v2 Part 1 8.2.3.22\u20138.2.3.24",
      "construct": "Cases, analysis cases and verification cases \u2014 their graphical notation, including subjects, objectives and results."
-    },
-    {
-     "id": "SysML:Cases",
-     "clause": "SysML v2 Part 1 7.22.2",
-     "construct": "Case definitions and usages \u2014 `case def`/`case`, a calculation-like construct with a subject parameter, actor parameters and an objective."
-    },
-    {
-     "id": "SysML:AnalysisCases",
-     "clause": "SysML v2 Part 1 7.23.2",
-     "construct": "Analysis case definitions and usages \u2014 `analysis def`/`analysis`, a case whose objective concerns its analysis result."
-    },
-    {
-     "id": "SysML:VerificationCases",
-     "clause": "SysML v2 Part 1 7.24.2",
-     "construct": "Verification case definitions and usages \u2014 `verification def`/`verification`, a case whose result is a pass/fail/inconclusive/error verdict."
-    },
-    {
-     "id": "SysML:UseCases",
-     "clause": "SysML v2 Part 1 7.25.2",
-     "construct": "Use case definitions and usages \u2014 `use case def`/`use case`, a case with external actors and an include-use-case usage (7.25.3)."
     }
    ]
   },
@@ -1845,9 +1917,9 @@
   }
  ],
  "metrics": {
-  "rows": 85,
+  "rows": 86,
   "measured": 56,
-  "unmeasured": 29,
+  "unmeasured": 30,
   "construct_coverage": 73.5,
   "decision_rows": 25,
   "decision_decided": 7,
