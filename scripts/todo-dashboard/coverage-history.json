@@ -1651,6 +1651,36 @@
    "false": 8,
    "construct_coverage": 73.5,
    "decision_coverage": 28.0
+  },
+  {
+   "idx": 132,
+   "day": "2026-11-19",
+   "sha": "2840e97",
+   "subject": "todo-dashboard: refresh the datasets and the standalone page against main 8344ad0",
+   "source": "coverage-snapshot",
+   "snapshot": "2840e97",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 8,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 133,
+   "day": "2026-11-19",
+   "sha": "abf30a6",
+   "subject": "todo-dashboard: refresh the datasets and the standalone page against main fe9aa18",
+   "source": "coverage-snapshot",
+   "snapshot": "abf30a6",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 9,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
   }
  ]
 }
