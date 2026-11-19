@@ -46,7 +46,7 @@ import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 // The summary generator's pure half, so its refusal to summarise a red run is
 // asserted by CALLING it (the script guards its `main()` with `isMainModule`,
 // as `gen-cli-reference.ts` does for its own drift test).
-import { summarize, type VitestJson } from '../../scripts/gen-test-report';
+import { summarize, SELF_CHECK, type VitestJson } from '../../scripts/gen-test-report';
 
 const root = (p: string) => resolve(process.cwd(), p);
 const read = (p: string) => readFileSync(root(p), 'utf8');
@@ -734,6 +734,22 @@ describe('the suite totals agree across the documents that quote them', () => {
     };
     expect(() => summarize({ ...green, numPassedTests: 2, numFailedTests: 1 })).toThrow(/records green runs only/);
     expect(() => summarize({ ...green, numPassedTests: 2, numPendingTests: 1 })).toThrow(/records green runs only/);
+    // `selfCheck` forgives ONLY the check that compares the summary to its own run, and counts it as passed.
+    const named = { status: 'failed', fullName: `x > ${SELF_CHECK}` };
+    const redSelf: VitestJson = {
+      ...green,
+      numPassedTests: 2,
+      numFailedTests: 1,
+      testResults: [{ name: resolve(process.cwd(), 'test/unit/a.test.ts'), assertionResults: [{ status: 'passed' }, { status: 'passed' }, named] }],
+    };
+    expect(() => summarize(redSelf)).toThrow(/records green runs only/);
+    expect(summarize(redSelf, { selfCheck: true })).toContain('0 failed, 0 skipped');
+    const redOther: VitestJson = {
+      ...redSelf,
+      testResults: [{ name: resolve(process.cwd(), 'test/unit/a.test.ts'), assertionResults: [named, { status: 'failed', fullName: 'x > another' }] }],
+      numFailedTests: 2,
+    };
+    expect(() => summarize(redOther, { selfCheck: true })).toThrow(/records green runs only/);
     const text = summarize(green);
     // Files are counted, not describe blocks (`numTotalTestSuites` is 7 here
     // and must not appear), the totals line is the run's, and the rows are
