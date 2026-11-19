@@ -203,6 +203,13 @@ The tokens form a legal declaration, but the model this tool builds has nowhere 
 - **Fires when:** A clause is written `assert not …`, `require not …` or `assume not …`, the negation of a clause, and it has no body that is one expression for this tool to negate: it names a constraint without a body (`assert not constraint c;`), specialises one (`assert not constraint c :> K { … }`), is a requirement (`assert not requirement r { … }`), its body holds members and no expression (`assert not constraint c { attribute y = 2.0; }`), or its body holds a member other than a comment, a `doc` or an attribute with a `=` value or none (a nested constraint, requirement, part or calc, a `default` or `:=` value: `assert not constraint c { attribute y default = 2.0; load > y }`). A negated clause with a body that is one expression (`assert not constraint c { load > 10.0 }`), beside comment, `doc` or such attribute members (`assert not constraint c { attribute y = 2.0; load > y }`), is read as the plain clause over `not (load > 10.0)` (`not (load > y)`, the members as written) and files no finding. No check, engine or solver reads the negation of a clause of the shapes above: read as the plain clause it would say the opposite (the constraint checked as a fact, its body asserted as an axiom), and dropped from a proof it restricts it would let a refutation stand that the negation rules out. A negated satisfaction, `assert not satisfy R by s0;`, is refused whole the same way: read apart, its `satisfy` would be judged as a plain satisfaction of R by s0, so no satisfaction is mapped from it and no surface judges R for s0.
 - **Hint given:** The negated clause {found} is not read: nothing checks it or asserts it, so the load stays degraded and the checks abstain until it is gone; it is kept as written and re-emitted unchanged on save. State the negation in the body instead, `assert constraint c { not (…) }`, which this tool reads; for a negated `satisfy R by s`, state what must fail as `assert not constraint { … }` over the values of s.
 
+### `mapper/state-form-unread`
+
+- **Severity:** error
+- **Source:** mapper
+- **Fires when:** A state body holds a SysML v2 §7.18 form that parses but that neither the walk nor the interpreter runs, so it is refused rather than read as a different statement: the target-transition shorthand (`state off; accept TurnOn via commPort then on;`, `state off; if c then on;`, OnOff5/6), an action written in place of an entry, do or exit body (`entry assign x := 1;`, `do send X to Y;`), a guarded `if c then X;` outside an entry succession, or `exhibit A::B :> C;`, an exhibit of a state by a qualified name. The statement (with the `then X;` that completes a shorthand) is not mapped; nothing is guessed from it. (`entry; if c then off;` is read, as a guarded succession from the entry action, and the machine is refused by the walk and the interpreter over the guard.)
+- **Hint given:** The statement is not read. Write a target transition in the long form, `transition first off accept TurnOn via commPort then on;`, an action in an entry/do/exit body (`entry action a { assign x := 1; }`), an exhibit as `exhibit state s :> C;`; the load stays degraded and the checks abstain until you do.
+
 ## Reference resolution
 
 A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.
@@ -978,4 +985,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*126 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*127 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
