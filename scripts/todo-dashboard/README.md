@@ -9,11 +9,16 @@ The dashboard (a claude.ai Artifact, not hosted here) charts how this repo's `TO
 | `series2.py` | Applies the audit corrections and joins severity classes (`classified.json`, `labels_extra.json`, `label_overrides.json`, `corrections_extra.json`); writes `timeline.json`, `entries_final.json`. |
 | `datasets.py` | Builds the four `ds_*.json` datasets the page reads (adds `classes.json`, `views.json`, `origin_extra.json`). |
 | `ds_*.json` | The current datasets (timeline, windows, origin, open) as of commit `b700e85`. |
+| `coverage.py` | Builds the SysML v2 coverage page: the clause-numbered universe, each row's state, weight and evidence links, the two weightings, the per-area false counts and the per-merge trend; writes `coverage-universe.json`, `coverage.html` and `coverage-history.json`. |
+| `coverage-universe-source.json` | The normative clause inventory the coverage rows come from: KerML §8–9, SysML v2 textual §7, the view definitions and the API/services clauses. |
+| `coverage-universe.json` | The generated coverage matrix and its metrics; the page reads it. |
+| `coverage-history.json` | The per-merge coverage trend: the snapshot's four numbers at each timeline merge and at each later commit that changed the snapshot. |
+| `coverage.html` | The coverage page the dashboard links as a first-class page; open it in any browser or serve it statically. |
 | `index.html` | The page source. |
 | `standalone.py` | Builds `standalone.html`: the same page, self-contained (datasets embedded, no artifact runtime). |
 | `standalone.html` | The standalone dashboard; open it in any browser or serve it statically. |
 
-Run from this folder: `python3 refresh.py --force`. The repo root is found two levels up, so run it inside a full checkout with `main`'s history.
+Run from this folder: `python3 refresh.py --force` for the TODO dashboard, and `python3 coverage.py` to regenerate the coverage page. The repo root is found two levels up, so run it inside a full checkout with `main`'s history.
 
 Notes:
 - A keyword rule labels entries no pass has classified; those ids are reported as `provisional_ids`. `label_overrides.json` corrects them.
