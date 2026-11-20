@@ -1635,6 +1635,19 @@ tagged `[O1 …]` are what its steps and reviews left open.
       walk is a superset of the interpreter's fixed-order runs; a state read as a region sees the attributes of the states and machine around it
       (lexical scope), so a guard there is decided. STILL OPEN: witnesses on parallel machines (withheld), a parallel state inside a parallel
       state, history inside one.
+      MORE 2026-11-20 (sm-parpar): a parallel state inside a region (of a parallel state or a parallel root) is performed and explored — regions form a
+      tree, an event is offered depth-first in declaration order, nested completion and exit inner-first (semantics.parallel-deep). STILL OPEN:
+      a region that is itself a parallel state, history inside a parallel state, witnesses on parallel machines.
+
+- [ ] **The long form reads `accept E [g]` as a guard; SysML v2 reads `[g]` as the payload's multiplicity.** `transition t first a accept E [g]
+      then b;` is read today with the guard `g` (UML-style). SysML v2 §7.18.3 writes a guard `if g`, and §7.17.8 makes `[g]` after the payload
+      name a multiplicity. Conforming would turn every such guard into a multiplicity (a dropped guard), so the decision is the user's: fence it
+      (refuse with a hint to write `if g`) or keep it as a documented departure. [review 2026-11-20]
+
+- [ ] **Unify when a region's completion transitions are chased.** The interpreter chases a region's completions right after that region
+      steps, before the next region sees the event; the explorer chases after the whole event. With coupled regions a path differs (the
+      walk reaches the interpreter's states by other paths, probed 2026-11-20) and no missing state was found, but agreement is not proved. Done:
+      one timing in both, or a proof that the reachable sets agree, with a differential pin. [sm-parpar review]
 
 - [x] **A completion transition out of a composite state fired at once (wrong answer, on main before 2026-11-20).** `transition cz first c then z;`
       out of a composite `c` was taken on entering `c`, so the walk published `c`'s substates unreachable. SysML v2 Part 1 §9.2.11.2.1: a
@@ -1746,6 +1759,9 @@ tagged `[O1 …]` are what its steps and reviews left open.
       PROGRESS 2026-11-20 (sm-specpins, sm-done): the guard/accepter order is free, a typed and `;`-ended effect parses, `action x terminate;`,
       `exhibit state x references Y;`, `accept p : T` (T is the trigger, p the payload name — no longer dropped), `then done`. STILL refused with a
       stated reason: `do send …` (no send semantics), `exhibit A::B :> C;`, a `[g]` guard right after the accept name in the shorthand.
+      MORE 2026-11-20 (sm-forms2): `exhibit A::B :> C;` reads per §7.18.4 (a nameless exhibit state usage of A::B subsetting C). STILL refused, by
+      decision: `do send …` (a send to the machine's own port can trigger its own accepter, and the walk has no event pool), and the shorthand's
+      `accept E [g]` (in SysML v2 `[g]` after the payload is its multiplicity; see the item on the long form's `[g]` guard).
 
 - [x] **`entry X;` / `do X;` / `exit X;` must read as a reference to an existing action, as the spec
       says, not as a declaration of a new one.** Today they declare a new action (the serializer writes a
