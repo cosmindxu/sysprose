@@ -3973,7 +3973,7 @@ nested in an ordinary machine is performed concurrently, in declaration order
 by the interpreter, and the walk explores every order of coupled regions, and so is a parallel machine root — a state
 definition or usage, an exhibit state among them, marked `parallel`, SysML v2
 §7.18.2; a parallel machine or state with more than 4 regions coupled through an
-attribute is not explored, and a witness on a parallel machine is withheld), deferred
+attribute is not explored, and a witness on a parallel machine is published only if the interpreter replays it, so one that needs a non-declaration order of coupled regions is withheld), deferred
 events (none — there is no event pool), and time (discrete `after(n)`; the walk
 offers each `after(n)` label as an event rather than advancing a clock). A
 verdict about a machine is a verdict under a reading of those seven, and one

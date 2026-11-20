@@ -93,10 +93,10 @@ describe('coupled regions are explored in every order', () => {
     expect(w.unsupported[0].construct).toBe('parallel-regions');
   });
 
-  it('the profile states every order, and a witness on a parallel machine is withheld', () => {
+  it('the profile states every order, and a witness is replayed, withheld only where it needs another order', () => {
     const f = SEMANTIC_PROFILE.find((x) => x.field === 'regions')!;
     expect(f.reading).toContain('EVERY order');
-    expect(f.reading).toContain('witness is withheld');
+    expect(f.reading).toContain('a witness whose path applies coupled regions in another order is withheld');
   });
 });
 

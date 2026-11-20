@@ -91,6 +91,7 @@ import {
   afterDuration,
   hashConfig,
   leafOf,
+  activeLeavesOf,
   machineRegion,
   resumesHistory,
   seedStore,
@@ -137,7 +138,7 @@ import {
   type UnsupportedConstruct,
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
-import { advanceConfig, candidatesOf, hasNestedParallel, openConfig, transitionsOf, type ParCandidates } from './parallel';
+import { advanceConfig, candidatesOf, firesApplied, hasNestedParallel, openConfig, transitionsOf, type ParCandidates } from './parallel';
 import { carriersOn } from '../keywords';
 // The interpreter, for ONE reader: every witness this file publishes is replayed
 // through it first (`replayWitness`). A copy of its driving rules would be a
@@ -454,6 +455,11 @@ export interface TraceStep {
   stack: readonly StateRef[];
   /** Which of the property's own atoms hold here, by field name. */
   holds: readonly string[];
+  /** On a step of concurrent regions (parallel state): the transitions fired, in the order applied; `declaration` says whether that is the interpreter's order. */
+  fires?: readonly string[];
+  declaration?: boolean;
+  /** On a parallel machine: every active leaf here (one per region). */
+  leaves?: readonly ElementId[];
 }
 
 /** The three answers the modality can give about a refutation (plan §3.R). */
@@ -1217,6 +1223,8 @@ interface ProductNode {
   readonly parent: ProductNode | null;
   readonly input: StepInput | null;
   readonly transition: ElementRecord | null;
+  /** On a step of concurrent regions: every transition it fires, in the order applied, and whether that is declaration order. */
+  readonly macro?: { readonly ids: readonly string[]; readonly declaration: boolean };
   /** Which of the property's atoms hold here, for the trace. */
   readonly holds: readonly string[];
 }
@@ -1459,6 +1467,7 @@ function search(
           parent: here,
           input,
           transition: choice.transition,
+          ...(choice.macro === undefined ? {} : { macro: firesApplied(choice) }),
           holds: valued.holds,
         };
         if (monitor.violated) {
@@ -1529,6 +1538,8 @@ function traceOf(model: Model, leaf: ProductNode): TraceStep[] {
       leaf: active === null ? null : stateRef(model, active),
       stack: n.config.stack.map((s) => stateRef(model, s)),
       holds: n.holds,
+      ...(n.macro === undefined ? {} : { fires: n.macro.ids, declaration: n.macro.declaration }),
+      ...(n.config.par === undefined ? {} : { leaves: activeLeavesOf(n.config) }),
     };
   });
 }
@@ -1572,17 +1583,7 @@ export function replayWitness(
   maxCompletion: number,
 ): WitnessReplay {
   if (witness.length === 0) return { replays: true, step: null, reason: '' };
-  // A machine with a parallel state: one witness step offers an event to every region and fires one transition in
-  // each, while the interpreter's run lists its fires one by one and a witness step names only one of them. The
-  // comparison below is per fire, so it cannot be made; the witness is withheld rather than published unreplayed.
-  if (hasNestedParallel(model, machineId)) {
-    return {
-      replays: false,
-      step: 0,
-      reason:
-        'the machine holds a parallel state (SysML v2 §7.18.2): a step of its concurrent regions fires one transition per region, and the replay compares one fire per witness step',
-    };
-  }
+  if (hasNestedParallel(model, machineId)) return replayParallelWitness(model, machineId, witness, maxCompletion);
   const steps = witness.slice(1);
   // Where the interpreter opens: its first entries, before any chase.
   const opened = runStateMachine(model, machineId, [], { maxCompletion: 0 }).visited;
@@ -1655,6 +1656,76 @@ export function replayWitness(
       step: want.index,
       reason: `at step ${want.index} the witness fires ${taken}${want.event === '' ? ' as a completion' : ` on \`${want.event}\``} and the interpreter ${instead}`,
     };
+  }
+  return { replays: true, step: null, reason: '' };
+}
+
+/**
+ * {@link replayWitness} for a machine with a parallel state. A witness step is an event (or a completion); on
+ * concurrent regions it fires one transition per region, which the interpreter lists one by one. The witness's fires,
+ * flattened step by step in the order the macro applied them, must be the interpreter's fires in sequence; and where
+ * the macro applied the regions in a non-declaration order (coupled regions are explored in every order) the
+ * interpreter cannot reproduce it and the witness is withheld. At the end of every event (before a completion step)
+ * the interpreter's active leaves must be the witness's.
+ */
+function replayParallelWitness(
+  model: Model,
+  machineId: ElementId,
+  witness: readonly TraceStep[],
+  maxCompletion: number,
+): WitnessReplay {
+  const qn = (id: ElementId | null | undefined): string => (id == null ? 'no state' : model.qualifiedName(id) || id);
+  const steps = witness.slice(1);
+  const wanted = steps.map((s) => (s.fires !== undefined ? [...s.fires] : s.transition === null ? [] : [s.transition.id]));
+  for (const s of steps) {
+    if (s.declaration === false) {
+      return {
+        replays: false,
+        step: s.index,
+        reason: `at step ${s.index} the witness applies the concurrent regions in an order other than declaration order (coupled regions are explored in every order), and the interpreter applies them in declaration order only`,
+      };
+    }
+  }
+  const leavesOf = (r: { activeStates: ElementId[] }): string => r.activeStates.slice().sort().join('|');
+  const opened = runStateMachine(model, machineId, [], { maxCompletion: 0 });
+  if (leavesOf(opened) !== (witness[0].leaves ?? (witness[0].leaf ? [witness[0].leaf.id] : [])).slice().sort().join('|')) {
+    return { replays: false, step: 0, reason: `the witness opens in ${(witness[0].leaves ?? []).map(qn).join(', ') || qn(witness[0].leaf?.id)} and the interpreter in ${opened.activeStates.map(qn).join(', ') || 'no state'}` };
+  }
+  const follow = wanted.flat();
+  const events = steps.filter((s) => s.event !== '').map((s) => s.event);
+  const run = runStateMachine(model, machineId, events, { maxCompletion, follow });
+  let at = 0;
+  for (let i = 0; i < steps.length; i++) {
+    for (const id of wanted[i]) {
+      const got = run.fired[at];
+      if (got === undefined || got.transitionId !== id || got.trigger !== steps[i].event) {
+        const instead = got === undefined ? 'fires nothing more' : `fires \`${qn(got.transitionId)}\`${got.trigger === '' ? ' as a completion' : ` on \`${got.trigger}\``}`;
+        return {
+          replays: false,
+          step: steps[i].index,
+          reason: `at step ${steps[i].index} the witness fires \`${qn(id)}\`${steps[i].event === '' ? ' as a completion' : ` on \`${steps[i].event}\``} and the interpreter ${instead}`,
+        };
+      }
+      at++;
+    }
+  }
+  if (run.fired.length !== at) {
+    return { replays: false, step: steps.length > 0 ? steps[steps.length - 1].index : 0, reason: `the interpreter fires ${run.fired.length - at} more transition(s) than the witness` };
+  }
+  // The states, where an event ends: the interpreter run on the events so far.
+  let ev = 0;
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i].event !== '') ev++;
+    if (i + 1 < steps.length && steps[i + 1].event === '') continue;
+    const prefix = runStateMachine(model, machineId, events.slice(0, ev), { maxCompletion, follow });
+    const want = (steps[i].leaves ?? (steps[i].leaf ? [steps[i].leaf!.id] : [])).slice().sort().join('|');
+    if (leavesOf(prefix) !== want) {
+      return {
+        replays: false,
+        step: steps[i].index,
+        reason: `at step ${steps[i].index} the witness stands in ${(steps[i].leaves ?? []).map(qn).join(', ') || qn(steps[i].leaf?.id)} and the interpreter in ${prefix.activeStates.map(qn).join(', ') || 'no state'}`,
+      };
+    }
   }
   return { replays: true, step: null, reason: '' };
 }

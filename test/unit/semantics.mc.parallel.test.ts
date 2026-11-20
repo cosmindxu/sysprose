@@ -144,7 +144,7 @@ describe('the explorer agrees with the interpreter on parallel states', () => {
     expect(r.machines[0].states.unreachable).toEqual([]);
   });
 
-  it('check-behaviour decides a property about a state of a region, and a witness is withheld as not replayed', async () => {
+  it('check-behaviour decides a property about a state of a region, and its witness replays (pinned in semantics.mc.parallel-witness.test.ts)', async () => {
     const model = await load(wrap(region('r1', 'a1', 'a2', 'f') + region('r2', 'b1', 'b2', 'f')));
     const id = find(model, 'P::M').id;
     const walk = exploreMachine(model, id);

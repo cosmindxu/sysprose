@@ -523,3 +523,21 @@ export function advanceConfig(model: Model, cfg: MachineConfig, choice: EnabledT
 export function transitionsOf(choice: EnabledTransition): readonly EnabledTransition[] {
   return choice.macro === undefined ? [choice] : choice.macro.picks.filter((p): p is EnabledTransition => p !== null).flatMap(transitionsOf);
 }
+
+/**
+ * The transitions a choice fires in the order they are APPLIED (a macro takes its regions in `macro.order`, a nested
+ * macro inside its region's turn), and whether that order is the interpreter's: declaration order, at every level.
+ */
+export function firesApplied(choice: EnabledTransition): { readonly ids: readonly string[]; readonly declaration: boolean } {
+  if (choice.macro === undefined) return { ids: [choice.transition.id], declaration: true };
+  const picks = choice.macro.picks;
+  const order = (choice.macro.order ?? picks.map((_, i) => i)).filter((i) => picks[i] !== null && picks[i] !== undefined);
+  let declaration = order.every((v, k) => k === 0 || order[k - 1] < v);
+  const ids: string[] = [];
+  for (const i of order) {
+    const r = firesApplied(picks[i]!);
+    declaration = declaration && r.declaration;
+    ids.push(...r.ids);
+  }
+  return { ids, declaration };
+}
