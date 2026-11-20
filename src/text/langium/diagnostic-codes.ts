@@ -164,6 +164,14 @@ const CODES = [
   },
 
   {
+    code: 'mapper/state-ref-unresolved',
+    source: 'mapper',
+    severity: 'warning',
+    when: 'A state behaviour is written `entry X;`, `do X;` or `exit X;` with no `action` keyword, no typing and no body, and no action named X is visible from the state. SysML v2 §7.18.2 reads that form as a reference to an existing action; with none to refer to, it is read as declaring a new action named X (the reading used before references were read), and this says so.',
+    hint: 'Declare the action the state refers to, or write `entry action X;` to declare it here and silence this.',
+  },
+
+  {
     code: 'parse/dangling-then',
     source: 'mapper',
     severity: 'error',

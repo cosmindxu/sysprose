@@ -612,6 +612,15 @@ export class Model {
     return this.update(id, { declaredName });
   }
 
+  /** Take an element's declared name off ({@link update} reads an absent name as "leave it alone"). */
+  clearName(id: ElementId): ElementRecord {
+    const el = this.require(id);
+    const previousNames = [el.declaredName, el.declaredShortName].filter((n): n is string => n !== undefined);
+    el.declaredName = undefined;
+    this.emit({ type: 'update', id, element: el, fields: ['declaredName'], previousNames });
+    return el;
+  }
+
   /**
    * Set or REMOVE an element's short name (`<R1>`).
    *

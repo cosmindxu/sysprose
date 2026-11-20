@@ -1077,7 +1077,9 @@ export interface StateBehavior extends langium.AstNode {
     readonly $container: Body | Namespace | RequirementClause;
     readonly $type: 'StateBehavior';
     body?: Body;
+    chain: Array<RefName>;
     inline?: BehaviorStmt;
+    isAction: boolean;
     kind: 'do' | 'entry' | 'exit';
     multiplicity: Array<Multiplicity>;
     name?: 'initial' | Name;
@@ -1863,7 +1865,9 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     name: StateBehavior,
                     properties: [
                         { name: 'body' },
+                        { name: 'chain', defaultValue: [] },
                         { name: 'inline' },
+                        { name: 'isAction', defaultValue: false },
                         { name: 'kind' },
                         { name: 'multiplicity', defaultValue: [] },
                         { name: 'name' },

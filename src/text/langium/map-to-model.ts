@@ -54,6 +54,7 @@ import {
   resolveRedefinedFeature,
 } from '@semantics/bind';
 import { generalizationsWithImplicit } from '@semantics/featuring';
+import { isKindOf } from '@semantics/metaclasses';
 import { effectiveNameOf } from '@semantics/inheritance';
 import {
   EVIDENCE_DEFINITION,
@@ -743,6 +744,8 @@ class Mapper {
    * name, so the edge is made from its id rather than a reference. Only the members written straight after the entry
    * action read so; any other member ends the run, and a later bare `then` is the ordinary chained one.
    */
+  /** `entry X;` / `do X;` / `exit X;` written bare: reference or declaration is decided after resolution. */
+  private readonly bareStateRefs = new Map<ElementId, { name: string; node: AstNode; qualified: boolean }>();
   private readonly pendingEntry = new Map<ElementId | null, ElementId>();
 
   /** Owners whose last member was a refused target-transition `accept …` / `if …`: the `then X;` after it is refused too. */
@@ -1268,6 +1271,44 @@ class Mapper {
     // Whatever is still unbound falls back to its textual form.
     this.recordUnresolvedSpecs();
     this.restoreSpecializationOrder();
+    this.bindBareStateRefs();
+  }
+
+  /**
+   * `entry X;` / `do X;` / `exit X;` (no `action`, no body, no typing): the spec reads X as a reference to an existing
+   * action (SysML v2 §7.18.2). When an action named X is visible from the state, the behaviour becomes nameless, owns a
+   * subsetting of X and carries `stateSubactionRef`; the serializer writes it back as `entry X;`. When none is, the
+   * declaration reading is kept, and a warning says so (`mapper/state-ref-unresolved`).
+   */
+  private bindBareStateRefs(): void {
+    // Take the candidates' own names off first, so that one `entry a;` cannot be read as the target of a `do a;`.
+    for (const [id, r] of this.bareStateRefs) if (!r.qualified) this.model.clearName(id);
+    for (const [id, { name, node, qualified }] of this.bareStateRefs) {
+      const el = this.model.get(id);
+      if (!el) continue;
+      const target = this.resolveRef(name, el.ownerId, id);
+      const isAction =
+        target !== undefined && target.attrs.stateSubaction === undefined && target.id !== id &&
+        (isKindOf(target.eClass, 'ActionDefinition') || isKindOf(target.eClass, 'ActionUsage')) &&
+        !isKindOf(target.eClass, 'StateUsage') && !isKindOf(target.eClass, 'StateDefinition') && !isKindOf(target.eClass, 'TransitionUsage');
+      if (!isAction && qualified) {
+        this.model.remove(id);
+        this.refuseStateForm(node, `\`${String(el.attrs.stateSubaction)} ${name};\`, which names no action visible from the state`);
+        continue;
+      }
+      if (!isAction) {
+        this.model.rename(id, name);
+        this.model.setAttrs(id, { stateBareName: name });
+        this.defer(
+          id, 'stateBareName', name,
+          `\`${String(el.attrs.stateSubaction)} ${name};\` names no action visible from the state, so it is read as declaring a new action \`${name}\`, not as a reference to one (SysML v2 §7.18.2)`,
+          'mapper/state-ref-unresolved', node,
+        );
+        continue;
+      }
+      this.model.setAttrs(id, { stateSubactionRef: true });
+      this.create('Subsetting', { ownerId: id, source: [id], target: [target.id] }, node);
+    }
   }
 
   /**
@@ -2435,12 +2476,28 @@ class Mapper {
       this.refuseStateForm(node, `\`${node.kind} ${node.inline.kind} …\`, an action written in place of the ${node.kind} action's body`);
       return;
     }
+    // `entry P::a;` (a qualified name) can only be a reference: nothing declares a qualified name.
+    const qualified = node.chain.length > 0;
     const el = this.create('ActionUsage', {
       ownerId: ownerId ?? undefined,
-      declaredName: unquoteName(node.name),
+      ...(qualified ? {} : { declaredName: unquoteName(node.name) }),
       attrs: { stateSubaction: node.kind },
     });
     if (node.kind === 'entry') this.pendingEntry.set(ownerId, el.id);
+    // `entry X;` with no `action` keyword and nothing after the name is a REFERENCE to an existing action X
+    // (SysML v2 §7.18.2); it is decided once names resolve ({@link bindBareStateRefs}), the declaration reading
+    // standing when no action of that name is visible.
+    if (
+      !node.isAction && node.name !== undefined && node.specializations.length === 0 && node.multiplicity.length === 0 &&
+      node.value === undefined && node.body === undefined
+    ) {
+      const full = [unquoteName(node.name) ?? '', ...node.chain.map((c) => unquoteName(c) ?? '')].join('::');
+      this.bareStateRefs.set(el.id, { name: full, node, qualified });
+    } else if (qualified) {
+      this.model.remove(el.id);
+      this.refuseStateForm(node, `\`${node.kind} ${[node.name, ...node.chain].join('::')}\` with a typing, a body or a value`);
+      return;
+    }
     // `entry action warmup : WarmUp;`, `do action exercise : Exercise { action a; then action b; }` (SysML v2
     // §7.18.2): the type, the multiplicity and the body are the action's own, as on any action usage. They used to be
     // parsed and dropped, so the state lost its entry action's type and its do action's steps with no diagnostic.

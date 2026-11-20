@@ -251,7 +251,7 @@ StateBehavior infers StateBehavior:
     kind=('entry' | 'do' | 'exit')
     // `entry action initial;` (SysML v2 §7.18.2): after `action`, `initial` is the action's NAME (it is otherwise a
     // control-node keyword, which read here as a second member and dropped the name). Only after `action`.
-    ('action' (name=Name | name='initial')? | (name=Name)?)
+    (isAction?='action' (name=Name | name='initial')? | (name=Name (('::' | '.') chain+=RefName)*)?)
     (specializations+=Specialization | multiplicity+=Multiplicity)*
     (valueOp=ValueOp value=Expression)?
     // `entry assign x := 1;` / `do send X to Y;`: an action statement written in place of a body. The notation takes

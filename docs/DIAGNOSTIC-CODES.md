@@ -210,6 +210,13 @@ The tokens form a legal declaration, but the model this tool builds has nowhere 
 - **Fires when:** A state body holds a SysML v2 §7.18 form that parses but that neither the walk nor the interpreter runs, so it is refused rather than read as a different statement: the target-transition shorthand (`state off; accept TurnOn via commPort then on;`, `state off; if c then on;`, OnOff5/6), an action written in place of an entry, do or exit body (`entry assign x := 1;`, `do send X to Y;`), a guarded `if c then X;` outside an entry succession, or `exhibit A::B :> C;`, an exhibit of a state by a qualified name. The statement (with the `then X;` that completes a shorthand) is not mapped; nothing is guessed from it. (`entry; if c then off;` is read, as a guarded succession from the entry action, and the machine is refused by the walk and the interpreter over the guard.)
 - **Hint given:** The statement is not read. Write a target transition in the long form, `transition first off accept TurnOn via commPort then on;`, an action in an entry/do/exit body (`entry action a { assign x := 1; }`), an exhibit as `exhibit state s :> C;`; the load stays degraded and the checks abstain until you do.
 
+### `mapper/state-ref-unresolved`
+
+- **Severity:** warning
+- **Source:** mapper
+- **Fires when:** A state behaviour is written `entry X;`, `do X;` or `exit X;` with no `action` keyword, no typing and no body, and no action named X is visible from the state. SysML v2 §7.18.2 reads that form as a reference to an existing action; with none to refer to, it is read as declaring a new action named X (the reading used before references were read), and this says so.
+- **Hint given:** Declare the action the state refers to, or write `entry action X;` to declare it here and silence this.
+
 ## Reference resolution
 
 A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.
@@ -985,4 +992,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*127 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*128 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
