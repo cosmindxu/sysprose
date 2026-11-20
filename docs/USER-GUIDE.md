@@ -4394,15 +4394,16 @@ on the general, and the specialisation's report says how many it does not check.
 A bare `state :>> b;` (or `state r :>> b;`) that redefines a direct state of the
 general and adds nothing is read as that state, and a step that names it
 (`state r :>> b; transition t first r …`) resolves to `b`. A named `state r :>> b { … }` with a
-body, over a state `b` that holds nothing of its own (no substate, entry, do or exit), is `r` in the
-place of `b`, and the general's steps over `b` read `r`. A transition redefinition (written only through the
+body is `r` in the place of `b`, and the general's steps over `b` read `r`; when `b` holds substates
+and steps between them, `r` inherits them (a redefining usage is a subsetting usage, Part 1 §7.6) and
+they are read first, then `r`'s own body, provided no name is held twice. A transition redefinition (written only through the
 API: the grammar has no redefining transition) replaces the inherited step when it states both
 ends and every trigger, guard and effect of the step it replaces. A specialisation of two general
 machines (`:> A, B`) is read when they share no state, step or attribute name: the first general's
 states and steps, then the second's, then its own. Still refused, with
 `machine-boundary` and the reason in its own words: a redefinition over a state that holds
-something of its own (SysML v2 would merge that with the redefining body, which this view does not
-do), an unnamed redefinition with a body, a nested redefinition, an attribute `:>>`, a step that
+an entry, do or exit action, an attribute, a start or a redefinition (the merge reads substates and
+steps only), an unnamed redefinition with a body, a nested redefinition, an attribute `:>>`, a step that
 names the state a redefinition replaced, two generals that share a name, a start node of its own
 beside a general's, and a chain of generals longer than eight or one that
 cycles; the general is refused with it, since the step the specialisation adds is

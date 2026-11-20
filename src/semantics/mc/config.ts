@@ -346,13 +346,15 @@ interface RegionCache {
   regions: Map<ElementId, MachineRegion>;
   /** The regions read through their generals ({@link machineRegion} with `inherit`). */
   inherited: Map<ElementId, MachineRegion>;
+  /** A redefining state → the state it redefines, when that holds members the redefining state inherits ({@link mergedFrom}). */
+  merged: Map<ElementId, ElementRecord | null>;
 }
 const REGION_CACHE = new WeakMap<Model, RegionCache>();
 
 function cacheFor(model: Model): RegionCache {
   const hit = REGION_CACHE.get(model);
   if (hit && hit.rev === model.rev) return hit;
-  const fresh: RegionCache = { rev: model.rev, scopes: new Map(), regions: new Map(), inherited: new Map() };
+  const fresh: RegionCache = { rev: model.rev, scopes: new Map(), regions: new Map(), inherited: new Map(), merged: new Map() };
   REGION_CACHE.set(model, fresh);
   return fresh;
 }
@@ -458,13 +460,19 @@ function ownRegion(model: Model, regionId: ElementId): MachineRegion {
   // It stops below an entry, do or exit action as well (`do action d { state z; }`): what such an action holds is the
   // action's own behaviour, performed while its state is active, and not a state of this machine. Read as one, `z`
   // was published unreachable by the walk and taken as the start by the simulator's flat path.
-  const descendants = model.descendants(regionId).filter((el) => {
-    for (let p: ElementId | null = el.ownerId; p != null && p !== regionId; p = model.get(p)?.ownerId ?? null) {
+  const within = (top: ElementId) => (el: ElementRecord): boolean => {
+    for (let p: ElementId | null = el.ownerId; p != null && p !== top; p = model.get(p)?.ownerId ?? null) {
       const owner = model.get(p);
       if (owner?.eClass === 'StateDefinition' || owner?.attrs.stateSubaction !== undefined) return false;
     }
     return true;
-  });
+  };
+  // A state that redefines one holding substates and steps holds them too, before its own (T-115, {@link mergedFrom}).
+  const merged = mergedFrom(model, regionId);
+  const descendants = [
+    ...(merged === undefined ? [] : model.descendants(merged.id).filter(within(merged.id))),
+    ...model.descendants(regionId).filter(within(regionId)),
+  ];
   // The nested definition itself is IN `descendants` (the boundary stops below
   // it) and is not a node: it is a machine of its own, or a definition no walk
   // enters. The machine is a node of its own region.
@@ -501,7 +509,7 @@ function ownRegion(model: Model, regionId: ElementId): MachineRegion {
     descendants,
     transitions,
     directStates: (containerId) => directStates(model, containerId),
-    parentOf: (id) => (held.has(id) ? (model.get(id)?.ownerId ?? null) : null),
+    parentOf: (id) => (held.has(id) ? (model.get(id)?.ownerId === merged?.id ? regionId : (model.get(id)?.ownerId ?? null)) : null),
     inheritedFrom: () => undefined,
   };
   cache.regions.set(regionId, region);
@@ -515,6 +523,37 @@ function isMachineRoot(model: Model, m: ElementRecord): boolean {
     if (o && o.attrs.isLibrary !== true && model.children(p).some((c) => c.eClass === 'TransitionUsage')) return false;
   }
   return true;
+}
+
+/**
+ * Can a state `s` that a state redefines be merged into the redefining state? A redefining usage is a subsetting
+ * usage and so inherits the features of what it redefines (SysML v2 Part 1 §7.6: "a redefining usage replaces the
+ * redefined usage"; a subsetting usage "inherit[s] the features and structure" of the subsetted one). This view merges
+ * only what it can read whole: `s` holds nothing but substates and steps between them (no entry, do, exit, attribute,
+ * start or history marker, modifier or redefinition of its own).
+ */
+function mergeableBody(model: Model, s: ElementRecord): boolean {
+  if (s.eClass !== 'StateUsage' || Object.keys(s.attrs).length > 0) return false;
+  const kids = model.children(s.id);
+  if (kids.length === 0) return false;
+  if (!kids.every((c) => c.eClass === 'StateUsage' || c.eClass === 'TransitionUsage')) return false;
+  return !model.descendants(s.id).some((d) => d.eClass === 'Redefinition');
+}
+
+/** The state `id` redefines, when {@link mergeableBody} says its members are the redefining state's too. */
+function mergedFrom(model: Model, id: ElementId): ElementRecord | undefined {
+  const cache = cacheFor(model);
+  const hit = cache.merged.get(id);
+  if (hit !== undefined) return hit ?? undefined;
+  let out: ElementRecord | null = null;
+  if (model.get(id)?.eClass === 'StateUsage') {
+    const rels = model.relationshipsFrom(id).filter((r) => r.eClass === 'Redefinition');
+    const to = rels.length === 1 ? rels[0].target?.[0] : undefined;
+    const s = to === undefined ? undefined : model.get(to);
+    if (s !== undefined && mergeableBody(model, s)) out = s;
+  }
+  cache.merged.set(id, out);
+  return out ?? undefined;
 }
 
 /** The longest chain of general machines read through; a longer one is refused as a `cycle`. */
@@ -637,7 +676,14 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
         const sEl = model.get(to)!;
         if (e.declaredName === undefined) return refuse('redefined', e.id, sentenceAt(e, 'a redefining state with a body must be named'));
         if (model.children(to).some((c) => c.eClass !== 'Redefinition') || Object.keys(sEl.attrs).length > 0) {
-          return refuse('redefined', e.id, sentenceAt(e, `${name(to)} holds something of its own that the redefinition would inherit and merge with its body`));
+          // The redefining state inherits what the redefined one holds (Part 1 §7.6), merged with its own body. Read
+          // when that is substates and steps only and no name is held twice; anything else is not read.
+          if (!mergeableBody(model, sEl) || mergedFrom(model, e.id)?.id !== to) {
+            return refuse('redefined', e.id, sentenceAt(e, `${name(to)} holds ${Object.keys(sEl.attrs).length > 0 ? 'a modifier' : 'something other than substates and steps between them (an entry, do or exit action, an attribute, a start, or a redefinition)'} that the redefinition inherits and this view does not merge`));
+          }
+          const held = new Set(model.children(to).filter((c) => c.declaredName !== undefined).map((c) => c.declaredName));
+          const twice = kids.find((c) => c.declaredName !== undefined && held.has(c.declaredName));
+          if (twice) return refuse('redefined', e.id, sentenceAt(e, `${twice.declaredName} is a name ${name(to)} already holds, which the redefining state inherits; a redefinition would have to say \`:>>\``));
         }
         replaced.set(to, e.id);
       }
@@ -688,15 +734,19 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
   // The general's elements, the replaced state's place taken by its replacement and the replaced steps gone.
   const goneTr = new Set<ElementId>(replacedTr.keys());
   const baseOut: ElementRecord[] = [];
+  const inS = new Set<ElementId>();
+  for (const sId of replaced.keys()) for (const d of model.descendants(sId)) inS.add(d.id);
   for (const e of baseDesc) {
     if (goneTr.has(e.id) || (e.ownerId !== null && goneTr.has(e.ownerId))) continue;
     if (replaced.has(e.id)) {
       const r = replaced.get(e.id)!;
       const inR = new Set<ElementId>([r, ...model.descendants(r).map((d) => d.id)]);
-      baseOut.push(...movedOut.filter((d) => inR.has(d.id)));
+      const mine = movedOut.filter((d) => inR.has(d.id));
+      // What the replaced state holds comes first, then the replacing state's own (the flattened twin's order).
+      baseOut.push(...mine.filter((d) => d.id === r), ...baseDesc.filter((d) => inS.has(d.id)).map((d) => rename(d, replaced)), ...mine.filter((d) => d.id !== r));
       continue;
     }
-    if (e.ownerId !== null && replaced.has(e.ownerId)) continue;
+    if (inS.has(e.id)) continue;
     const touches = [...(e.source ?? []), ...(e.target ?? [])].some((x) => replaced.has(x));
     if (touches) {
       const ends = [...(e.source ?? []), ...(e.target ?? [])];
@@ -740,7 +790,13 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
             ...own.directStates(id).filter((d) => !dropped.has(d.id) && !replacers.has(d.id)),
           ]
         : directStates(model, containerId),
-    parentOf: (x) => (gids.includes(x) ? id : replaced.has(x) ? null : ownHeld.has(x) ? own.parentOf(x) : (parts.map((p) => p.b.parentOf(x)).find((v) => v !== null) ?? null)),
+    parentOf: (x) => {
+      if (gids.includes(x)) return id;
+      if (replaced.has(x)) return null;
+      if (ownHeld.has(x)) return own.parentOf(x);
+      const up = parts.map((p) => p.b.parentOf(x)).find((v) => v !== null) ?? null;
+      return up !== null && replaced.has(up) ? replaced.get(up)! : up;
+    },
     inheritedFrom: (x) => {
       if (ownHeld.has(x) || x === id) return undefined;
       const p = parts.find((q) => q.ids.has(x));
@@ -893,7 +949,9 @@ export function triggerLabelOf(tr: ElementRecord): string {
 
 /** Direct child StateUsages of a container (its states at one nesting level). */
 export function directStates(model: Model, containerId: ElementId): ElementRecord[] {
-  return model.children(containerId).filter((c) => c.eClass === 'StateUsage');
+  const own = model.children(containerId).filter((c) => c.eClass === 'StateUsage');
+  const s = mergedFrom(model, containerId);
+  return s === undefined ? own : [...model.children(s.id).filter((c) => c.eClass === 'StateUsage'), ...own];
 }
 
 /**
