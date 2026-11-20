@@ -1908,7 +1908,7 @@ describe('`machineRegion` read through a general machine (B-inherit)', () => {
   it('refuses two generals, two starts, a redefined member, a cycle and a chain over eight, each with its own sentence', async () => {
     const chain = Array.from({ length: 10 }, (_, i) => `state def K${i + 1} :> K${i} { state k${i + 1}; }`).join('\n    ');
     const { model, idOf } = await load(`${BASE}
-    state def Other { state o; }
+    state def Other { state a; }
     state def Two :> Base, Other { state t; }
     state def Start :> Base { initial s1; state e; transition s1e first s1 then e; }
     state def Redef :> Base { state :>> b { entry action e0; } }
