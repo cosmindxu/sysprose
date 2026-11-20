@@ -213,7 +213,7 @@ describe('redefinitions and two general machines equal their flattened twin (T-1
     }
   }, 600_000);
 
-  it('stays refused, with the reason stated: a name both generals hold, a cycle, two starts, a redefinition over a state with content, a nested redefinition, an attribute redefinition, a transition redefinition with no ends', async () => {
+  it('stays refused, with the reason stated: a name both generals hold, a cycle, two starts, a redefinition over a state holding an entry action (substates and steps merge: redefinition-merge test), a nested redefinition, an attribute redefinition, a transition redefinition with no ends', async () => {
     const both = await refusedAs(
       `package G { state def A { state s0; state s1; transition t0 first s0 accept a then s1; } state def B { state s0; transition t1 first s0 accept b then s0; }
         state def D :> A, B { state z; transition tz first s0 accept a then z; } }`,
@@ -232,11 +232,11 @@ describe('redefinitions and two general machines equal their flattened twin (T-1
     );
     expect(starts).toContain('start node');
     const content = await refusedAs(
-      `package G { state def A { state s0 { state in0; } state s1; transition t0 first s0 accept a then s1; }
+      `package G { state def A { state s0 { entry action e0; state in0; } state s1; transition t0 first s0 accept a then s1; }
         state def D :> A { state r :>> s0 { state in1; } transition tz first r accept b then s1; } }`,
       'G::D',
     );
-    expect(content).toContain('holds something of its own');
+    expect(content).toContain('something other than substates and steps');
     await refusedAs(
       `package G { state def A { state s0; state s1; transition t0 first s0 accept a then s1; }
         state def D :> A { state r :>> s0 { state x; state y :>> x; } transition tz first r accept b then s1; } }`,
