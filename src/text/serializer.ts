@@ -1412,6 +1412,8 @@ function aliasLine(model: Model, el: ElementRecord, indent: number): string {
 function transitionLine(model: Model, el: ElementRecord, pad: string): string {
   const parts = ['transition'];
   if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
+  // `transition t2 :>> t1 first …`: a transition that redefines an inherited one (the Redefinition child).
+  parts.push(...specializationFragments(model, el));
   parts.push('first', endpoint(model, el, 'source'));
   if (typeof el.attrs.trigger === 'string' && el.attrs.trigger) parts.push('accept', el.attrs.trigger);
   if (typeof el.attrs.timeTrigger === 'string' && el.attrs.timeTrigger) parts.push('accept after', el.attrs.timeTrigger);

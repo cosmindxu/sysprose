@@ -2537,6 +2537,12 @@ class Mapper {
         ...(tgtRef ? { targetRef: tgtRef } : {}),
       },
     });
+    // Only a REDEFINITION has a meaning for a transition (it replaces the inherited one, `machineRegion`); a typing or
+    // subsetting tail would be accepted and read as nothing, so it is refused.
+    for (const spec of node.specializations) {
+      if (spec.op === ':>>' || spec.op === 'redefines') this.applySpecialization(el, spec);
+      else this.refuseStateForm(spec, `\`transition … ${spec.op} …\` (only \`:>>\` / \`redefines\` is read on a transition)`);
+    }
     this.deferEnds(
       el.id,
       srcRef,

@@ -1063,7 +1063,7 @@ export function isSequenceExpr(item: unknown): item is SequenceExpr {
 }
 
 export interface Specialization extends langium.AstNode {
-    readonly $container: BehaviorStmt | ControlNode | Definition | RelationshipStmt | RequirementClause | ReturnStmt | StateBehavior;
+    readonly $container: BehaviorStmt | ControlNode | Definition | RelationshipStmt | RequirementClause | ReturnStmt | StateBehavior | Transition;
     readonly $type: 'Specialization';
     conjugated: boolean;
     op: SpecOp;
@@ -1165,6 +1165,7 @@ export interface Transition extends langium.AstNode {
     clauses: Array<TransitionClause>;
     name?: Name;
     source: QualifiedName;
+    specializations: Array<Specialization>;
     target: QualifiedName;
 }
 
@@ -1936,6 +1937,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'clauses', defaultValue: [] },
                         { name: 'name' },
                         { name: 'source' },
+                        { name: 'specializations', defaultValue: [] },
                         { name: 'target' }
                     ]
                 };

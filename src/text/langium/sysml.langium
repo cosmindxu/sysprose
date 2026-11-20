@@ -213,7 +213,8 @@ FirstThenStmt infers FirstThen:
 
 TransitionStmt infers Transition:
     'transition'
-    (name=Name 'first' | ('first')?)
+    // `transition t2 :>> t1 first a …` (SysML v2): a Specialization-style tail (`:>>` / `redefines`) before `first`.
+    (name=Name (specializations+=Specialization)? 'first' | specializations+=Specialization 'first' | ('first')?)
     source=QualifiedName
     (clauses+=TransitionClause)*
     ('then' | '->') target=QualifiedName

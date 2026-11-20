@@ -2729,6 +2729,40 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                     }
                   },
                   {
+                    "$type": "Assignment",
+                    "feature": "specializations",
+                    "operator": "+=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@53"
+                      },
+                      "arguments": []
+                    },
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Keyword",
+                    "value": "first"
+                  }
+                ]
+              },
+              {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Assignment",
+                    "feature": "specializations",
+                    "operator": "+=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@53"
+                      },
+                      "arguments": []
+                    }
+                  },
+                  {
                     "$type": "Keyword",
                     "value": "first"
                   }
