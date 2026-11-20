@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 160
-- **Tests:** 5761 total — 5761 passed, 0 failed, 0 skipped
+- **Files:** 162
+- **Tests:** 5777 total — 5777 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -133,6 +133,7 @@
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.metaclasses.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.metamodel-complete.test.ts | 9 | 0 | 0 |
+| test/unit/semantics.play-start.test.ts | 3 | 0 | 0 |
 | test/unit/semantics.relations.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
@@ -160,6 +161,7 @@
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
 | test/unit/text.roundtrip.test.ts | 243 | 0 | 0 |
+| test/unit/text.state-forms.test.ts | 13 | 0 | 0 |
 | test/unit/text.time-trigger.test.ts | 6 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |

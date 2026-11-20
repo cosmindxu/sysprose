@@ -7,7 +7,7 @@ import { loadModelText } from '@text/load';
 import { serializeElement } from '@text/serializer';
 import { edgeCensus } from '../../src/semantics/mc/explore';
 
-const load = async (text: string) => loadModelText(text, { fileName: 'sf.sysml' });
+const load = async (text: string): Promise<any> => loadModelText(text, { fileName: 'sf.sysml' });
 const find = (model: any, n: string) => model.all().find((e: any) => model.qualifiedName(e.id) === n);
 const codes = (r: any) => r.diagnostics.map((d: any) => d.code);
 const errors = (r: any) => r.diagnostics.filter((d: any) => d.severity === 'error');
