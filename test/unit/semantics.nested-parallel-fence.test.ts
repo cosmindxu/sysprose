@@ -1,0 +1,25 @@
+/** A parallel state nested in a machine is not run as exclusive (SysML v2 §7.18.2): no run, a stated reason. */
+import { describe, it, expect } from 'vitest';
+import { loadModelText } from '@text/load';
+import { runStateMachine } from '../../src/semantics/execute';
+
+const load = async (t: string) => loadModelText(t, { fileName: 'np.sysml' });
+const find = (m: any, n: string) => m.all().find((e: any) => m.qualifiedName(e.id) === n);
+
+const top = `package P { state def M parallel { state nav { entry; then n1; state n1; state n2; } state comms { entry; then c1; state c1; state c2; } } }\n`;
+const nested = `package P { item def e; state def M { entry; then p; state p parallel { state r1; state r2; } state q; transition go first p accept e then q; } }\n`;
+
+describe('nested parallel fence', () => {
+  it('top-level parallel machine still runs', async () => {
+    const { model: m } = await load(top) as any;
+    const r = runStateMachine(m, find(m, 'P::M').id, []);
+    expect(r.unopened).toBeUndefined();
+  });
+  it('nested parallel state: no run, reason cites 7.18.2', async () => {
+    const { model: m } = await load(nested) as any;
+    const r = runStateMachine(m, find(m, 'P::M').id, ['e']);
+    expect(r.unopened).toMatch(/parallel state.*§7\.18\.2.*top-level parallel machine/);
+    expect(r.activeStates).toEqual([]);
+    expect(r.finalState).toBeNull();
+  });
+});

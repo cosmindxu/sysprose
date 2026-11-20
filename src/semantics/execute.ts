@@ -1033,6 +1033,18 @@ export function runStateMachine(
       'interpreter has no clock for, so no run is started and no step is guessed.';
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
+  // A parallel state nested below the machine: its substates are performed concurrently (SysML v2 §7.18.2), which
+  // this interpreter does only for a top-level parallel machine; running it as exclusive would show a wrong state.
+  const nestedParallel = machineRegion(model, container.id).descendants.find(
+    (e) => e.id !== container.id && e.eClass !== 'TransitionUsage' && runsParallel(model, e.id),
+  );
+  if (nestedParallel) {
+    const unopened =
+      `${model.qualifiedName(container.id) || container.id} is not run: its state \`${model.qualifiedName(nestedParallel.id) || nestedParallel.id}\` ` +
+      'is a parallel state, whose substates are performed concurrently (SysML v2 §7.18.2), which this interpreter ' +
+      'performs only for a top-level parallel machine — so no run is started and no state is shown.';
+    return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
+  }
   seedStore(model, container, valueStore, opts.store);
   const maxCompletion = Math.max(0, opts.maxCompletion ?? 64);
   const performed: PerformedAction[] = [];
