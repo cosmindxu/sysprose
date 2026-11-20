@@ -26,9 +26,9 @@ describe('1. coupling through a referenced action', () => {
   }
 });
 
-describe('2. a transition effect naming an action', () => {
+describe('2. a transition effect referring to an action (`do bump`)', () => {
   const src = 'package P { action bump { assign n := n + 1; } state def M { attribute n : Integer = 0; entry; then a; state a; state b; state c; ' +
-    'transition t1 first a accept e do action bump then b; transition t2 first b accept f if n == 1 then c; } }';
+    'transition t1 first a accept e do bump then b; transition t2 first b accept f if n == 1 then c; } }';
   it('is performed by the interpreter and the walk', async () => {
     const l = await load(src);
     const id = find(l.model, 'P::M').id;
@@ -38,6 +38,16 @@ describe('2. a transition effect naming an action', () => {
     const w = exploreMachine(l.model, id);
     expect(w.unsupported).toEqual([]);
     expect(w.configStates.some((s: any) => s.includes(find(l.model, 'P::M::c').id))).toBe(true);
+  });
+  it('`do action bump` DECLARES a new, empty effect action named bump (SysML v2 §7.18.3, OnOff4): it changes no value', async () => {
+    const l = await load(src.replace('do bump', 'do action bump'));
+    const id = find(l.model, 'P::M').id;
+    const run = runStateMachine(l.model, id, ['e', 'f']);
+    expect(Object.fromEntries(run.valueStore).n).toBe(0);
+    const w = exploreMachine(l.model, id);
+    expect(w.unsupported).toEqual([]);
+    expect(w.exhaustive).toBe(true);
+    expect(w.configStates.some((s: any) => s.includes(find(l.model, 'P::M::c').id))).toBe(false);
   });
   it('an unresolvable or non-assignment action refuses', async () => {
     const l = await load(src.replace('assign n := n + 1;', 'action inner;'));

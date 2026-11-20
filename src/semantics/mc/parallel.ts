@@ -135,7 +135,7 @@ function regionNames(model: Model, regionId: ElementId, ids: ReadonlySet<Element
       tokens(el.attrs.guard, all);
       const eff = strAttr(el, 'effect');
       addEffect(eff);
-      if (eff !== undefined && /^[A-Za-z_'][^=]*$/.test(eff.trim())) for (const x of actionsNamed(model, el, eff.trim())) addAction(x);
+      if (eff !== undefined && el.attrs.effectRef === true && /^[A-Za-z_'][^=]*$/.test(eff.trim())) for (const x of actionsNamed(model, el, eff.trim())) addAction(x);
     }
     if (el.attrs.stateSubaction !== undefined) addRef(el);
     for (const c of model.children(el.id)) if (c.attrs.stateSubaction !== undefined) addRef(c);

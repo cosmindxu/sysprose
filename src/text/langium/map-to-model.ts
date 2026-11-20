@@ -2347,6 +2347,9 @@ class Mapper {
       const eff = effectTextOf(node);
       if (eff) attrs.effect = eff;
       if (node.effectType) attrs.effectType = node.effectType;
+        // `do X` (no `action` keyword) is a REFERENCE to the action X (SysML v2 §7.18.2/§7.18.3, like `entry X;`); `do action X`
+        // DECLARES a new effect action named X (OnOff4: `do action powerUp : PowerUp;`) and refers to nothing.
+        if (eff && node.effect && !node.isEffectAction && !node.assignTarget) attrs.effectRef = true;
       if (node.via && !timed) attrs.via = node.via;
       this.consumedThen.add(then);
       this.createTargetTransition(node, ownerId, src, then.target!, attrs);
@@ -2537,6 +2540,7 @@ class Mapper {
     let effect: string | undefined;
     let timeTrigger: string | undefined;
     let effectType: string | undefined;
+    let effectRef = false;
     let acceptVia: string | undefined;
     let payloadName: string | undefined;
     let sendEffect = false;
@@ -2571,6 +2575,8 @@ class Mapper {
         if (c.isSend) sendEffect = true;
         effect = effectTextOf(c);
         if (c.effectType) effectType = c.effectType;
+        // `do X` is a reference to the action X; `do action X` declares a new one (SysML v2 §7.18.3).
+        effectRef = !!c.effect && !c.isEffectAction && !c.assignTarget;
       }
     }
     if (sendEffect) {
@@ -2588,6 +2594,7 @@ class Mapper {
     if (guard) attrs.guard = guard;
     if (effect) attrs.effect = effect;
     if (effectType) attrs.effectType = effectType;
+    if (effect && effectRef) attrs.effectRef = true;
     if (acceptVia) attrs.via = acceptVia;
     const el = this.create('TransitionUsage', {
       ownerId: ownerId ?? undefined,

@@ -3263,8 +3263,13 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                 "$type": "Group",
                 "elements": [
                   {
-                    "$type": "Keyword",
-                    "value": "action",
+                    "$type": "Assignment",
+                    "feature": "isEffectAction",
+                    "operator": "?=",
+                    "terminal": {
+                      "$type": "Keyword",
+                      "value": "action"
+                    },
                     "cardinality": "?"
                   },
                   {
@@ -4036,8 +4041,13 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                             "$type": "Group",
                             "elements": [
                               {
-                                "$type": "Keyword",
-                                "value": "action",
+                                "$type": "Assignment",
+                                "feature": "isEffectAction",
+                                "operator": "?=",
+                                "terminal": {
+                                  "$type": "Keyword",
+                                  "value": "action"
+                                },
                                 "cardinality": "?"
                               },
                               {

@@ -1440,7 +1440,9 @@ function transitionLine(model: Model, el: ElementRecord, pad: string): string {
   if (typeof el.attrs.guard === 'string' && el.attrs.guard) parts.push(`if ${el.attrs.guard}`);
   if (typeof el.attrs.effect === 'string' && el.attrs.effect) {
     const typed = typeof el.attrs.effectType === 'string' && el.attrs.effectType ? ` : ${el.attrs.effectType}` : '';
-    parts.push('do', typed ? `action ${el.attrs.effect}${typed}` : effectClauseText(el.attrs.effect));
+    // `do X` refers to an existing action; `do action X` declares a new one (SysML v2 §7.18.3).
+    const declared = el.attrs.effectRef !== true && /^(?:[A-Za-z_][A-Za-z0-9_]*|'[^']*')(?:::(?:[A-Za-z_][A-Za-z0-9_]*|'[^']*'))*$/.test(String(el.attrs.effect).trim());
+    parts.push('do', typed ? `action ${el.attrs.effect}${typed}` : declared ? `action ${el.attrs.effect}` : effectClauseText(el.attrs.effect));
   }
   // A nameless `done` control node is what `then done;` binds to (SysML v2 §7.18.3).
   const tgt = model.get((el.target ?? [])[0] ?? '');

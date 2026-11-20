@@ -453,6 +453,7 @@ export interface BehaviorStmt extends langium.AstNode {
     exhibitState: boolean;
     guard?: Expression;
     isAbstract: boolean;
+    isEffectAction: boolean;
     isParallel: boolean;
     isSend: boolean;
     kind: 'accept' | 'assign' | 'exhibit' | 'include' | 'perform' | 'send' | 'terminate';
@@ -746,6 +747,7 @@ export interface EffectClause extends langium.AstNode {
     assignValue?: Expression;
     effect?: QualifiedName;
     effectType?: QualifiedName;
+    isEffectAction: boolean;
     isSend: boolean;
     sendPayload?: Expression;
     sendTo?: QualifiedName;
@@ -1433,6 +1435,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'exhibitState', defaultValue: false },
                         { name: 'guard' },
                         { name: 'isAbstract', defaultValue: false },
+                        { name: 'isEffectAction', defaultValue: false },
                         { name: 'isParallel', defaultValue: false },
                         { name: 'isSend', defaultValue: false },
                         { name: 'kind' },
@@ -1658,6 +1661,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'assignValue' },
                         { name: 'effect' },
                         { name: 'effectType' },
+                        { name: 'isEffectAction', defaultValue: false },
                         { name: 'isSend', defaultValue: false },
                         { name: 'sendPayload' },
                         { name: 'sendTo' },

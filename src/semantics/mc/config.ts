@@ -1335,7 +1335,10 @@ export function applyTransitionEffect(
     }
     return;
   }
-  const x = namedEffectAction(model, tr, effect);
+  // `do X` refers to the action X and performs it; `do action X` (and an effect set through the API) declares a NEW,
+  // empty effect action named X, which changes no value (SysML v2 §7.18.3).
+  const x = tr.attrs.effectRef === true ? namedEffectAction(model, tr, effect) : undefined;
+  if (x === undefined && tr.attrs.effectRef !== true && NAME_EFFECT.test(effect.trim())) return;
   if (x) {
     const refuse = (y: ElementRecord | undefined, why: string): never => {
       throw new EffectNotApplied(

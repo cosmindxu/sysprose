@@ -250,7 +250,7 @@ EffectClause infers EffectClause:
     // via p` (OnOff4/5) is a send action as the effect: read (`isSend`) so the mapper can refuse it, never dropped.
     'do' ( 'assign' assignTarget=QualifiedName ':=' assignValue=Expression
          | isSend?='send' sendPayload=NewPayload ('via' sendVia=QualifiedName)? ('to' sendTo=QualifiedName)?
-         | ('action')? effect=QualifiedName (':' effectType=QualifiedName)? )
+         | (isEffectAction?='action')? effect=QualifiedName (':' effectType=QualifiedName)? )
     // The spec ends an effect action with its own `;` before `then on;` (OnOff4: `do action powerUp : PowerUp; then on;`).
     (';')?;
 
@@ -297,7 +297,7 @@ BehaviorStmt infers BehaviorStmt:
       ('if' guard=Expression)?
       ('do' ( 'assign' assignTarget=QualifiedName ':=' assignValue=Expression
             | isSend?='send' sendPayload=NewPayload ('via' sendVia=QualifiedName)? ('to' sendTo=QualifiedName)?
-            | ('action')? effect=QualifiedName (':' effectType=QualifiedName)? ))?
+            | (isEffectAction?='action')? effect=QualifiedName (':' effectType=QualifiedName)? ))?
       (body=Body | ';')?
     | kind=('send' | 'assign' | 'perform' | 'include' | 'terminate')
       ('action' | 'state' | 'use' 'case')?
