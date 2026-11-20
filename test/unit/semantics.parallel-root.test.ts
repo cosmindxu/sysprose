@@ -235,16 +235,16 @@ describe('a parallel machine root: what stays refused, with a reason', () => {
     });
   }
 
-  it('coupled regions: the interpreter runs them in declaration order, the explorer gives no exhaustive verdict', async () => {
+  it('coupled regions: the interpreter runs them in declaration order, the explorer explores every order', async () => {
     const r1 = 'state r1 { entry; then a1; state a1; state a2; transition t first a1 accept f then a2; }';
     const r2 = 'state r2 { entry; then b1; state b1; state b2; transition u first b1 accept f if n == 1 then b2; }';
     const model = await load(root(r1 + r2), { 'P::M::r1::t': 'n = 1' });
     const id = find(model, 'P::M').id;
     const walk = exploreMachine(model, id);
-    expect(walk.exhaustive).toBe(false);
-    expect(walk.unsupported[0].detail).toMatch(/coupled through `n`/);
+    expect(walk.exhaustive).toBe(true);
+    expect(walk.unsupported).toEqual([]);
     expect(runStateMachine(model, id, ['f']).activeStates.map((s: string) => model.qualifiedName(s)).sort()).toEqual(['P::M::r1::a2', 'P::M::r2::b2']);
-    expect(reachReport(model, { scopeId: id }).machines[0].exhaustive).toBe(false);
+    expect(reachReport(model, { scopeId: id }).machines[0].qualification).not.toMatch(/not explored/);
   });
 
   it('history inside a region (set through the API) is refused', () => {

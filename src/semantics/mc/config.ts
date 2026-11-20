@@ -363,7 +363,12 @@ export function regionScope(model: Model, regionId: ElementId): Scope {
   const hit = cache.scopes.get(regionId);
   if (hit) return hit;
   const el = model.get(regionId);
-  const scope: Scope = el ? combinedScope(model, el) : () => undefined;
+  const own: Scope = el ? combinedScope(model, el) : () => undefined;
+  // A STATE read as a region (a region of a parallel state, a composite opened on its own) sees the features of the
+  // states and the machine that hold it, as a guard written in it does (SysML v2 name resolution is lexical); the
+  // owner's scope is the fallback, so a name the state itself declares still wins.
+  const outer = el && el.eClass === 'StateUsage' && el.ownerId != null ? regionScope(model, el.ownerId) : undefined;
+  const scope: Scope = outer ? (name: string) => own(name) ?? outer(name) : own;
   cache.scopes.set(regionId, scope);
   return scope;
 }
@@ -1421,6 +1426,8 @@ export interface ParConfig {
  */
 export interface ParMacro {
   readonly picks: readonly (EnabledTransition | null)[];
+  /** The order the regions are applied in (region indices); declaration order where absent. */
+  readonly order?: readonly number[];
 }
 
 /** What is being offered to the machine when asking what is enabled. */

@@ -278,7 +278,7 @@ describe('what the walk refuses to explore', () => {
     expect(r.diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE)).toBeUndefined();
   });
 
-  it('coupled regions of a parallel machine root are unsupported, never exhaustively explored', () => {
+  it('more than four coupled regions of a parallel machine root are unsupported, never exhaustively explored', () => {
     const m = new Model();
     const f = new ModelFactory(m);
     const par = m.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
@@ -287,10 +287,12 @@ describe('what the walk refuses to explore', () => {
     const a1 = f.state('a1', r1.id);
     const a2 = f.state('a2', r1.id);
     f.transition(a1.id, a2.id, { ownerId: r1.id, trigger: 't', effect: 'n = 1' });
-    const r2 = f.state('r2', par.id);
-    const b1 = f.state('b1', r2.id);
-    const b2 = f.state('b2', r2.id);
-    f.transition(b1.id, b2.id, { ownerId: r2.id, trigger: 't', guard: 'n == 1' });
+    for (const r of ['r2', 'r3', 'r4', 'r5']) {
+      const reg = f.state(r, par.id);
+      const b1 = f.state(`${r}a`, reg.id);
+      const b2 = f.state(`${r}b`, reg.id);
+      f.transition(b1.id, b2.id, { ownerId: reg.id, trigger: 't', guard: 'n == 1' });
+    }
     const only = reachReport(m, { scopeId: par.id }).machines[0];
     expect(only.exhaustive).toBe(false);
     expect(only.unsupported.map((u) => u.construct)).toContain('parallel-regions');
@@ -4063,8 +4065,8 @@ describe('what a line says about itself', () => {
     const f = new ModelFactory(model);
     const par = model.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
     f.attribute('n', par.id, { type: 'Integer', value: 0 });
-    // two regions coupled through `n` (one writes it, the other reads it): the one parallel shape still refused here
-    ['r1', 'r2'].forEach((r, i) => {
+    // two regions coupled through `n` (one writes it, the other reads it): more than four coupled regions: the one parallel shape still refused here
+    ['r1', 'r2', 'r3', 'r4', 'r5'].forEach((r, i) => {
       const region = f.state(r, par.id);
       const a = f.state(`${r}a`, region.id);
       const b = f.state(`${r}b`, region.id);

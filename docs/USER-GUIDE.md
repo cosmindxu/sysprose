@@ -3969,11 +3969,11 @@ state machines disagrees about — run-to-completion (chasing is bounded at 64
 steps), priority (innermost substate first), exits (a step exits to the least
 common ancestor of its source and its target, and every transition is external:
 the next paragraph), history (shallow, by parent map), regions (a parallel state
-nested in an ordinary machine is performed concurrently, in declaration order,
-by the interpreter and the walk, and so is a parallel machine root — a state
+nested in an ordinary machine is performed concurrently, in declaration order
+by the interpreter, and the walk explores every order of coupled regions, and so is a parallel machine root — a state
 definition or usage, an exhibit state among them, marked `parallel`, SysML v2
-§7.18.2; a parallel machine or state whose regions are coupled through an
-attribute is not explored), deferred
+§7.18.2; a parallel machine or state with more than 4 regions coupled through an
+attribute is not explored, and a witness on a parallel machine is withheld), deferred
 events (none — there is no event pool), and time (discrete `after(n)`; the walk
 offers each `after(n)` label as an event rather than advancing a clock). A
 verdict about a machine is a verdict under a reading of those seven, and one

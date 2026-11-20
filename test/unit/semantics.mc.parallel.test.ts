@@ -1,8 +1,8 @@
 /**
  * A parallel state nested in an ordinary machine is EXPLORED (SysML v2 §7.18.2) under the same reading the
  * interpreter performs: the explorer's configurations are exactly the interpreter's, event sequence by event
- * sequence; the shapes the interpreter refuses stay refused with its reason; and regions the fixed declaration order
- * would decide (coupled) are refused, never walked as though one order were all the specification allows.
+ * sequence; the shapes the interpreter refuses stay refused with its reason; and coupled regions are
+ * explored in every order (semantics.mc.parallel-orders.test.ts).
  */
 import { describe, it, expect } from 'vitest';
 import { loadModelText } from '@text/load';
@@ -186,22 +186,27 @@ describe('what stays refused, with a reason', () => {
     expect(walk.exhaustive).toBe(true);
   });
 
-  it('coupled regions are refused: the fixed order decides the outcome the specification leaves open', async () => {
+  it('coupled regions are explored in every order: the fixed order decides the interpreter\'s outcome, the walk keeps both', async () => {
     const r1 = 'state r1 { entry; then a1; state a1; state a2; transition t first a1 accept f then a2; }';
     const r2 = 'state r2 { entry; then b1; state b1; state b2; transition u first b1 accept f if n == 1 then b2; }';
     const src = `package P { item def f; state def M { attribute n : Integer = 0; entry; then p; state p parallel { ${r1} ${r2} } } }`;
     const model = await load(src, { 'P::M::p::r1::t': 'n = 1' });
     const id = find(model, 'P::M').id;
     const walk = exploreMachine(model, id);
-    expect(walk.exhaustive).toBe(false);
-    expect(walk.unsupported[0].detail).toMatch(/coupled through `n`/);
-    // the interpreter's result depends on the declaration order — the reason the explorer refuses
+    expect(walk.exhaustive).toBe(true);
+    expect(walk.unsupported).toEqual([]);
+    // the interpreter's result depends on the declaration order — the reason the explorer takes every order
     const swapped = await load(src.replace(`${r1} ${r2}`, `${r2} ${r1}`), { 'P::M::p::r1::t': 'n = 1' });
     const a = runStateMachine(model, id, ['f']).activeStates.map((s: string) => model.qualifiedName(s)).sort();
     const b = runStateMachine(swapped, find(swapped, 'P::M').id, ['f']).activeStates.map((s: string) => swapped.qualifiedName(s)).sort();
     expect(a).not.toEqual(b);
     const rep = reachReport(model, { scopeId: id });
-    expect(rep.machines[0].exhaustive).toBe(false);
+    // (reach's own gate may still hold the guard over `n` undecided; what it no longer says is `not explored`)
+    expect(rep.machines[0].qualification).not.toMatch(/not explored/);
+    const key = (ls: readonly string[]): string => ls.map((s) => model.qualifiedName(s)).sort().join(' | ');
+    const walked = new Set(walk.configRegionLeaves.map(key));
+    expect(walked.has(a.join(' | '))).toBe(true);
+    expect(walked.has(['P::M::p::r1::a2', 'P::M::p::r2::b1'].join(' | '))).toBe(true);
   });
 
   it('an event a region takes and a transition leaving the state takes is refused', async () => {
@@ -215,7 +220,7 @@ describe('what stays refused, with a reason', () => {
     const f = SEMANTIC_PROFILE.find((x) => x.field === 'regions')!;
     expect(f.reading).toContain('performed concurrently');
     expect(f.reading).not.toContain('CONCATENATES');
-    expect(f.reading).toContain('FIXED');
-    expect(f.reading).toContain('coupled');
+    expect(f.reading).toContain('fixed declaration order');
+    expect(f.reading).toContain('EVERY order');
   });
 });

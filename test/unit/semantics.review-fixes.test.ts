@@ -17,12 +17,11 @@ const coupled = (entry: string): string =>
 
 describe('1. coupling through a referenced action', () => {
   for (const entry of ['entry assign n := 1;', 'entry setn;']) {
-    it(`refused as parallel-regions, coupled through n: ${entry}`, async () => {
+    it(`explored in every order, coupled through n: ${entry}`, async () => {
       const l = await load(coupled(entry));
       const w = exploreMachine(l.model, find(l.model, 'P::M').id);
-      expect(w.exhaustive).toBe(false);
-      expect(w.unsupported.map((u: any) => u.construct)).toEqual(['parallel-regions']);
-      expect(w.unsupported[0].detail).toMatch(/coupled through `n`/);
+      expect(w.exhaustive).toBe(true);
+      expect(w.unsupported).toEqual([]);
     });
   }
 });

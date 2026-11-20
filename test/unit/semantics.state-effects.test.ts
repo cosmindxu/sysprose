@@ -184,16 +184,19 @@ describe('an effect this evaluator cannot apply refuses the run and the walk', (
   }
 });
 
-describe('a region assigning an attribute its scope does not hold', () => {
-  it('is refused by the run and the walk alike, not shown with the effect dropped', async () => {
+describe('a region assigning an attribute of the package that holds the machine', () => {
+  // The region's scope is lexical (it sees the states, the machine and the package around it), as a flat machine's
+  // already was, so the assignment is applied, by the run and the walk alike.
+  it('is applied by the run and the walk alike', async () => {
     const src =
       'package P { attribute n : Integer = 0; item def f; state def M { entry; then p; state p parallel { ' +
       'state r1 { entry; then a1; state a1; state a2 { entry assign n := n + 1; } transition t first a1 accept f then a2; } state r2; } } }';
     const l = await load(src);
     const id = find(l.model, 'P::M').id;
     const run = runStateMachine(l.model, id, ['f']);
-    expect(run.unopened).toMatch(/cannot evaluate/);
-    expect(exploreMachine(l.model, id).unsupported.map((u) => u.construct)).toEqual(['state-effect']);
+    expect(run.unopened).toBeUndefined();
+    expect(run.valueStore.get('n')).toBe(1);
+    expect(exploreMachine(l.model, id).unsupported).toEqual([]);
   });
 });
 
@@ -202,12 +205,11 @@ describe('coupled regions, written in the text', () => {
   const r2 = 'state r2 { entry; then b1; state b1; state b2; transition u first b1 accept f if n == 1 then b2; }';
   const mk = (body: string): string =>
     `package P { item def f; state def M { attribute n : Integer = 0; entry; then p; state p parallel { ${body} } } }`;
-  it('the explorer refuses the coupling', async () => {
+  it('the explorer explores the coupling in every order', async () => {
     const l = await load(mk(r1 + r2));
     const walk = exploreMachine(l.model, find(l.model, 'P::M').id);
-    expect(walk.exhaustive).toBe(false);
-    expect(walk.unsupported[0].construct).toBe('parallel-regions');
-    expect(walk.unsupported[0].detail).toMatch(/coupled through `n`/);
+    expect(walk.exhaustive).toBe(true);
+    expect(walk.unsupported).toEqual([]);
   });
   it('the interpreter runs the regions in declaration order, each seeing what the one before wrote', async () => {
     const a = await load(mk(r1 + r2));

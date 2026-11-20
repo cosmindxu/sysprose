@@ -16,12 +16,8 @@
  *
  * WHAT IS REFUSED (`parallelRefusal`), with the interpreter's own reasons where it refuses too: a parallel state
  * below a parallel machine root, a parallel state inside a parallel state, an entry action naming a start, a history state inside, a
- * transition between regions or out of one, a step into a region, a region with
- * an unread start — and three reasons the explorer adds, because the interpreter applies the regions in ONE fixed
- * order while the specification admits any interleaving, and an exhaustive verdict must not be claimed over an order
- * the specification does not fix:
- *   - COUPLED REGIONS: a region writes an attribute that another region reads or writes. The fixed order then decides
- *     the outcome, and the other orders are runs this walk would not explore.
+ * transition between regions or out of one, a step into a region, a region with an unread start, a COUPLED parallel
+ * state of more than {@link MAX_ORDERED_REGIONS} regions — and two reasons the explorer adds:
  *   - an event a region takes AND a transition leaving `p` (or a state holding it) takes: the interpreter stops there
  *     rather than choose; the explorer refuses the trigger statically.
  *   - a timed (`after`) transition inside a region, which the interpreter never fires in a region.
@@ -40,6 +36,7 @@ import {
   afterDuration,
   entryControlEdges,
   entryStartUnreadOf,
+  hashConfig,
   initialConfig,
   isCompletion,
   isFinalState,
@@ -196,6 +193,31 @@ export interface ParallelRefusal {
 /** The label a transition is taken on: its trigger text, `''` for a completion transition. */
 const labelOf = (tr: ElementRecord): string => (isCompletion(tr) ? '' : triggerLabelOf(tr));
 
+/** The most regions of a COUPLED parallel state whose every order is explored (4! = 24 orders). */
+export const MAX_ORDERED_REGIONS = 4;
+
+/** Is one region's write an attribute another region reads or writes? Then the order the regions are applied in can decide the outcome. */
+function regionsCoupled(model: Model, regionIds: readonly ElementId[]): boolean {
+  const names = regionIds.map((r) => regionNames(model, r, new Set(machineRegion(model, r).descendants.map((e) => e.id))));
+  for (let i = 0; i < names.length; i++) {
+    for (let j = 0; j < names.length; j++) {
+      if (i !== j && [...names[i].writes].some((w) => names[j].all.has(w))) return true;
+    }
+  }
+  return false;
+}
+
+/** Every permutation of 0..n-1, the identity (declaration order) first. */
+function permutations(n: number): number[][] {
+  const out: number[][] = [];
+  const go = (rest: number[], acc: number[]): void => {
+    if (rest.length === 0) out.push(acc);
+    else rest.forEach((x, k) => go([...rest.slice(0, k), ...rest.slice(k + 1)], [...acc, x]));
+  };
+  go(Array.from({ length: n }, (_, i) => i), []);
+  return out;
+}
+
 /**
  * Why a machine holding a parallel state below its root cannot be explored, or `undefined`. The interpreter's own
  * refusals (`nestedParallelRefusal`, `../execute.ts`), in its words, then the explorer's three; a differential test
@@ -274,18 +296,12 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
         return out(p.id, `the event \`${l}\` is taken by a transition of a region of its parallel state ${name(p.id)} and by a transition that leaves it or a state that holds it, and the interpreter stops there rather than choose; no verdict is given over it`);
       }
     }
-    const names = regions.map((r) => regionNames(model, r.id, new Set(machineRegion(model, r.id).descendants.map((e) => e.id))));
-    for (let i = 0; i < names.length; i++) {
-      for (let j = 0; j < names.length; j++) {
-        if (i === j) continue;
-        const shared = [...names[i].writes].filter((w) => names[j].all.has(w));
-        if (shared.length > 0) {
-          return out(
-            p.id,
-            `the regions ${name(regions[i].id)} and ${name(regions[j].id)} of its parallel state ${name(p.id)} are coupled through \`${shared[0]}\`: one writes it and the other reads or writes it, the interpreter applies the regions in declaration order, and the specification admits any interleaving, so no exhaustive verdict is given over this order alone`,
-          );
-        }
-      }
+    // Coupled regions are EXPLORED in every order ({@link candidatesOf}); the permutations are capped.
+    if (regions.length > MAX_ORDERED_REGIONS && regionsCoupled(model, regions.map((r) => r.id))) {
+      return out(
+        p.id,
+        `its parallel state ${name(p.id)} has ${regions.length} regions that are coupled through the attribute store, and the walk explores every order of at most ${MAX_ORDERED_REGIONS} regions (${MAX_ORDERED_REGIONS}! orders); no exhaustive verdict is given over more`,
+      );
     }
   }
   return undefined;
@@ -380,35 +396,58 @@ export function candidatesOf(model: Model, cfg: MachineConfig, input: StepInput,
   const undetermined: UndeterminedGuard[] = [...outer.undetermined];
   const regionChoices: { cfg: MachineConfig; enabled: EnabledTransition[] }[] = [];
   const n = cfg.par.regs.length;
-  // Branches: the partial macro (picks so far) and the configuration it leaves.
-  let branches: { picks: (EnabledTransition | null)[]; at: MachineConfig }[] = [{ picks: [], at: cfg }];
-  for (let i = 0; i < n; i++) {
-    const next: typeof branches = [];
-    let first = true;
-    for (const b of branches) {
-      const found = stepCandidates(model, regionView(b.at, i), input, resolveNames);
-      if (first) {
-        for (const u of found.undetermined) undetermined.push({ ...u, level: cfg.stack.length });
-        first = false;
+  // Every order the regions may be applied in: declaration order alone where they are uncoupled (every order then
+  // gives the same result), every permutation where they are coupled (the specification fixes none).
+  const ids = cfg.par.regs.map((r) => r.id);
+  const coupled = n > 1 && n <= MAX_ORDERED_REGIONS && regionsCoupled(model, ids);
+  const orders = coupled ? permutations(n) : [Array.from({ length: n }, (_, i) => i)];
+  const macros: { picks: (EnabledTransition | null)[]; order: number[]; at: MachineConfig }[] = [];
+  const seen = new Set<string>();
+  orders.forEach((order, oi) => {
+    // Branches: the partial macro (picks so far, by region) and the configuration it leaves.
+    let branches: { picks: (EnabledTransition | null)[]; at: MachineConfig }[] = [{ picks: new Array(n).fill(null), at: cfg }];
+    for (const i of order) {
+      const next: typeof branches = [];
+      let first = true;
+      for (const b of branches) {
+        const found = stepCandidates(model, regionView(b.at, i), input, resolveNames);
+        if (first) {
+          for (const u of found.undetermined) {
+            if (oi === 0 || !undetermined.some((x) => x.transition?.id === u.transition?.id && x.level === cfg.stack.length)) {
+              undetermined.push({ ...u, level: cfg.stack.length });
+            }
+          }
+          first = false;
+        }
+        if (found.enabled.length === 0) {
+          next.push(b);
+          continue;
+        }
+        const innermost = found.enabled[0].level;
+        const alts = found.enabled.filter((e) => e.level === innermost);
+        if (alts.length > 1 && oi === 0) regionChoices.push({ cfg: regionView(b.at, i), enabled: alts });
+        for (const a of alts) {
+          const picks = b.picks.slice();
+          picks[i] = a;
+          next.push({ picks, at: stepInRegion(model, b.at, i, a).config });
+        }
       }
-      if (found.enabled.length === 0) {
-        next.push({ picks: [...b.picks, null], at: b.at });
-        continue;
-      }
-      const innermost = found.enabled[0].level;
-      const alts = found.enabled.filter((e) => e.level === innermost);
-      if (alts.length > 1) regionChoices.push({ cfg: regionView(b.at, i), enabled: alts });
-      for (const a of alts) next.push({ picks: [...b.picks, a], at: stepInRegion(model, b.at, i, a).config });
+      branches = next;
     }
-    branches = next;
-  }
-  const macros = branches.filter((b) => b.picks.some((p) => p !== null));
+    for (const b of branches) {
+      if (!b.picks.some((p) => p !== null)) continue;
+      const k = hashConfig(b.at);
+      if (oi > 0 && seen.has(k)) continue;
+      seen.add(k);
+      macros.push({ ...b, order });
+    }
+  });
   if (input.kind === 'completion' && macros.length === 0) return { ...outer, undetermined, regionChoices: [] };
   if (input.kind === 'trigger' && outer.enabled.length > 0) return { ...outer, regionChoices: [] };
   const level = cfg.stack.length - 1;
   const enabled: EnabledTransition[] = macros.map((b) => {
     const rep = b.picks.find((p) => p !== null)!;
-    return { transition: rep.transition, level, label: rep.label, macro: { picks: b.picks } };
+    return { transition: rep.transition, level, label: rep.label, macro: { picks: b.picks, order: b.order } };
   });
   return { enabled, undetermined, regionChoices };
 }
@@ -422,8 +461,10 @@ export function advanceConfig(model: Model, cfg: MachineConfig, choice: EnabledT
   if (choice.macro !== undefined) {
     let at = cfg;
     let effects: StepEffects = { visited: [], fired: [], performed: [] };
-    choice.macro.picks.forEach((p, i) => {
-      if (p === null) return;
+    const picks = choice.macro.picks;
+    (choice.macro.order ?? picks.map((_, i) => i)).forEach((i) => {
+      const p = picks[i];
+      if (p === null || p === undefined) return;
       const r = stepInRegion(model, at, i, p);
       at = r.config;
       effects = merge(effects, r.effects);

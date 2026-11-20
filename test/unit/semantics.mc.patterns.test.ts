@@ -524,9 +524,16 @@ describe('the three sentences this engine refuses to produce', () => {
     const a2 = f.state('a2', r1.id);
     const b1 = f.state('b1', r2.id);
     const b2 = f.state('b2', r2.id);
-    // The regions are coupled through `n` (one writes it, the other reads it): the explorer refuses, the interpreter runs
+    // The regions are coupled through `n` (one writes it, the other reads it): more than four: the explorer refuses, the interpreter runs
     f.transition(a1.id, a2.id, { ownerId: r1.id, trigger: 'go', effect: 'n = 1' });
     f.transition(b1.id, b2.id, { ownerId: r2.id, trigger: 'go', guard: 'n == 1' });
+    // three more readers: five coupled regions are more than the explorer takes every order of
+    for (const r of ['R3', 'R4', 'R5']) {
+      const reg = f.state(r, sm.id);
+      const x = f.state(`${r}a`, reg.id);
+      const y = f.state(`${r}b`, reg.id);
+      f.transition(x.id, y.id, { ownerId: reg.id, trigger: 'go', guard: 'n == 1' });
+    }
     expect(exploreMachine(m, sm.id).unsupported.map((u) => u.construct)).toEqual([
       'parallel-regions',
     ]);
@@ -543,7 +550,7 @@ describe('the three sentences this engine refuses to produce', () => {
     // anyway would have refuted this property. The refusal is not a shortcut
     // around a hard answer; it is a refusal to answer under semantics the
     // report says it does not implement.
-    expect(runStateMachine(m, sm.id, ['go']).activeStates).toHaveLength(2);
+    expect(runStateMachine(m, sm.id, ['go']).activeStates).toHaveLength(5);
   });
 });
 

@@ -93,10 +93,7 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
       'interpreter and by the explorer alike: every region is entered at its own start, an event is offered to ' +
       'every region in declaration order, each region takes its own first-declared enabled transition (all of ' +
       'them are explored where several are enabled), a region with none stays, each region sees the store the ' +
-      'previous one left, and leaving the parallel state exits every region. The order is FIXED, where the ' +
-      'specification admits any interleaving, so the explorer refuses a parallel state whose regions are coupled ' +
-      '(one writes an attribute another reads or writes) and does not give an exhaustive verdict over one order ' +
-      'alone. A refusal in one region (a step the interpreter does not take) stops the whole run, as the regions are ' +
+      'previous one left, and leaving the parallel state exits every region. The interpreter applies the regions in ONE fixed declaration order, where the specification fixes none, so the explorer, where the regions are COUPLED (one writes an attribute another reads or writes), explores EVERY order of them (each region still takes its own innermost enabled transitions, each alternative explored; identical results merged; at most 4 regions, more are refused): its result there is a superset of the interpreter\'s runs, and a witness is withheld because its path may need an order the interpreter does not run. Uncoupled regions give the same result in every order, so one order is explored. A refusal in one region (a step the interpreter does not take) stops the whole run, as the regions are ' +
       'performed together, and a run is complete when every region stands at a final state. A parallel state is complete when every one of its regions stands at a final state of its own, and a trigger-less transition out of it (a parallel machine root: out of the machine, to one of its states) is then taken, after every region is exited, with its guard read at that moment; before then it is not taken. Also refused, with a ' +
       'reason: a parallel state in a parallel state or below a parallel machine root, a history state inside, a transition between ' +
       'regions, a step into a region, an entry action naming ' +
