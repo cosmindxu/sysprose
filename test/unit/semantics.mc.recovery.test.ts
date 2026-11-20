@@ -211,7 +211,7 @@ describe('the dispatch: a branching-time question never reaches the bad-prefix s
     }
     // Both directions behind ONE gate: the decided rows read the gate's own
     // field, and the target predicate is `atomHolds`'s selection per kind.
-    expect(arm).toContain("atom.kind === 'state' ? walk.configStates[i].includes(id) : walk.configLeaves[i] === id");
+    expect(arm).toContain("atom.kind === 'state' ? walk.configStates[i].includes(id) : leafHolds(walk, i, id)");
     expect(arm).toContain('if (!gate.seenWhole)');
     expect(arm).toContain('switch (gate.failedClause)');
   });

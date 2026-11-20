@@ -997,6 +997,33 @@ export interface MachineConfig {
   readonly entryTime: ReadonlyMap<ElementId, number>;
   /** Composite parent → its last-active substate. */
   readonly history: ReadonlyMap<ElementId, ElementId>;
+  /**
+   * The concurrent regions of the parallel state that ends `stack` (SysML v2 §7.18.2), one active stack per region
+   * in declaration order. Set only by `./parallel` (the interpreter keeps its own, in `runHierRegion`); absent on
+   * every other configuration, so nothing that never meets a parallel state sees it.
+   */
+  readonly par?: ParConfig;
+}
+
+/** One region of an active parallel state: the region state and its own active stack. */
+export interface ParRegion {
+  readonly id: ElementId;
+  readonly stack: readonly ElementId[];
+  readonly entryTime: ReadonlyMap<ElementId, number>;
+}
+
+/** The regions of an active parallel state. */
+export interface ParConfig {
+  readonly id: ElementId;
+  readonly regs: readonly ParRegion[];
+}
+
+/**
+ * A step of the concurrent regions of a parallel state on one input: one entry per region, the transition it takes
+ * or `null` where it stays, applied in declaration order, each region on the store the previous one left.
+ */
+export interface ParMacro {
+  readonly picks: readonly (EnabledTransition | null)[];
 }
 
 /** What is being offered to the machine when asking what is enabled. */
@@ -1015,6 +1042,8 @@ export interface EnabledTransition {
   readonly level: number;
   /** The label recorded on the fire — `''` for a completion transition. */
   readonly label: string;
+  /** Set on a step of the concurrent regions of a parallel state (`./parallel`): the per-region picks. */
+  readonly macro?: ParMacro;
 }
 
 /** What a step appended to the run: the interpreter's three output arrays. */
@@ -1535,7 +1564,8 @@ export function hashConfig(cfg: MachineConfig, history = true): string {
   // over-fine, and the walk non-terminating, for the first caller that advances
   // it, which is what a timed `check-behaviour` is.
   const dwell = cfg.stack.map((s) => `${s}@${cfg.clock - (cfg.entryTime.get(s) ?? 0)}`).join('/');
-  return `${cfg.regionId}|${cfg.stack.join('/')}|${dwell}|${store}|${resumed}`;
+  const par = cfg.par === undefined ? '' : `|P:${cfg.par.regs.map((r) => `${r.id}=${r.stack.join('/')}`).join(';')}`;
+  return `${cfg.regionId}|${cfg.stack.join('/')}|${dwell}|${store}|${resumed}${par}`;
 }
 
 /**
@@ -1555,4 +1585,19 @@ export function resumesHistory(model: Model, regionId: ElementId): boolean {
 /** The active leaf of a configuration, or `null` for an empty region. */
 export function leafOf(cfg: MachineConfig): ElementId | null {
   return cfg.stack.length > 0 ? cfg.stack[cfg.stack.length - 1] : null;
+}
+
+/** Every state a configuration is in: its stack, and for each region of an active parallel state the region and its stack. */
+export function activeStatesOf(cfg: MachineConfig): readonly ElementId[] {
+  if (cfg.par === undefined) return cfg.stack;
+  return [...cfg.stack, ...cfg.par.regs.flatMap((r) => [r.id, ...r.stack])];
+}
+
+/** The leaves a configuration is in: its own, or for an active parallel state each region's (the region itself if it holds no state). */
+export function activeLeavesOf(cfg: MachineConfig): readonly ElementId[] {
+  if (cfg.par === undefined) {
+    const l = leafOf(cfg);
+    return l === null ? [] : [l];
+  }
+  return cfg.par.regs.map((r) => (r.stack.length > 0 ? r.stack[r.stack.length - 1] : r.id));
 }

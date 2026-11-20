@@ -3968,10 +3968,12 @@ printed under each machine names seven things every published formalisation of
 state machines disagrees about — run-to-completion (chasing is bounded at 64
 steps), priority (innermost substate first), exits (a step exits to the least
 common ancestor of its source and its target, and every transition is external:
-the next paragraph), history (shallow, by parent map), regions (the interpreter
-concatenates them; a parallel machine — a state definition or usage, an
-exhibit state among them, marked `parallel`, SysML v2 §7.18.2 — is not explored
-here at all), deferred
+the next paragraph), history (shallow, by parent map), regions (a parallel state
+nested in an ordinary machine is performed concurrently, in declaration order,
+by the interpreter and the walk; a parallel machine root — a state definition or
+usage, an exhibit state among them, marked `parallel`, SysML v2 §7.18.2 — and
+a parallel state whose regions are coupled through an attribute are not
+explored), deferred
 events (none — there is no event pool), and time (discrete `after(n)`; the walk
 offers each `after(n)` label as an event rather than advancing a clock). A
 verdict about a machine is a verdict under a reading of those seven, and one

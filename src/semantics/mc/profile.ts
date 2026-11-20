@@ -86,12 +86,20 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
   {
     field: 'regions',
     reading:
-      'the interpreter CONCATENATES: each region is driven through the whole step sequence in turn ' +
-      'and the results are appended, so regions do not interleave. The explorer does not explore a ' +
-      'parallel machine at all — `parallel` is parsed on a state definition or usage (SysML v2 ' +
-      '§7.18.2) and the walk does not interleave the concurrent regions it marks — it reports ' +
-      'verification/behaviour-unsupported-construct and is never exhaustive.',
-    provenance: 'src/semantics/execute.ts — runHierMachine; src/semantics/mc/explore.ts — unsupportedConstructs',
+      'a parallel STATE nested in an ordinary machine is performed concurrently (SysML v2 §7.18.2), by the ' +
+      'interpreter and by the explorer alike: every region is entered at its own start, an event is offered to ' +
+      'every region in declaration order, each region takes its own first-declared enabled transition (all of ' +
+      'them are explored where several are enabled), a region with none stays, each region sees the store the ' +
+      'previous one left, and leaving the parallel state exits every region. The order is FIXED, where the ' +
+      'specification admits any interleaving, so the explorer refuses a parallel state whose regions are coupled ' +
+      '(one writes an attribute another reads or writes) and does not give an exhaustive verdict over one order ' +
+      'alone. Also refused, with a reason: a parallel machine root (the interpreter drives its regions over the ' +
+      'whole script in turn), a parallel state in a parallel state, a history state inside, a transition between ' +
+      'regions or a completion transition out of the parallel state, a step into a region, an entry action naming ' +
+      'a start, an event taken both by a region and by a transition leaving the parallel state, and a timed ' +
+      'transition in a region — all verification/behaviour-unsupported-construct, never exhaustive.',
+    provenance:
+      'src/semantics/execute.ts — runHierRegion, nestedParallelRefusal; src/semantics/mc/parallel.ts — parallelRefusal, candidatesOf, advanceConfig',
   },
   {
     field: 'deferred events',

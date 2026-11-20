@@ -31,6 +31,8 @@
 import { refSegments, type ElementId, type ElementRecord, type Model } from '@core/index';
 import { parseExpr, writtenChains } from '../expr';
 import {
+  activeLeavesOf,
+  activeStatesOf,
   evalStr,
   leafOf,
   machineRegion,
@@ -97,6 +99,8 @@ export interface Observation {
   readonly input: StepInput | null;
   /** The transition that fired, or `null` for the opening configuration. */
   readonly transition: ElementRecord | null;
+  /** Every transition the step fired where it fired several (one per region of a parallel state); else absent. */
+  readonly fired?: readonly ElementId[];
 }
 
 /** How many names a refusal lists before it stops naming them. */
@@ -351,13 +355,13 @@ export function atomHolds(model: Model, atom: Atom, obs: Observation): boolean |
       // composite state is active while its substate is, and a property about
       // `Degraded` that went false the moment the machine entered a substate of
       // it would be a property about the leaf wearing the name of the state.
-      return obs.config.stack.includes(atom.elementId!);
+      return activeStatesOf(obs.config).includes(atom.elementId!);
     case 'node':
-      return leafOf(obs.config) === atom.elementId;
+      return leafOf(obs.config) === atom.elementId || activeLeavesOf(obs.config).includes(atom.elementId!);
     case 'trigger':
       return obs.input?.kind === 'trigger' && obs.input.trigger === atom.argument;
     case 'fires':
-      return obs.transition?.id === atom.elementId;
+      return obs.fired !== undefined ? obs.fired.includes(atom.elementId!) : obs.transition?.id === atom.elementId;
     case 'expression': {
       const scope = regionScope(model, obs.config.regionId);
       const value = evalStr(atom.argument, obs.config.store, scope);

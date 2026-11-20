@@ -97,9 +97,10 @@ import type { Diagnostic } from '@validation/types';
 import {
   CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
+  activeLeavesOf,
+  activeStatesOf,
   afterDuration,
   hashConfig,
-  initialConfig,
   entryOpeningOf,
   isFinalState,
   isHistoryComposite,
@@ -110,8 +111,6 @@ import {
   outsideStatesSentence,
   resumesHistory,
   seedStore,
-  stepCandidates,
-  stepConfig,
   stepOutsideStates,
   triggerLabelOf,
   type EnabledTransition,
@@ -121,6 +120,7 @@ import {
   type StepInput,
   type UndeterminedGuard,
 } from './config';
+import { advanceConfig, candidatesOf, openConfig, parallelRefusal, transitionsOf, type ParCandidates } from './parallel';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
 // One definition of "may this absence be stated", read by this file and by
 // `./patterns`, so the two cannot drift apart again. `walkIsExact` is the OTHER
@@ -654,6 +654,13 @@ export interface ExploreResult {
    * what keeps two readers from disagreeing about one atom.
    */
   configLeaves: readonly (ElementId | null)[];
+  /**
+   * Every ACTIVE LEAF per node number: the one leaf of `configLeaves` where no parallel state is active, and one per
+   * region of the active parallel state (`./parallel`) where one is — there `configLeaves` is the parallel state
+   * itself (the leaf of the outer stack) and a `node` atom on a region's leaf is read here. `configStates` holds the
+   * regions and their stacks as well.
+   */
+  configRegionLeaves: readonly (readonly ElementId[])[];
   /**
    * This walk did not see the graph whole. Equals `!exhaustive`, asserted.
    *
@@ -1511,25 +1518,24 @@ function unsupportedConstructs(
 ): UnsupportedConstruct[] {
   const out: UnsupportedConstruct[] = [];
   const machine = model.get(machineId);
-  // A parallel state anywhere in this machine's region refuses it, not only a
-  // parallel ROOT: `state sub parallel { … }` nested inside an ordinary machine
-  // is a region of THIS machine (a nested `state def` is a machine of its own
-  // and is excluded below), and walking past it would publish the exclusive
-  // interleaving the refusal exists to withhold.
-  for (const el of [machine, ...machineRegion(model, machineId).descendants]) {
-    if (!el) continue;
-    if (el.id !== machineId && el.eClass === 'StateDefinition') continue;
-    if (!isTruthy(el.attrs.parallel) && !isTruthy(el.attrs.isParallel)) continue;
-    const who = el.id === machineId ? 'the machine' : `\`${model.qualifiedName(el.id) || el.id}\``;
+  // A parallel MACHINE (the root itself marked parallel) is run by the interpreter region by region over the whole
+  // script, not concurrently, so no exhaustive answer about it is available. A parallel STATE nested in an ordinary
+  // machine is explored, in the shapes the interpreter performs and the explorer's own fences allow
+  // (`./parallel`, `parallelRefusal`); every other shape refuses the machine with its reason.
+  if (machine && (isTruthy(machine.attrs.parallel) || isTruthy(machine.attrs.isParallel))) {
     out.push({
       construct: 'parallel-regions',
       detail:
-        `${who} is marked parallel (\`parallel\` on a state definition or usage, SysML v2 §7.18.2, ` +
-        `or the API's \`attrs.parallel\`). Its regions are performed concurrently, and this explorer ` +
-        'does not interleave them, so no exhaustive answer about a parallel machine is available here.',
-      elementId: el.id,
+        'the machine is marked parallel (`parallel` on a state definition or usage, SysML v2 §7.18.2, ' +
+        "or the API's `attrs.parallel`). The interpreter drives each of its regions over the whole script in turn " +
+        'rather than performing them concurrently, so no exhaustive answer about a parallel machine is available here.',
+      elementId: machine.id,
     });
-    break;
+  } else if (machine) {
+    const refusal = parallelRefusal(model, machineId);
+    if (refusal !== undefined) {
+      out.push({ construct: 'parallel-regions', detail: refusal.reason, elementId: refusal.elementId });
+    }
   }
   for (const el of [machine, ...machineRegion(model, machineId).descendants]) {
     if (!el) continue;
@@ -1851,6 +1857,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
       successors: [],
       configStates: [],
       configLeaves: [],
+      configRegionLeaves: [],
       openFrontier: true,
       timedTransitions,
       timedLabels,
@@ -1894,6 +1901,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
     successors: walked.successors,
     configStates: walked.configStates,
     configLeaves: walked.configLeaves,
+    configRegionLeaves: walked.configRegionLeaves,
     openFrontier: !walked.exhaustive,
     timedTransitions,
     timedLabels,
@@ -1921,6 +1929,7 @@ interface Walked {
   successors: number[][];
   configStates: (readonly ElementId[])[];
   configLeaves: (ElementId | null)[];
+  configRegionLeaves: (readonly ElementId[])[];
   /**
    * `completionSuccessors[i]`: the part of `successors[i]` reached by a
    * completion step. Read once, by {@link chaseBudgetDecides}, to ask whether
@@ -1984,11 +1993,11 @@ function walkConfigurations(
   // walk needs it BEFORE it admits a configuration — whether a completion
   // transition is due there decides whether the chase position is in the key —
   // and asks again when it dequeues one, so it is asked once per configuration.
-  const completionCache = new Map<string, StepCandidates>();
-  const completionAt = (config: MachineConfig, hash: string): StepCandidates => {
+  const completionCache = new Map<string, ParCandidates>();
+  const completionAt = (config: MachineConfig, hash: string): ParCandidates => {
     let found = completionCache.get(hash);
     if (found === undefined) {
-      found = stepCandidates(model, config, COMPLETION, true);
+      found = candidatesOf(model, config, COMPLETION, true);
       completionCache.set(hash, found);
     }
     return found;
@@ -2038,7 +2047,7 @@ function walkConfigurations(
   const seeded = new Map<string, unknown>();
   const machineEl = model.get(machineId);
   if (machineEl) seedStore(model, machineEl, seeded);
-  const opening = initialConfig(model, machineId, { store: seeded });
+  const opening = openConfig(model, machineId, { store: seeded });
   for (const v of opening.effects.visited) reachable.add(v);
   // The history map is in the key only where a composite resumes from it.
   const history = resumesHistory(model, machineId);
@@ -2052,8 +2061,9 @@ function walkConfigurations(
   // `seen.size` stay equal.
   const succ: number[][] = [[]];
   const completionSucc: number[][] = [[]];
-  const configStates: (readonly ElementId[])[] = [opening.config.stack];
+  const configStates: (readonly ElementId[])[] = [activeStatesOf(opening.config)];
   const configLeaves: (ElementId | null)[] = [leafOf(opening.config)];
+  const configRegionLeaves: (readonly ElementId[])[] = [activeLeavesOf(opening.config)];
   const queue: (Frontier & { hash: string })[] = [
     { config: opening.config, depth: 0, events: 0, completionRun: 0, index: 0, hash: openingHash },
   ];
@@ -2103,8 +2113,8 @@ function walkConfigurations(
         : inputs;
     for (const input of offeredInputs) {
       if (input.kind === 'trigger') offered.add(input.trigger);
-      const { enabled, undetermined } =
-        input.kind === 'completion' ? completion : stepCandidates(model, here.config, input, true);
+      const found = input.kind === 'completion' ? completion : candidatesOf(model, here.config, input, true);
+      const { enabled, undetermined } = found;
       // Recorded whether or not anything was enabled, and BEFORE the early
       // `continue` below: a configuration where the only outgoing edge is an
       // undetermined guard has nothing enabled, and it is exactly the one whose
@@ -2134,7 +2144,12 @@ function walkConfigurations(
       // this lane may not do. Rows at or outside a level that is still fully
       // decided stand.
       const withheldInside = undetermined.some((u) => u.level > innermost);
-      if (!withheldInside) {
+      // A hidden choice INSIDE a region of a parallel state is a choice of that region, at its own state.
+      if (enabled[0].macro !== undefined) {
+        for (const rc of found.regionChoices) {
+          recordNondeterminism(model, rc.cfg, input, rc.enabled, nondetSeen, nondeterminism);
+        }
+      } else if (!withheldInside) {
         recordNondeterminism(
           model,
           here.config,
@@ -2186,7 +2201,7 @@ function walkConfigurations(
       };
 
       for (const choice of enabled) {
-        everEnabled.add(choice.transition.id);
+        for (const t of transitionsOf(choice)) everEnabled.add(t.transition.id);
         if (choice.level !== innermost) continue;
         // TAKEN, so `fired` — unless it is the completion step one past the
         // budget, from a configuration a chase reaches on its last step. The
@@ -2198,9 +2213,9 @@ function walkConfigurations(
         // included, and a bound below that refuses its target refuses only
         // where the run goes next, not the step.
         if (input.kind !== 'completion' || here.completionRun < bounds.maxCompletion) {
-          fired.add(choice.transition.id);
+          for (const t of transitionsOf(choice)) fired.add(t.transition.id);
         }
-        const next = stepConfig(model, here.config, choice);
+        const next = advanceConfig(model, here.config, choice);
         for (const v of next.effects.visited) reachable.add(v);
         const hash = hashConfig(next.config, history);
         const { key, run } = keyOf(next.config, hash, input.kind === 'completion' ? here.completionRun + 1 : 0);
@@ -2264,8 +2279,9 @@ function walkConfigurations(
         if (input.kind === 'completion') completionSucc[here.index].push(to);
         recordSim(choice, to);
         recordChase(choice, to);
-        configStates.push(next.config.stack);
+        configStates.push(activeStatesOf(next.config));
         configLeaves.push(leafOf(next.config));
+        configRegionLeaves.push(activeLeavesOf(next.config));
         queue.push({
           config: next.config,
           depth: here.depth + 1,
@@ -2296,6 +2312,7 @@ function walkConfigurations(
     successors: succ,
     configStates,
     configLeaves,
+    configRegionLeaves,
     completionSuccessors: completionSucc,
     chaseKeyed: keyed,
     chaseStops,
@@ -2306,6 +2323,11 @@ function walkConfigurations(
       maxCompletion: bounds.maxCompletion,
     }),
   };
+}
+
+/** Does a `node` atom on `id` hold at node `i`: `id` is the active leaf, or the active leaf of a region of an active parallel state. */
+export function leafHolds(walk: Pick<ExploreResult, 'configLeaves' | 'configRegionLeaves'>, i: number, id: ElementId): boolean {
+  return walk.configLeaves[i] === id || walk.configRegionLeaves[i].includes(id);
 }
 
 /** The step the interpreter's chase takes from one configuration (`walkConfigurations`). */

@@ -90,13 +90,10 @@ import {
   MAX_COMPLETION,
   afterDuration,
   hashConfig,
-  initialConfig,
   leafOf,
   machineRegion,
   resumesHistory,
   seedStore,
-  stepCandidates,
-  stepConfig,
   triggerLabelOf,
   type MachineConfig,
   type StepInput,
@@ -133,12 +130,14 @@ import {
   type BoundHit,
   type ExploreBounds,
   type ExploreOptions,
+  leafHolds,
   type ExploreResult,
   type StateRef,
   type TransitionRef,
   type UnsupportedConstruct,
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
+import { advanceConfig, candidatesOf, hasNestedParallel, openConfig, transitionsOf, type ParCandidates } from './parallel';
 import { carriersOn } from '../keywords';
 // The interpreter, for ONE reader: every witness this file publishes is replayed
 // through it first (`replayWitness`). A copy of its driving rules would be a
@@ -1299,7 +1298,7 @@ function search(
   const seeded = new Map<string, unknown>();
   const machineEl = model.get(machineId);
   if (machineEl) seedStore(model, machineEl, seeded);
-  const opening = initialConfig(model, machineId, { store: seeded });
+  const opening = openConfig(model, machineId, { store: seeded });
   // The walk's key: the history map only where a composite resumes from it.
   const history = resumesHistory(model, machineId);
   const first = valuationOf(model, property, {
@@ -1338,11 +1337,11 @@ function search(
   // What the completion input finds at a configuration, asked once per
   // configuration: the keyed search needs it to build a key before it admits a
   // node, and again when it dequeues one.
-  const completionCache = new Map<string, ReturnType<typeof stepCandidates>>();
-  const completionAt = (config: MachineConfig, hash: string): ReturnType<typeof stepCandidates> => {
+  const completionCache = new Map<string, ParCandidates>();
+  const completionAt = (config: MachineConfig, hash: string): ParCandidates => {
     let found = completionCache.get(hash);
     if (found === undefined) {
-      found = stepCandidates(model, config, COMPLETION);
+      found = candidatesOf(model, config, COMPLETION);
       completionCache.set(hash, found);
     }
     return found;
@@ -1379,17 +1378,18 @@ function search(
         : inputs;
     for (const input of offeredInputs) {
       const enabled =
-        input.kind === 'completion' ? completion.enabled : stepCandidates(model, here.config, input).enabled;
+        input.kind === 'completion' ? completion.enabled : candidatesOf(model, here.config, input).enabled;
       if (enabled.length === 0) continue;
       const innermost = enabled[0].level;
       for (const choice of enabled) {
         if (choice.level !== innermost) continue;
-        const next = stepConfig(model, here.config, choice);
+        const next = advanceConfig(model, here.config, choice);
         const run = input.kind === 'completion' ? here.completionRun + 1 : 0;
         const obs: Observation = {
           config: next.config,
           input,
           transition: choice.transition,
+          ...(choice.macro === undefined ? {} : { fired: transitionsOf(choice).map((t) => t.transition.id) }),
         };
         const valued = valuationOf(model, property, obs);
         if (!valued.ok) {
@@ -1572,6 +1572,17 @@ export function replayWitness(
   maxCompletion: number,
 ): WitnessReplay {
   if (witness.length === 0) return { replays: true, step: null, reason: '' };
+  // A machine with a parallel state: one witness step offers an event to every region and fires one transition in
+  // each, while the interpreter's run lists its fires one by one and a witness step names only one of them. The
+  // comparison below is per fire, so it cannot be made; the witness is withheld rather than published unreplayed.
+  if (hasNestedParallel(model, machineId)) {
+    return {
+      replays: false,
+      step: 0,
+      reason:
+        'the machine holds a parallel state (SysML v2 §7.18.2): a step of its concurrent regions fires one transition per region, and the replay compares one fire per witness step',
+    };
+  }
   const steps = witness.slice(1);
   // Where the interpreter opens: its first entries, before any chase.
   const opened = runStateMachine(model, machineId, [], { maxCompletion: 0 }).visited;
@@ -2470,7 +2481,7 @@ function modalityOf(
 
   const target = atom.elementId!;
   const holdsAt = (i: number): boolean =>
-    atom.kind === 'state' ? walk.configStates[i].includes(target) : walk.configLeaves[i] === target;
+    atom.kind === 'state' ? walk.configStates[i].includes(target) : leafHolds(walk, i, target);
   const violates = (i: number): boolean =>
     property.pattern.name === 'absence' ? holdsAt(i) : !holdsAt(i);
   const g0 = avoidingReach(walk.successors, violates);
@@ -2757,7 +2768,7 @@ function recoveryRow(
   const id = atom.elementId!;
   const targets: number[] = [];
   for (let i = 0; i < walk.configs; i++) {
-    const holds = atom.kind === 'state' ? walk.configStates[i].includes(id) : walk.configLeaves[i] === id;
+    const holds = atom.kind === 'state' ? walk.configStates[i].includes(id) : leafHolds(walk, i, id);
     if (holds) targets.push(i);
   }
   const withheld = {

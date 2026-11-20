@@ -1863,8 +1863,9 @@ describe('the semantic profile is a description of what the interpreter does', (
     expect(build(false), 'an ordinary composite re-enters its initial child').toBe('i1');
   });
 
-  it('regions: the interpreter concatenates them, and the walk refuses to interleave', () => {
-    expect(field('regions').reading).toContain('CONCATENATES');
+  it('regions: a parallel state is performed concurrently; a parallel machine root is still driven region by region and refused', () => {
+    expect(field('regions').reading).toContain('performed concurrently');
+    expect(field('regions').reading).toContain('over the whole script in turn');
     const m = new Model();
     const f = new ModelFactory(m);
     const sm = f.stateDef('R');

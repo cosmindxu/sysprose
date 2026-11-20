@@ -305,37 +305,44 @@ describe('what the walk refuses to explore', () => {
     expect(finding!.message).toContain('§7.18.2');
   });
 
-  it('refuses a machine with a parallel state nested in it, not only a parallel root', () => {
-    // The parallel usage is not the machine root here: the outer definition owns
-    // a transition of its own, so the usage is a REGION of it. Walking the outer
-    // as though its regions were exclusive would publish `sub` unreachable and
-    // its steps dead — the absence claim the refusal exists to withhold.
-    const { model, diagnostics } = parseModel(`package P {
+  it('explores a machine with a parallel state nested in it, and refuses the nested shapes it does not perform', () => {
+    // The parallel usage is not the machine root here: the outer definition owns a transition of its own, so the
+    // usage is a REGION of it. Since stage 2 (SysML v2 §7.18.2) it is explored — it is simply never entered here
+    // (the machine opens in `s1`), which is the true answer — while a parallel state inside a parallel state is refused.
+    const nested = (inner: string): ReturnType<typeof parseModel> => parseModel(`package P {
       part def Ctl {
         state def Top {
           state s1;
           state s2;
           transition s1 accept go then s2;
           state sub parallel {
-            state r1 { state a1; state a2; transition a1 accept p then a2; }
-            state r2 { state b1; state b2; transition b1 accept q then b2; }
+            ${inner}
           }
         }
       }
     }`);
-    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
-    const top = model.all().find((el) => el.eClass === 'StateDefinition' && el.declaredName === 'Top')!;
-    const sub = model.all().find((el) => el.eClass === 'StateUsage' && el.declaredName === 'sub')!;
+    const ok = nested(`state r1 { state a1; state a2; transition a1 accept p then a2; }
+            state r2 { state b1; state b2; transition b1 accept q then b2; }`);
+    expect(ok.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const top = ok.model.all().find((el) => el.eClass === 'StateDefinition' && el.declaredName === 'Top')!;
+    const sub = ok.model.all().find((el) => el.eClass === 'StateUsage' && el.declaredName === 'sub')!;
     expect(sub.attrs.isParallel).toBe(true);
-    const r = reachReport(model, { scopeId: top.id });
+    const r = reachReport(ok.model, { scopeId: top.id });
     expect(r.machines).toHaveLength(1);
-    const only = r.machines[0];
+    expect(r.machines[0].unsupported).toEqual([]);
+    expect(r.machines[0].exhaustive).toBe(true);
+
+    const bad = nested(`state r1 parallel { state a1; state a2; } state r2;`);
+    const top2 = bad.model.all().find((el) => el.eClass === 'StateDefinition' && el.declaredName === 'Top')!;
+    const sub2 = bad.model.all().find((el) => el.eClass === 'StateUsage' && el.declaredName === 'sub')!;
+    const r2 = reachReport(bad.model, { scopeId: top2.id });
+    const only = r2.machines[0];
     expect(only.exhaustive).toBe(false);
     expect(only.states.unreachable).toEqual([]);
     expect(only.transitions.dead).toEqual([]);
     expect(only.unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
-    expect(only.unsupported[0].elementId).toBe(sub.id);
-    const finding = r.diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(only.unsupported[0].elementId).toBe(sub2.id);
+    const finding = r2.diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE);
     expect(finding!.message).toContain('is not explored');
     expect(finding!.message).toContain('sub');
   });
