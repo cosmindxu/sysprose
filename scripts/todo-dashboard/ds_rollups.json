@@ -616,10 +616,17 @@
      "status": "open",
      "closed_day": "",
      "closed_by": ""
+    },
+    {
+     "key": "1",
+     "text": "FIXED 2026-11-20 (sm-parroot): a refusal in any region of a parallel machine stops the whole run (`stopsRun`, `atRest`), pinned in simulate.test.ts.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
     }
    ],
    "counts": {
-    "open": 15,
+    "open": 16,
     "closed": 0,
     "narrowed": 2,
     "ruled": 0,
@@ -1716,6 +1723,42 @@
    }
   },
   {
+   "id": null,
+   "tier": "",
+   "title": "Review 2026-11-20: three wrong answers in the state-machine verification code.",
+   "section": "Behaviour checks and the palette's checks lane \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "a transition effect naming an action (`do action bump`) was dropped, so the walk published a reachable state as unreachable (on main since before 2026-11-19);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "an assignment effect that failed when its transition fired was skipped (also on main). CLOSED (sm-fixrev): each is fixed or refused with its reason and pinned in semantics.review-fixes.test.ts; also a region's timed tran",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2#2",
+     "text": "read `do action bump` as a reference; per \u00a77.18.3 (OnOff4) `do action X` DECLARES a new, empty effect action, so main's reading of that form was right. Only `do X` refers to the action X and performs it (attrs.effectRef)",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 3,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
    "id": 321,
    "tier": "weaker",
    "title": "Abstentions left (wording and refusals) (rollup; sound, only weaker).",
@@ -1969,8 +2012,8 @@
    }
   },
   {
-   "id": 359,
-   "tier": "polish",
+   "id": null,
+   "tier": "",
    "title": "A referenced entry action's effect, and a reference start succession.",
    "section": "Behaviour checks and the palette's checks lane \u2014 review 2026-10-14",
    "subs": [
@@ -2124,11 +2167,11 @@
   }
  ],
  "totals": {
-  "open": 202,
+  "open": 206,
   "closed": 15,
   "narrowed": 4,
   "ruled": 1,
   "held": 4,
-  "subs": 226
+  "subs": 230
  }
 }

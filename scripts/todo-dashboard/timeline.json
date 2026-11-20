@@ -3848,9 +3848,9 @@
   "open_raw": 76,
   "open": 76,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 42,
-   "POLISH": 32,
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 29,
    "HELD": 2
   },
   "new": 2,
@@ -3870,5 +3870,37 @@
   },
   "cum_new": 327,
   "cum_closed": 249
+ },
+ {
+  "idx": 121,
+  "sha": "63ecb9d",
+  "when": "2026-11-20T16:47:43+01:00",
+  "day": "2026-11-20",
+  "subject": "merge round sm10: the state-machine stack (effects, parallel root/completion/orders, referenced effects, review fixes, \u00a77.18 spec pins, then",
+  "open_raw": 74,
+  "open": 74,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 42,
+   "POLISH": 30,
+   "HELD": 2
+  },
+  "new": 1,
+  "closed": 3,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 3,
+   "HELD": 0
+  },
+  "cum_new": 328,
+  "cum_closed": 252
  }
 ]
