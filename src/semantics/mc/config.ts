@@ -1008,8 +1008,28 @@ export function endsContainer(model: Model, id: ElementId): boolean {
  * region's own top-level final, not a final nested inside a composite of the region. `stacks` is one active stack
  * per region. The interpreter and the explorer both ask THIS.
  */
-export function regionsAllFinal(model: Model, stacks: readonly (readonly ElementId[])[]): boolean {
-  return stacks.length > 0 && stacks.every((st) => st.length === 1 && endsContainer(model, st[0]));
+export function regionsAllFinal(model: Model, regs: readonly (readonly ElementId[] | RegionShape)[]): boolean {
+  return (
+    regs.length > 0 &&
+    regs.every((rg) => {
+      const stack = Array.isArray(rg) ? (rg as readonly ElementId[]) : (rg as RegionShape).stack;
+      if (stack.length === 1) return endsContainer(model, stack[0]);
+      // A region that IS a parallel state (stack empty, its own regions below) is final when its regions are.
+      const sub = Array.isArray(rg) ? undefined : (rg as RegionShape).sub;
+      return stack.length === 0 && sub !== undefined && regionsAllFinal(model, sub);
+    })
+  );
+}
+
+/** What {@link regionsAllFinal} reads of a region: its stack, and the regions below it when the region is itself a parallel state. */
+export interface RegionShape {
+  readonly stack: readonly ElementId[];
+  readonly sub?: readonly RegionShape[];
+}
+
+/** The {@link RegionShape}s of the regions of an active parallel state. */
+export function regionShapes(p: ParConfig): RegionShape[] {
+  return p.regs.map((rg) => ({ stack: rg.stack, ...(rg.par !== undefined && rg.stack.length === 0 ? { sub: regionShapes(rg.par) } : {}) }));
 }
 
 /**
@@ -1026,7 +1046,7 @@ export function stateCompleted(model: Model, cfg: MachineConfig, level: number):
   // Only a SUBSTATE holds a composite open: a node under the state that is not a state (an action `then s::work`
   // enters) is a subaction of its middle that this reading does not wait on — the state completes as it always did.
   if (level < top) return model.get(cfg.stack[level + 1])?.eClass !== 'StateUsage' || endsContainer(model, cfg.stack[top]);
-  return cfg.par === undefined || regionsAllFinal(model, cfg.par.regs.map((rg) => rg.stack));
+  return cfg.par === undefined || regionsAllFinal(model, regionShapes(cfg.par));
 }
 
 /**

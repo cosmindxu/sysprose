@@ -165,7 +165,6 @@ describe('what stays refused, with a reason', () => {
   const base = (inner: string, tail = '') =>
     `package P { item def e; state def M { entry; then p; state p parallel { ${inner} } state q; transition go first p accept e then q; ${tail} } }`;
   const shapes: Record<string, string> = {
-    'a region that is itself a parallel state': base('state r1 parallel { state s1; state s2; } state r2;'),
     'a step into a region': base('state r1 { state a1; state a2; } state r2;', 'transition into first q accept e then p::r1::a2;'),
     'an entry action naming a start on the parallel state': base('entry; then r1; state r1; state r2;'),
   };

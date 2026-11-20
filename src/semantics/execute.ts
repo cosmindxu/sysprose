@@ -53,6 +53,7 @@ import {
   evalStr,
   guardHoldsStore,
   hierarchyPath,
+  type RegionShape,
   initialConfig,
   initialStateOf,
   entryStartUnreadOf,
@@ -1435,8 +1436,7 @@ function containerTransitions(model: Model, containerId: ElementId): ElementReco
 /**
  * Why a machine holding a parallel state below its root cannot be run, or `undefined` when every such state has a
  * shape `runHierRegion` performs: a parallel state of an ordinary (or non-parallel) machine, entered as a whole
- * (never by a step into one of its regions), left by a triggered transition, whose regions hold no history and none of
- * which is itself a parallel state, and whose own entry action names no start. A parallel state inside a region IS
+ * (never by a step into one of its regions), left by a triggered transition, whose regions hold no history, and whose own entry action names no start. A parallel state inside a region IS
  * performed (nested regions, a tree). A parallel machine ROOT ({@link parallelRoot}) is checked as the parallel state it is.
  */
 function nestedParallelRefusal(model: Model, container: ElementRecord): string | undefined {
@@ -1449,10 +1449,6 @@ function nestedParallelRefusal(model: Model, container: ElementRecord): string |
   // A parallel machine root is checked as the parallel state it is: its regions are its child states.
   for (const p of root ? [container] : pars) {
     const inside = new Set(machineRegion(model, p.id).descendants.map((e) => e.id));
-    // A parallel state inside a region is performed (the regions form a tree); a REGION that is itself a parallel state is not.
-    if (parallelRegions(model, p.id).some((r) => isParallelState(model, r.id))) {
-      return `a region of its parallel state ${name(p.id)} is itself a parallel state, and a region that is a parallel state is not performed concurrently here`;
-    }
     if (entryControlEdges(model, p.id).length > 0) {
       return `its parallel state ${name(p.id)} has an entry action naming a start, but a parallel state enters all its regions, each at its own start`;
     }
@@ -1672,6 +1668,12 @@ function runHierRegion(
       visited.push(r.id);
       runStatePhase(model, r.id, 'entry', w, scope, performed);
       runStatePhase(model, r.id, 'do', w, scope, performed);
+      if (isParallelState(model, r.id)) {
+        // A region that is itself a parallel state: no stack of its own, its substates are regions entered at once.
+        const empty: MachineConfig = { regionId: r.id, stack: [], store: w, clock: cfg.clock, entryTime: new Map(), history: new Map() };
+        regs.push({ id: r.id, cfg: empty, par: enterPar(r.id, w, top) });
+        continue;
+      }
       const o = initialConfig(model, r.id, { store: w, clock: cfg.clock });
       visited.push(...o.effects.visited);
       performed.push(...o.effects.performed);
@@ -1745,9 +1747,10 @@ function runHierRegion(
     return true;
   };
   /** A trigger-less transition out of the parallel state a node ends in waits until every one of its regions is final. */
+  const nodeShapes = (n: ParNode): RegionShape[] => n.regs.map((r) => ({ stack: r.cfg.stack, ...(r.par !== null && r.cfg.stack.length === 0 ? { sub: nodeShapes(r.par) } : {}) }));
   const nodeCompletion = (cfgOf: MachineConfig, node: ParNode | null): EnabledTransition[] => {
     const en = enabledTransitions(model, cfgOf, COMPLETION);
-    if (node === null || regionsAllFinal(model, node.regs.map((r) => r.cfg.stack))) return en;
+    if (node === null || regionsAllFinal(model, nodeShapes(node))) return en;
     return en.filter((e) => e.level !== cfgOf.stack.length - 1);
   };
   /** Chase region `rg`'s trigger-less transitions to quiescence (same budget as the outer chase): its nested regions first, then the region. */
@@ -1912,7 +1915,8 @@ function runHierRegion(
     const leaves = leavesOf(par);
     // A nested parallel state is a leaf of the outer machine, which is not final; a parallel machine ROOT is complete
     // when every region has reached a final state (each region's own completion).
-    const done = rootParallel && par.regs.every((rg) => { return endsContainer(model, leafOf(rg.cfg) ?? rg.id); });
+    const regDone = (rg: RegNode): boolean => (rg.par !== null && rg.cfg.stack.length === 0 ? rg.par.regs.every(regDone) : endsContainer(model, leafOf(rg.cfg) ?? rg.id));
+    const done = rootParallel && par.regs.every(regDone);
     return { leaf: leaves[0] ?? null, leaves, complete: done, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };
   }
   const leaf = leafOf(cfg);
