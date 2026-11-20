@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 162
-- **Tests:** 5777 total — 5777 passed, 0 failed, 0 skipped
+- **Files:** 169
+- **Tests:** 5853 total — 5853 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -124,15 +124,19 @@
 | test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
+| test/unit/semantics.mc.parallel.test.ts | 21 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 92 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.reach.test.ts | 141 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
+| test/unit/semantics.mc.redefinition.test.ts | 5 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 40 | 0 | 0 |
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.metaclasses.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.metamodel-complete.test.ts | 9 | 0 | 0 |
+| test/unit/semantics.nested-parallel-fence.test.ts | 3 | 0 | 0 |
+| test/unit/semantics.parallel-nested.test.ts | 15 | 0 | 0 |
 | test/unit/semantics.play-start.test.ts | 3 | 0 | 0 |
 | test/unit/semantics.relations.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
@@ -151,6 +155,7 @@
 | test/unit/text.bracket-expr.test.ts | 53 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 31 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 14 | 0 | 0 |
+| test/unit/text.entry-ref.test.ts | 15 | 0 | 0 |
 | test/unit/text.export-fidelity.test.ts | 3 | 0 | 0 |
 | test/unit/text.grammar2.test.ts | 14 | 0 | 0 |
 | test/unit/text.lexer.test.ts | 6 | 0 | 0 |
@@ -161,8 +166,10 @@
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
 | test/unit/text.roundtrip.test.ts | 243 | 0 | 0 |
-| test/unit/text.state-forms.test.ts | 13 | 0 | 0 |
+| test/unit/text.state-forms.test.ts | 14 | 0 | 0 |
+| test/unit/text.target-transition.test.ts | 11 | 0 | 0 |
 | test/unit/text.time-trigger.test.ts | 6 | 0 | 0 |
+| test/unit/text.transition-redefinition.test.ts | 5 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 27 | 0 | 0 |

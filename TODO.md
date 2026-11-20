@@ -1535,6 +1535,13 @@ tagged `[O1 …]` are what its steps and reviews left open.
       fence-pkgbind-scratch/gen4/pkgbind-*.sysml. [editor-pass review; fence-pkgbind]
 
 - [ ] **T-115: Walk a redefined state or transition of a general machine, or a machine with two generals.** Since B-walk a `state def Derived :> Base` with one general machine, and a typed `exhibit state m : Modes {…}` with steps of its own, are walked and run over the general's region plus their own steps: one view, `machineRegion`, read by the walk and the interpreter; inherited steps first; Base is walked alone; a typed usage with no steps is reported through its definition. A bare `state :>> b;` or `state r :>> b;` is read as the state it redefines. Still `machine-boundary`: a state redefinition with a body, a transition redefinition, an attribute `:>>`, a step that names a redefining state, two general machines, two start nodes, a cycle of generals. [behaviour-small S1; behaviour-walk B-inherit, B-walk, B-redef]
+      PART DONE 2026-11-20 (sm-t115, sm-tredef): the walk and the interpreter read, through one `machineRegion` view, a plain `state :>> s;` (it is s), a body
+      redefinition `state r :>> s {…}` over an EMPTY s (r takes its place), a transition redefinition (t2 replaces t1; it must state both ends and every
+      attribute t1 carries), and two generals that share no id and no declared name — each equal to its hand-flattened twin on reach and on 20 random runs.
+      The textual `transition t2 :>> t1 first …;` (and `redefines`) now parses; any other specialization tail on a transition is refused.
+      STILL machine-boundary, with a stated reason: a redefinition over a state that holds something of its own (the spec merges the two; this view does
+      not), an unnamed redefinition with a body, a nested redefinition, an attribute `:>>`, a state redefined twice with a body, a step naming a replaced
+      state, generals that collide, a cycle, a chain over eight, two start nodes. A redefinition that targets a non-transition is not diagnosed.
 - [ ] **Revisit `validation/constraint-by-instance` after one workflow run on a model with instance
       groups.** The rule (`src/validation/rules.ts:1118`, the 27th) is non-blocking, with a
       `CODE_NOTES` entry in the workflow repo (`src/spec/codes.ts:96`); that was judged without a
@@ -1604,6 +1611,28 @@ tagged `[O1 …]` are what its steps and reviews left open.
       refuses them); `exhibit action ea parallel {…}` / `exhibit use case u parallel {…}` /
       `perform action p parallel {…}` are now an error (`parse/parallel-not-on-state`, fence-comment
       2026-11-19; the body is still kept under a usage named `parallel`, only the diagnostic is new).
+      STAGE 2 PART DONE 2026-11-20: (interpreter, sm-par2) a parallel state NESTED in an ordinary machine runs its regions concurrently — entered whole,
+      every event offered to every region in declaration order, a region with no enabled transition stays, a leaving transition exits all regions; the
+      fixed region order is a stated choice (a coupling test pins both orders). (explorer, sm-par3) the same machines are explored: one active leaf per
+      region, the explorer agrees with the interpreter on every event sequence up to a bound (semantics.mc.parallel.test.ts); the profile `regions` field
+      now says so. Refused with a stated reason in both: a parallel state inside a parallel state, a completion transition out of a parallel state,
+      history inside one, a transition between regions or out of a region, a region whose start is unread, an entry action naming a start. The explorer
+      also refuses COUPLED regions (one writes an attribute another reads or writes: a token-level scan, over-refuses) and an event taken by both a region
+      and a leaving transition. STILL OPEN: a parallel machine ROOT (`state def M parallel {…}` — the interpreter still runs its regions one after
+      another over the whole script, the explorer refuses it); exploring every ordering of coupled regions instead of refusing; a completion transition
+      out of a parallel state; witnesses on parallel machines (withheld: `fail`/`covered` rows come out inconclusive); the Play-path abstention (one region
+      refuses, the others come to rest: Play runs to the sample cap).
+
+- [ ] **Transition effects cannot be written inside a nested state.** `entry assign x := 1;` / `do assign …;` / `do send X to Y;` in a state body are refused
+      (`mapper/state-form-unread`) and the `assign` inside `entry action w { … }` is not applied by the interpreter, so a transition effect on a nested
+      (parallel) region can only be set through the API; the region-coupling case of the parallel work is therefore tested through the API only. Done: the
+      spec forms read, the interpreter applies them on entry/exit and on a transition, and a text test pins a coupled-region machine. [sm-par2 2026-11-20]
+
+- [ ] **A referenced entry action's effect, and a reference start succession.** With `entry X;` read as a reference ([x] item above): (1) a referenced
+      action's effect is not applied when the state is entered (`applyBehaviorEffect` reads only the element itself; a declared entry body was not followed
+      either); (2) `entry init; … transition first init then s` binds `first init` to the referenced action when `init` exists, and the start-reading code does
+      not follow a reference entry's own name; neither was probed in the app. Done: both are decided per the spec or refused with a stated reason, with a
+      pin each. [sm-entryref 2026-11-20]
 
 - [ ] **The spec's own state-machine example does not parse: `entry; then off;` is an error.** SysML v2
       Part 1 §7.18.3's `state def OnOff1 { entry; then off; state off; state on; transition off_on
@@ -1620,38 +1649,44 @@ tagged `[O1 …]` are what its steps and reviews left open.
       other edge leaving an entry action refuses the machine (never an exhaustive claim) and the
       simulator does not start (`Not started: …`); an entry/do/exit action's type, multiplicity and
       body are kept; `do`/`entry`/`exit` bodies are kept out of the machine's states.
+      PROGRESS 2026-11-20 (sm-forms, sm-shorthand, time-trigger): `accept after 5[min]` parses as a time trigger (the interpreter and the walk refuse it: no clock), the guarded entry succession `entry; if c then off;` and the target-transition shorthand `state off; accept E then on;` read as the spec says, `entry action initial;` and `abstract exhibit state x;` parse. STILL OPEN: no spec text is available locally, so the OnOff examples are written from the notation and memory and are not yet pinned verbatim; fetch the spec text and pin each example.
 
-- [ ] **Say that the PSSM Clause 9 oracle was not built, or build a scored subset.** `docs/04` cites
+- [x] **Say that the PSSM Clause 9 oracle was not built, or build a scored subset.** `docs/04` cites
       `omg-pssm-1.0-2019` Clause 9 as "a UML/fUML oracle for the conformance scorecard" for
       `reach`/`check-behaviour`; nothing in `src/` or `test/` uses it (one comment in
       `src/semantics/mc/profile.ts`). Done: CONFORMANCE §8.5 states that the departure from PSSM is
       declared field by field and not measured, or a subset of the Clause 9 tests is run and scored.
       [mc-vs-bib 2026-11-18; A]
+      CLOSED 2026-11-20 (sm-docs): CONFORMANCE §8.5 states that the departure from PSSM is declared field by field in the profile and is not measured; no Clause 9 test is run or scored.
 
-- [ ] **Correct the two non-goals that send properties to an export that does not exist.** `docs/04`
+- [x] **Correct the two non-goals that send properties to an export that does not exist.** `docs/04`
       non-goals 1 and 3 send "anything unbounded" to "z3 k-induction or an SMV export" and real-time
       patterns to "export-only"; no SMV/nuXmv/OCRA export ships (only the opt-in OCRA reading of a
       bare `connect`), and the `cristoforetti-2026` path planned in phase 5 was not built. Done: the
       non-goals and CONFORMANCE say these properties are refused (`inconclusive`), with no external
       route today; building the export stays a separate decision. [mc-vs-bib 2026-11-18; B]
+      CLOSED 2026-11-20 (sm-docs): docs/04 non-goals 1 and 3 and CONFORMANCE say those properties are refused (`inconclusive`) with no external route today; building an export stays a separate decision.
 
-- [ ] **State that machines are walked one at a time.** The behaviour profile and the non-goals do not
+- [x] **State that machines are walked one at a time.** The behaviour profile and the non-goals do not
       say that no composition of state machines (synchronous or asynchronous) is checked; the corpus
       treats it as central (`graics-2020`, `cristoforetti-2026`, `basu-2011`). Done: a profile field
       or a non-goal says so, with the sentence pinned. [mc-vs-bib 2026-11-18; C]
+      CLOSED 2026-11-20 (sm-docs): docs/04 non-goal 10 and CONFORMANCE say no composition of state machines (synchronous or asynchronous) is checked.
 
-- [ ] **Read the corpus against model-checking candidates 6–8 before building any of them.** `docs/05`
+- [x] **Read the corpus against model-checking candidates 6–8 before building any of them.** `docs/05`
       and `docs/06` cite no SystemsPerspectiveBib document. Before stutter-simulation (6), signature
       consistency (7) or the behavioural fault tree (8) is built, read `bittner-2015`, `stewart-2021`,
       `joshi-2006` (8), `dealfaro-henzinger-2001` (6, 7) and `peres-ghazel-2023` (6) against them and
       record agreements and conflicts in `docs/05`. Done: `docs/05` carries the reading per candidate.
       [mc-vs-bib 2026-11-18; D]
+      CLOSED 2026-11-20 (sm-corpus): docs/05 carries a corpus reading under candidates 6, 7 and 8 (agreements, conflicts, pages read) and §5 lists what was not read (peres-ghazel-2023 has no extractable text; stewart-2021 and joshi-2006 are mostly unread).
 
-- [ ] **Fix `docs/05`'s reason for rejecting realizability.** It rejects realizability with synthesis
+- [x] **Fix `docs/05`'s reason for rejecting realizability.** It rejects realizability with synthesis
       ("synthesis produces an implementation"); realizability *checking* (`katis-2022`,
       `larraz-tinelli-2022`) returns a verdict, not an implementation. The reason that holds is
       `docs/04` non-goal 5 (only static contracts are decided). Done: `docs/05` §4 gives that reason.
       [mc-vs-bib 2026-11-18; E]
+      CLOSED 2026-11-20 (sm-docs): docs/05 §4 gives docs/04 non-goal 5 (only static contracts are decided) as the reason.
 
 - [ ] **More SysML v2 §7.18 state forms do not parse (spec conformance is mandatory).** After
       `entry; then X;` these spec forms still fail or are misread: `accept after 5[min]` (a time trigger,
@@ -1662,14 +1697,16 @@ tagged `[O1 …]` are what its steps and reviews left open.
       ReferenceUsage). Probe each against the spec text (Part 1 §7.18.2–7.18.4); fence a silent
       misread first. Done: every §7.18 example parses with no diagnostic or is refused with a stated
       reason, each pinned verbatim by a test. [spec-par-ps2 2026-11-19; spec conformance mandatory]
+      PROGRESS 2026-11-20: parsed — guarded entry succession, `entry action initial;`, `abstract exhibit state x;`, the target-transition shorthand (`accept`/`if` after a state, source = the preceding state), `accept after`. Refused with `mapper/state-form-unread` and a stated reason — `entry assign …;` / `do send …;`, `exhibit A::B :> C;`, a shorthand with nothing to leave. STILL OPEN: reading those three instead of refusing, a `[g]` guard written right after the accept name in the shorthand (read as a multiplicity, refused), and the verbatim pins (no spec text locally).
 
-- [ ] **`entry X;` / `do X;` / `exit X;` must read as a reference to an existing action, as the spec
+- [x] **`entry X;` / `do X;` / `exit X;` must read as a reference to an existing action, as the spec
       says, not as a declaration of a new one.** Today they declare a new action (the serializer writes a
       named one as `entry action x` to keep the two apart) and existing round-trip tests pin the
       declaration reading (`entry init; … transition first init …`). Done: the spec reading is
       implemented, the tests that pinned the declaration reading are replaced and every model that
       relied on it still gets the same verdict (check the corpus). [spec-par-ps2 2026-11-19; spec
       conformance mandatory]
+      CLOSED 2026-11-20 (sm-entryref): a bare `entry|do|exit X;` is a reference to an existing action; with no such action it keeps the declaration reading and warns (`mapper/state-ref-unresolved`); the serializer writes a reference as `entry X;` and a declaration as `entry action x`. The 856 models of the corpus, fixtures and examples load with identical diagnostics (none uses the bare form). Open caveats are the new item "A referenced entry action's effect and a reference start succession".
 
 - [x] **A comment just before a body silently drops the body.** `state x /* c */ { state a; }` (and
       `state <M1> parallel /* } */ { … }`) parse with `ok: true` and no diagnostic; the body is lost,
@@ -1681,10 +1718,11 @@ tagged `[O1 …]` are what its steps and reviews left open.
       untouched. A comment before `;` was already a loud `parse/mismatched-token` and stays one (hiding it
       changed what the load-health check's texts parse to — caught by the full gate).
 
-- [ ] **The app's step-by-step Simulation Play path, for a machine whose entry start is not read.**
+- [x] **The app's step-by-step Simulation Play path, for a machine whose entry start is not read.**
       `runStateMachine` now returns no run with `Not started: …`, but the UI's Play path builds its start
       through `initialConfig`, which for an unread start gives an empty configuration with no sentence
       (not probed in the app); and a composite state entered mid-run whose entry start is unread rests at
       the composite with no substate (the explorer refuses that machine). Done: both say why they did
       not start, with an E2E or unit pin. [spec-par-ps2 2026-11-19]
+      CLOSED 2026-11-20 (sm-play): the Simulation panel shows a "Not started" line with the interpreter's sentence for an unread start and for a composite whose entry start is unread; runStateMachine refuses such a machine up front (pinned in semantics.play-start.test.ts).
 
