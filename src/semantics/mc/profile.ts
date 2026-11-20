@@ -86,20 +86,22 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
   {
     field: 'regions',
     reading:
-      'a parallel STATE nested in an ordinary machine is performed concurrently (SysML v2 §7.18.2), by the ' +
+      'a parallel STATE nested in an ordinary machine, and a parallel MACHINE ROOT (the machine itself marked ' +
+      'parallel, whose child states are its regions), are performed concurrently (SysML v2 §7.18.2), by the ' +
       'interpreter and by the explorer alike: every region is entered at its own start, an event is offered to ' +
       'every region in declaration order, each region takes its own first-declared enabled transition (all of ' +
       'them are explored where several are enabled), a region with none stays, each region sees the store the ' +
       'previous one left, and leaving the parallel state exits every region. The order is FIXED, where the ' +
       'specification admits any interleaving, so the explorer refuses a parallel state whose regions are coupled ' +
       '(one writes an attribute another reads or writes) and does not give an exhaustive verdict over one order ' +
-      'alone. Also refused, with a reason: a parallel machine root (the interpreter drives its regions over the ' +
-      'whole script in turn), a parallel state in a parallel state, a history state inside, a transition between ' +
+      'alone. A refusal in one region (a step the interpreter does not take) stops the whole run, as the regions are ' +
+      'performed together, and a run is complete when every region stands at a final state. Also refused, with a ' +
+      'reason: a parallel state in a parallel state or below a parallel machine root, a history state inside, a transition between ' +
       'regions or a completion transition out of the parallel state, a step into a region, an entry action naming ' +
       'a start, an event taken both by a region and by a transition leaving the parallel state, and a timed ' +
       'transition in a region — all verification/behaviour-unsupported-construct, never exhaustive.',
     provenance:
-      'src/semantics/execute.ts — runHierRegion, nestedParallelRefusal; src/semantics/mc/parallel.ts — parallelRefusal, candidatesOf, advanceConfig',
+      'src/semantics/execute.ts — runHierRegion, runHierMachine, nestedParallelRefusal; src/semantics/mc/parallel.ts — parallelRefusal, candidatesOf, advanceConfig',
   },
   {
     field: 'deferred events',

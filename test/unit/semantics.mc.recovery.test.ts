@@ -239,14 +239,16 @@ describe('the dispatch: a branching-time question never reaches the bad-prefix s
     const f = new ModelFactory(m);
     const sm = f.stateDef('Parallel');
     m.update(sm.id, { attrs: { parallel: true } });
+    f.attribute('n', sm.id, { type: 'Integer', value: 0 });
     const r1 = f.state('R1', sm.id);
     const r2 = f.state('R2', sm.id);
     const a1 = f.state('a1', r1.id);
     const a2 = f.state('a2', r1.id);
     const b1 = f.state('b1', r2.id);
     const b2 = f.state('b2', r2.id);
-    f.transition(a1.id, a2.id, { ownerId: r1.id });
-    f.transition(b1.id, b2.id, { ownerId: r2.id });
+    // coupled through `n`: the explorer refuses the machine
+    f.transition(a1.id, a2.id, { ownerId: r1.id, effect: 'n = 1' });
+    f.transition(b1.id, b2.id, { ownerId: r2.id, guard: 'n == 1' });
     expect(exploreMachine(m, sm.id).unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
     const v = checkProperty(m, sm.id, recovery('state a1'));
     expect(v.claim).toBe('inconclusive');

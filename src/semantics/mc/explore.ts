@@ -1482,9 +1482,11 @@ function acrossSentence(model: Model, c: BoundaryCrossing, inherited: ElementId 
  * The first three are §3.8's own list. A parallel machine (`parallel` in the
  * notation, SysML v2 §7.18.2, lowered to `attrs.isParallel`; the API's
  * `attrs.parallel` also marks one) — or a parallel state nested anywhere in its
- * region — has concurrent regions this walk does not interleave, so exploring
- * it as though it were an ordinary machine would report a run this engine does
- * not perform. A history state (`attrs.history`)
+ * region — is explored as concurrent regions (`./parallel`) in the shapes the
+ * interpreter performs; every other shape (`parallelRefusal`: coupled regions,
+ * nested parallel, history, a transition between regions …) is refused, because
+ * exploring it as though it were an ordinary machine would report a run this
+ * engine does not perform. A history state (`attrs.history`)
  * is reachable only through the API — `sysml.langium` has no keyword for it —
  * and a machine using one resumes a substate this walk does not resume. A transition missing an endpoint
  * cannot fire at all, and a walk that ignored it would count it dead on a
@@ -1518,20 +1520,10 @@ function unsupportedConstructs(
 ): UnsupportedConstruct[] {
   const out: UnsupportedConstruct[] = [];
   const machine = model.get(machineId);
-  // A parallel MACHINE (the root itself marked parallel) is run by the interpreter region by region over the whole
-  // script, not concurrently, so no exhaustive answer about it is available. A parallel STATE nested in an ordinary
-  // machine is explored, in the shapes the interpreter performs and the explorer's own fences allow
-  // (`./parallel`, `parallelRefusal`); every other shape refuses the machine with its reason.
-  if (machine && (isTruthy(machine.attrs.parallel) || isTruthy(machine.attrs.isParallel))) {
-    out.push({
-      construct: 'parallel-regions',
-      detail:
-        'the machine is marked parallel (`parallel` on a state definition or usage, SysML v2 §7.18.2, ' +
-        "or the API's `attrs.parallel`). The interpreter drives each of its regions over the whole script in turn " +
-        'rather than performing them concurrently, so no exhaustive answer about a parallel machine is available here.',
-      elementId: machine.id,
-    });
-  } else if (machine) {
+  // A parallel machine (the root itself marked parallel) and a parallel STATE nested in an ordinary machine are
+  // explored as one thing (`./parallel`), in the shapes the interpreter performs and the explorer's own fences allow;
+  // every other shape refuses the machine with its reason (`parallelRefusal`).
+  if (machine) {
     const refusal = parallelRefusal(model, machineId);
     if (refusal !== undefined) {
       out.push({ construct: 'parallel-regions', detail: refusal.reason, elementId: refusal.elementId });

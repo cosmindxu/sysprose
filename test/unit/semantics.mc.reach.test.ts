@@ -255,7 +255,7 @@ describe('a bound hit can never masquerade as a finding', () => {
 });
 
 describe('what the walk refuses to explore', () => {
-  it('a parallel machine is unsupported, never exhaustively explored', () => {
+  it('a parallel machine root is explored over its regions, not refused (coupled regions are, below)', () => {
     const m = new Model();
     const f = new ModelFactory(m);
     const par = m.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
@@ -271,16 +271,35 @@ describe('what the walk refuses to explore', () => {
     const r = reachReport(m, { scopeId: par.id });
     expect(r.machines).toHaveLength(1);
     const only = r.machines[0];
-    expect(only.exhaustive).toBe(false);
+    expect(only.exhaustive).toBe(true);
     expect(only.states.unreachable).toEqual([]);
     expect(only.transitions.dead).toEqual([]);
+    expect(only.unsupported).toEqual([]);
+    expect(r.diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE)).toBeUndefined();
+  });
+
+  it('coupled regions of a parallel machine root are unsupported, never exhaustively explored', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const par = m.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
+    f.attribute('n', par.id, { type: 'Integer', value: 0 });
+    const r1 = f.state('r1', par.id);
+    const a1 = f.state('a1', r1.id);
+    const a2 = f.state('a2', r1.id);
+    f.transition(a1.id, a2.id, { ownerId: r1.id, trigger: 't', effect: 'n = 1' });
+    const r2 = f.state('r2', par.id);
+    const b1 = f.state('b1', r2.id);
+    const b2 = f.state('b2', r2.id);
+    f.transition(b1.id, b2.id, { ownerId: r2.id, trigger: 't', guard: 'n == 1' });
+    const only = reachReport(m, { scopeId: par.id }).machines[0];
+    expect(only.exhaustive).toBe(false);
     expect(only.unsupported.map((u) => u.construct)).toContain('parallel-regions');
-    const finding = r.diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE);
+    const finding = reachReport(m, { scopeId: par.id }).diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE);
     expect(finding!.severity).toBe('info');
     expect(finding!.message).toContain('is not explored');
   });
 
-  it('refuses a parallel machine written in the notation, and makes no exhaustive claim', () => {
+  it('explores a parallel machine written in the notation (the keyword is kept)', () => {
     // PS1: the keyword is parsed from text now (SysML v2 §7.18.2), so the
     // refusal the API-only path had must fire from a file an author writes.
     const { model, diagnostics } = parseModel(`package P {
@@ -296,13 +315,10 @@ describe('what the walk refuses to explore', () => {
     const r = reachReport(model, { scopeId: machine.id });
     expect(r.machines).toHaveLength(1);
     const only = r.machines[0];
-    expect(only.exhaustive).toBe(false);
+    expect(only.exhaustive).toBe(true);
     expect(only.states.unreachable).toEqual([]);
     expect(only.transitions.dead).toEqual([]);
-    expect(only.unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
-    const finding = r.diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE);
-    expect(finding!.message).toContain('is not explored');
-    expect(finding!.message).toContain('§7.18.2');
+    expect(only.unsupported).toEqual([]);
   });
 
   it('explores a machine with a parallel state nested in it, and refuses the nested shapes it does not perform', () => {
@@ -347,7 +363,7 @@ describe('what the walk refuses to explore', () => {
     expect(finding!.message).toContain('sub');
   });
 
-  it('refuses a parallel exhibit state written in the notation (SysML v2 §7.18.4)', () => {
+  it('explores a parallel exhibit state written in the notation (SysML v2 §7.18.4)', () => {
     // PS2: `exhibit state es parallel { … }` used to lose its body to a keyword-less
     // member named `parallel`, which this walk then published exhaustive.
     const { model, diagnostics } = parseModel(`package P {
@@ -366,12 +382,12 @@ describe('what the walk refuses to explore', () => {
     const r = reachReport(model, { scopeId: es.id });
     expect(r.machines).toHaveLength(1);
     const only = r.machines[0];
-    expect(only.exhaustive).toBe(false);
+    expect(only.exhaustive).toBe(true);
     expect(only.transitions.dead).toEqual([]);
-    expect(only.unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
+    expect(only.unsupported).toEqual([]);
   });
 
-  it('refuses a parallel state spelled with only a short name, `state <M> parallel { … }`', () => {
+  it('explores a parallel state spelled with only a short name, `state <M> parallel { … }`', () => {
     const { model, diagnostics } = parseModel(`package P {
       state <M> parallel {
         state nav { state off; state on; transition off accept go then on; }
@@ -384,8 +400,8 @@ describe('what the walk refuses to explore', () => {
     expect(m.attrs.isParallel).toBe(true);
     const r = reachReport(model, { scopeId: m.id });
     expect(r.machines).toHaveLength(1);
-    expect(r.machines[0].exhaustive).toBe(false);
-    expect(r.machines[0].unsupported.map((u) => u.construct)).toEqual(['parallel-regions']);
+    expect(r.machines[0].exhaustive).toBe(true);
+    expect(r.machines[0].unsupported).toEqual([]);
   });
 
   it('a history state is unsupported for the same reason', () => {
@@ -4044,12 +4060,14 @@ describe('what a line says about itself', () => {
     const model = new Model();
     const f = new ModelFactory(model);
     const par = model.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
-    for (const r of ['r1', 'r2']) {
+    f.attribute('n', par.id, { type: 'Integer', value: 0 });
+    // two regions coupled through `n` (one writes it, the other reads it): the one parallel shape still refused here
+    ['r1', 'r2'].forEach((r, i) => {
       const region = f.state(r, par.id);
       const a = f.state(`${r}a`, region.id);
       const b = f.state(`${r}b`, region.id);
-      f.transition(a.id, b.id, { ownerId: region.id, trigger: 't' });
-    }
+      f.transition(a.id, b.id, { ownerId: region.id, trigger: 't', ...(i === 0 ? { effect: 'n = 1' } : { guard: 'n == 1' }) });
+    });
     const m = reachReport(model, { scopeId: par.id }).machines[0];
     const lines = reachMachineLines(m, 1).filter((l) => l.kind === 'not-explored');
     expect(m.unsupported.length).toBeGreaterThan(0);

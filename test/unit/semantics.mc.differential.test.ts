@@ -12,7 +12,7 @@
  * differential is that two INDEPENDENT drivers agree; a test that called the
  * interpreter's own driving loop would be comparing a function with itself. So
  * this file drives the relation on its own — region by region, chase, timed
- * advance and join — and the assertion is that the two drivers, one of which
+ * advance, and for a parallel machine root event by event over its regions — and the assertion is that the two drivers, one of which
  * (`runRegion`, the flat path) does not go through `./mc/config.ts` at all,
  * produce identical output.
  *
@@ -33,15 +33,16 @@ import {
   enabledTransitions,
   hashConfig,
   initialConfig,
-  isCompletion,
   seedStore,
   stepConfig,
   triggerLabelOf,
+  type EnabledTransition,
   type MachineConfig,
   type StepEffects,
   type StepInput,
 } from '../../src/semantics/mc/config';
 import { loadModelText } from '@text/load';
+import { advanceConfig, candidatesOf, isParallelRoot, openConfig } from '../../src/semantics/mc/parallel';
 import { exploreMachine, machineStates, reachReport, stateMachinesIn } from '../../src/semantics/mc/explore';
 import { WITNESS_NOT_REPLAYED_CODE, behaviourReport } from '../../src/semantics/mc/patterns';
 
@@ -62,18 +63,6 @@ const TIMEOUT: StepInput = { kind: 'timeout' };
 
 function isTimed(s: StateStep): s is { advance: number } {
   return typeof s === 'object' && s !== null && typeof (s as { advance: number }).advance === 'number';
-}
-
-/** Directly-owned child states that themselves contain states (the regions). */
-function regionsOf(model: Model, machineId: ElementId, parallel: boolean): ElementId[] {
-  if (!parallel) return [machineId];
-  const rs = model
-    .children(machineId)
-    .filter(
-      (c) => c.eClass === 'StateUsage' && model.children(c.id).some((d) => d.eClass === 'StateUsage'),
-    )
-    .map((c) => c.id);
-  return rs.length > 0 ? rs : [machineId];
 }
 
 /**
@@ -140,48 +129,63 @@ function foldRegion(
   return { leaf, final };
 }
 
-/** The whole machine: regions in turn, then the orthogonal join if it fires. */
+/**
+ * A PARALLEL MACHINE ROOT: the explorer's own relation (`./mc/parallel`) driven event by event — open the machine as
+ * the parallel state it is, take the head of what the regions offer on each event, chase — which `runHierRegion`
+ * must equal in visited, fired (with the stack each fire leaves), performed and store.
+ */
+function foldParallel(model: Model, machineId: ElementId, steps: StateStep[], out: Folded): void {
+  let cfg!: MachineConfig;
+  const store = (c: MachineConfig): void => {
+    for (const [k, v] of c.store) out.store.set(k, v);
+  };
+  const open = openConfig(model, machineId, { store: out.store, clock: 0 });
+  cfg = open.config;
+  out.visited.push(...open.effects.visited);
+  out.performed.push(...open.effects.performed);
+  store(cfg);
+  const take = (choice: EnabledTransition): void => {
+    const next = advanceConfig(model, cfg, choice);
+    const regs = (choice.macro?.picks ?? []).flatMap((p, i) => (p === null ? [] : [i]));
+    out.visited.push(...next.effects.visited);
+    out.fired.push(
+      ...next.effects.fired.map((f, k) => {
+        const rg = next.config.par!.regs[regs[k]];
+        return { ...f, stack: [...next.config.stack, rg.id, ...rg.stack] };
+      }),
+    );
+    out.performed.push(...next.effects.performed);
+    cfg = next.config;
+    store(cfg);
+  };
+  const chase = (): void => {
+    for (let k = 0; k < MAX_COMPLETION; k++) {
+      const enabled = candidatesOf(model, cfg, COMPLETION).enabled;
+      if (enabled.length === 0) return;
+      take(enabled[0]);
+    }
+  };
+  chase();
+  for (const step of steps) {
+    if (isTimed(step)) continue;
+    const enabled = candidatesOf(model, cfg, { kind: 'trigger', trigger: step }).enabled;
+    if (enabled.length === 0) continue;
+    take(enabled[0]);
+    chase();
+  }
+}
+
+/** The whole machine: its regions in turn (or, for a parallel machine root, concurrently), then any join. */
 function foldRun(model: Model, machineId: ElementId, steps: StateStep[]): Folded {
   const machine = model.get(machineId)!;
   const out: Folded = { visited: [], fired: [], performed: [], store: new Map(), clock: 0 };
   seedStore(model, machine, out.store);
-  const parallel =
-    machine.attrs.parallel === true ||
-    machine.attrs.parallel === 'true' ||
-    machine.attrs.isParallel === true;
+  if (isParallelRoot(model, machineId)) {
+    foldParallel(model, machineId, steps, out);
+    return out;
+  }
   const history = new Map<ElementId, ElementId>();
-  const finals: boolean[] = [];
-  for (const region of regionsOf(model, machineId, parallel)) {
-    finals.push(foldRegion(model, region, steps, out, history, MAX_COMPLETION).final);
-  }
-  if (parallel && finals.length > 0 && finals.every(Boolean)) {
-    const join = model
-      .descendants(machineId)
-      .find(
-        (e: ElementRecord) =>
-          e.eClass === 'TransitionUsage' &&
-          e.source?.[0] === machineId &&
-          e.target?.[0] !== undefined &&
-          (e.attrs.kind === 'join' || isCompletion(e)),
-      );
-    if (join) {
-      // The join is fired by `runHierMachine`, outside any region, so the fold
-      // reproduces it here rather than pretending the region relation covers it.
-      const to = join.target![0];
-      out.fired.push({ transitionId: join.id, from: machineId, to, trigger: triggerLabelOf(join) });
-      out.visited.push(to);
-      for (const a of model.children(to)) {
-        if (a.attrs.stateSubaction === 'entry' || a.attrs.stateSubaction === 'do') {
-          out.performed.push({
-            stateId: to,
-            phase: a.attrs.stateSubaction as string,
-            actionId: a.id,
-            name: a.declaredName ?? '',
-          });
-        }
-      }
-    }
-  }
+  foldRegion(model, machineId, steps, out, history, MAX_COMPLETION);
   return out;
 }
 
@@ -334,13 +338,13 @@ const CASES: Case[] = [
     steps: ['go', 'out', 'back'],
   },
   {
-    name: 'orthogonal regions, join fires when both complete',
-    build: buildJoin,
+    name: 'orthogonal regions, both reach a final state',
+    build: buildFinals,
     steps: ['t1', 't2'],
   },
   {
-    name: 'orthogonal regions, join withheld while one region is open',
-    build: buildJoin,
+    name: 'orthogonal regions, one still open',
+    build: buildFinals,
     steps: ['t1'],
   },
   { name: 'after(5) before the dwell', build: buildTimer, steps: [{ advance: 3 }] },
@@ -447,7 +451,8 @@ function buildPriority(): { model: Model; machineId: ElementId } {
   return { model: m, machineId: sm.id };
 }
 
-function buildJoin(): { model: Model; machineId: ElementId } {
+/** Two regions each ending in a final state (a join transition out of the machine is refused, not performed). */
+function buildFinals(): { model: Model; machineId: ElementId } {
   const m = new Model();
   const f = new ModelFactory(m);
   const par = m.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
@@ -459,13 +464,6 @@ function buildJoin(): { model: Model; machineId: ElementId } {
   const b1 = f.state('b1', r2.id);
   const b2f = m.create('StateUsage', { declaredName: 'b2f', ownerId: r2.id, attrs: { kind: 'final' } });
   f.transition(b1.id, b2f.id, { ownerId: r2.id, trigger: 't2' });
-  const allDone = f.state('AllDone', par.id);
-  m.create('TransitionUsage', {
-    ownerId: par.id,
-    source: [par.id],
-    target: [allDone.id],
-    attrs: { kind: 'join' },
-  });
   return { model: m, machineId: par.id };
 }
 
