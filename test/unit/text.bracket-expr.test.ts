@@ -185,7 +185,7 @@ describe('bracket expression — recovery never throws', () => {
   it.each([
     ['an empty bracket', 'attribute a = 5 [];'],
     ['an unclosed bracket', 'attribute a = 5 [;'],
-    ['a bracket holding a control-node keyword', 'attribute a = 5 [initial];'],
+    // `initial` is a name in SysML v2 (§7.18.2 writes `entry action initial;`), so `5 [initial]` is a unit reference, not a parse error.
     ['a bracket holding `fork`', 'attribute a = 5 [fork];'],
     ['an empty bracket after a signed literal', 'attribute a = -5 [];'],
     ['an empty bracket on an assign value', 'action def A { assign a := 5 []; }'],

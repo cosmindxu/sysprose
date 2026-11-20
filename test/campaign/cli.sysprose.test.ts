@@ -5221,11 +5221,13 @@ package P {
     expect(g.stdout).toContain(
       'so the unreachable and dead lists for this machine are withheld, as is the no-way-out row for 1 configuration(s) an undecided guard is an edge out of.',
     );
-    // The nested machine: the undecided guard is on the COMPOSITE, so the leaf
-    // under it is withheld and nothing is published about it.
+    // The nested machine: the guarded transition leaves the COMPOSITE `degraded` with no trigger, so it waits for
+    // `degraded` to complete (SysML v2 §9.2.11.2.1: a transition without an accepter follows its source's completion,
+    // substates included). `degraded` has no final substate, so the guard is never consulted and `sub2` is a decided
+    // dead end, published as one.
     const nestedG = g.stdout.slice(g.stdout.indexOf('DeadlockGuarded::Nested::Modes [StateDefinition]'));
-    expect(nestedG).not.toContain('no way out   ');
-    expect(nestedG).toContain('withheld     DeadlockGuarded::Nested::Modes::degraded::sub2');
+    expect(nestedG).toContain('no way out   DeadlockGuarded::Nested::Modes::degraded::sub2');
+    expect(nestedG).not.toContain('withheld     DeadlockGuarded::Nested::Modes::degraded::sub2');
   }, 90_000);
 
   it('reach walks a succession between two states, and counts it', async () => {
