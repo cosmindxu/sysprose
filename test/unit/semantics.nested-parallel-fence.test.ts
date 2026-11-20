@@ -1,4 +1,4 @@
-/** A parallel state nested in a machine is not run as exclusive (SysML v2 §7.18.2): no run, a stated reason. */
+/** A parallel state nested in a machine is performed concurrently (§7.18.2); shapes not performed are refused with a reason. */
 import { describe, it, expect } from 'vitest';
 import { loadModelText } from '@text/load';
 import { runStateMachine } from '../../src/semantics/execute';
@@ -15,10 +15,17 @@ describe('nested parallel fence', () => {
     const r = runStateMachine(m, find(m, 'P::M').id, []);
     expect(r.unopened).toBeUndefined();
   });
-  it('nested parallel state: no run, reason cites 7.18.2', async () => {
+  it('nested parallel state is performed concurrently (stage 2): both regions active, no refusal', async () => {
     const { model: m } = await load(nested) as any;
+    const r = runStateMachine(m, find(m, 'P::M').id, []);
+    expect(r.unopened).toBeUndefined();
+    expect(r.activeStates.map((s: string) => m.qualifiedName(s))).toEqual(['P::M::p::r1', 'P::M::p::r2']);
+  });
+  it('a parallel state inside a parallel state: no run, reason cites 7.18.2', async () => {
+    const src = `package P { item def e; state def M { entry; then p; state p parallel { state r1 parallel { state s1; state s2; } state r2; } state q; transition go first p accept e then q; } }\n`;
+    const { model: m } = await load(src) as any;
     const r = runStateMachine(m, find(m, 'P::M').id, ['e']);
-    expect(r.unopened).toMatch(/parallel state.*§7\.18\.2.*top-level parallel machine/);
+    expect(r.unopened).toMatch(/parallel state.*another parallel state.*§7\.18\.2/);
     expect(r.activeStates).toEqual([]);
     expect(r.finalState).toBeNull();
   });

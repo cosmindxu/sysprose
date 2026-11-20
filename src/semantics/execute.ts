@@ -58,6 +58,8 @@ import {
   isFinalState,
   isHistoryComposite,
   isHistoryPseudostate,
+  isParallelState,
+  entryControlEdges,
   isRegionNode,
   isTruthy,
   leafOf,
@@ -1033,16 +1035,14 @@ export function runStateMachine(
       'interpreter has no clock for, so no run is started and no step is guessed.';
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
-  // A parallel state nested below the machine: its substates are performed concurrently (SysML v2 §7.18.2), which
-  // this interpreter does only for a top-level parallel machine; running it as exclusive would show a wrong state.
-  const nestedParallel = machineRegion(model, container.id).descendants.find(
-    (e) => e.id !== container.id && e.eClass !== 'TransitionUsage' && runsParallel(model, e.id),
-  );
-  if (nestedParallel) {
+  // A parallel state nested below the machine (SysML v2 §7.18.2): its substates are performed concurrently, which
+  // `runHierRegion` does for the shapes `nestedParallelRefusal` lets through; every other shape is refused here,
+  // with its reason, rather than run as exclusive (which would show a wrong state).
+  const nestedRefusal = nestedParallelRefusal(model, container);
+  if (nestedRefusal) {
     const unopened =
-      `${model.qualifiedName(container.id) || container.id} is not run: its state \`${model.qualifiedName(nestedParallel.id) || nestedParallel.id}\` ` +
-      'is a parallel state, whose substates are performed concurrently (SysML v2 §7.18.2), which this interpreter ' +
-      'performs only for a top-level parallel machine — so no run is started and no state is shown.';
+      `${model.qualifiedName(container.id) || container.id} is not run: ${nestedRefusal} ` +
+      '(SysML v2 §7.18.2) — so no run is started and no state is shown.';
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
   seedStore(model, container, valueStore, opts.store);
@@ -1438,6 +1438,59 @@ function containerTransitions(model: Model, containerId: ElementId): ElementReco
     );
 }
 
+/**
+ * Why a machine holding a parallel state below its root cannot be run, or `undefined` when every such state has a
+ * shape `runHierRegion` performs: a parallel state of an ordinary (or non-parallel) machine, entered as a whole
+ * (never by a step into one of its regions), left by a triggered transition, whose regions hold no history and no
+ * further parallel state, and whose own entry action names no start. A top-level parallel machine
+ * ({@link runsParallel}) is run region by region, and a parallel state below it is not performed.
+ */
+function nestedParallelRefusal(model: Model, container: ElementRecord): string | undefined {
+  const view = machineRegion(model, container.id);
+  const pars = view.descendants.filter(
+    (e) => e.id !== container.id && e.eClass !== 'TransitionUsage' && isParallelState(model, e.id),
+  );
+  const name = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  for (const p of pars) {
+    const inside = new Set(machineRegion(model, p.id).descendants.map((e) => e.id));
+    if (runsParallel(model, container.id)) {
+      return `its state ${name(p.id)} is a parallel state below a parallel machine, and nested parallel states are not performed concurrently here`;
+    }
+    if (pars.some((q) => q.id !== p.id && inside.has(q.id))) {
+      return `its parallel state ${name(p.id)} holds another parallel state, and nested parallel states are not performed concurrently here`;
+    }
+    if (entryControlEdges(model, p.id).length > 0) {
+      return `its parallel state ${name(p.id)} has an entry action naming a start, but a parallel state enters all its regions, each at its own start`;
+    }
+    const regions = view.directStates(p.id);
+    if (regions.some((r) => entryStartUnreadOf(model, machineRegion(model, r.id), view.directStates(r.id)))) {
+      return `a region of its parallel state ${name(p.id)} has an entry action naming a start that this interpreter does not read`;
+    }
+    if ([...inside].some((id) => { const e = model.get(id)!; return isHistoryPseudostate(e) || (e.eClass === 'StateUsage' && isHistoryComposite(model, id)); })) {
+      return `its parallel state ${name(p.id)} holds a history state, whose resumption inside concurrent regions is not performed`;
+    }
+    const regionOf = (id: ElementId): ElementId | undefined =>
+      regions.find((r) => r.id === id || machineRegion(model, r.id).descendants.some((e) => e.id === id))?.id;
+    for (const tr of view.transitions) {
+      const from = tr.source?.[0];
+      const to = tr.target?.[0];
+      if (from !== undefined && to !== undefined && inside.has(from) && regionOf(from) !== (inside.has(to) ? regionOf(to) : undefined)) {
+        return `a transition of its parallel state ${name(p.id)} leaves its region or connects two regions, which a parallel state does not allow and this interpreter does not perform`;
+      }
+      if (from === p.id && isCompletion(tr)) {
+        return `its parallel state ${name(p.id)} has a completion transition (taken once every region is final), which is not performed`;
+      }
+      if (to !== undefined && inside.has(to) && from !== undefined && !inside.has(from) && from !== p.id) {
+        return `a transition steps into a region of its parallel state ${name(p.id)}, which is not performed`;
+      }
+      if (to !== undefined && inside.has(to) && from === p.id) {
+        return `a transition from its parallel state ${name(p.id)} steps into one of its own regions, which is not performed`;
+      }
+    }
+  }
+  return undefined;
+}
+
 /** An orthogonal JOIN transition: a container-level completion/`join` edge. */
 function isJoinTransition(tr: ElementRecord): boolean {
   return tr.attrs.kind === 'join' || isCompletion(tr);
@@ -1523,7 +1576,8 @@ function runHierMachine(
   const refusals: StateFire[] = [];
   for (const rc of regionContainers) {
     const r = runHierRegion(model, container.id, rc.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion, tie);
-    leaves.push(r.leaf);
+    if (r.leaves) leaves.push(...r.leaves);
+    else leaves.push(r.leaf);
     // A region stopped at a step it does not take did not complete.
     completes.push(r.complete && r.refused === undefined);
     if (r.completionBudgetHit) completionBudgetHit = true;
@@ -1606,7 +1660,7 @@ function runHierRegion(
   clockRef: { clock: number },
   maxCompletion: number,
   tie: TieBreak,
-): { leaf: ElementId | null; complete: boolean; completionBudgetHit: boolean; refused?: StateFire } {
+): { leaf: ElementId | null; leaves?: ElementId[]; complete: boolean; completionBudgetHit: boolean; refused?: StateFire } {
   const COMPLETION: StepInput = { kind: 'completion' };
   const TIMEOUT: StepInput = { kind: 'timeout' };
   let refused: StateFire | undefined;
@@ -1632,6 +1686,85 @@ function runHierRegion(
     for (const [k, v] of r.config.store) store.set(k, v);
     clockRef.clock = r.config.clock;
     for (const [k, v] of r.config.history) history.set(k, v);
+    enterRegionsIfParallel();
+  };
+
+  /*
+   * PARALLEL STATE (SysML v2 §7.18.2) — the nested case. A parallel state `p` is entered as a leaf of the outer
+   * stack (`enterCascade` does not descend into it); `enterRegionsIfParallel` then enters ALL its regions, in
+   * declaration order, each at its own start, and `par` holds one configuration per region. ORDER INSIDE ONE
+   * EVENT: the event is offered to every region in declaration order, each region takes its own first enabled
+   * transition, a region with none stays, and each region sees the attribute store AS THE PREVIOUS REGION LEFT
+   * IT (one shared store, regions applied sequentially — not a simultaneous snapshot). A transition leaving `p`
+   * (or an ancestor) exits every region (inner→outer, regions in declaration order, then `p`). An event that
+   * enables a region transition AND a transition leaving `p` is not guessed: the run stops there (`refused`).
+   */
+  type ParState = { id: ElementId; regs: { id: ElementId; cfg: MachineConfig }[] };
+  let par = null as ParState | null;
+  const regCfg = (rg: { cfg: MachineConfig }): MachineConfig => ({ ...rg.cfg, store: cfg.store, clock: cfg.clock });
+  const enterRegionsIfParallel = (): void => {
+    const top = cfg.stack[cfg.stack.length - 1];
+    if (top === undefined || !isParallelState(model, top) || par !== null) return;
+    const w = new Map(cfg.store);
+    const scope = regionScope(model, cfg.regionId);
+    const regs: { id: ElementId; cfg: MachineConfig }[] = [];
+    for (const r of machineRegion(model, top).directStates(top)) {
+      visited.push(r.id);
+      runStatePhase(model, r.id, 'entry', w, scope, performed);
+      runStatePhase(model, r.id, 'do', w, scope, performed);
+      const o = initialConfig(model, r.id, { store: w, clock: cfg.clock });
+      visited.push(...o.effects.visited);
+      performed.push(...o.effects.performed);
+      w.clear();
+      for (const [k, v] of o.config.store) w.set(k, v);
+      regs.push({ id: r.id, cfg: o.config });
+    }
+    cfg = { ...cfg, store: w };
+    for (const [k, v] of w) store.set(k, v);
+    par = { id: top, regs };
+  };
+  /** Leave every region (inner→outer, regions in declaration order); then the caller leaves `p` itself. */
+  const exitRegions = (): void => {
+    if (par === null) return;
+    const w = new Map(cfg.store);
+    const scope = regionScope(model, cfg.regionId);
+    for (const rg of par.regs) {
+      for (let i = rg.cfg.stack.length - 1; i >= 0; i--) runStatePhase(model, rg.cfg.stack[i], 'exit', w, scope, performed);
+      runStatePhase(model, rg.id, 'exit', w, scope, performed);
+    }
+    cfg = { ...cfg, store: w };
+    for (const [k, v] of w) store.set(k, v);
+    par = null;
+  };
+  /** Take one transition inside region `i`; `false` (the run stopping) for a step this reading does not take. */
+  const stepRegion = (i: number, choice: EnabledTransition): boolean => {
+    if (stepOutsideStates(model, machineId, choice.transition) || stepAcrossBoundary(model, machineId, choice.transition)) {
+      refused = {
+        transitionId: choice.transition.id,
+        from: choice.transition.source![0],
+        to: choice.transition.target![0],
+        trigger: choice.label,
+      };
+      return false;
+    }
+    const rg = par!.regs[i];
+    const r = stepConfig(model, regCfg(rg), choice);
+    rg.cfg = r.config;
+    cfg = { ...cfg, store: r.config.store };
+    visited.push(...r.effects.visited);
+    fired.push(...r.effects.fired.map((f) => ({ ...f, stack: [...cfg.stack, rg.id, ...r.config.stack] })));
+    performed.push(...r.effects.performed);
+    for (const [k, v] of r.config.store) store.set(k, v);
+    return true;
+  };
+  /** Chase region `i`'s trigger-less transitions to quiescence (same budget as the outer chase). */
+  const chaseRegion = (i: number): void => {
+    for (let n = 0; n < maxCompletion; n++) {
+      const en = enabledTransitions(model, regCfg(par!.regs[i]), COMPLETION);
+      if (en.length === 0) return;
+      if (!stepRegion(i, take(en))) return;
+    }
+    if (enabledTransitions(model, regCfg(par!.regs[i]), COMPLETION).length > 0) completionBudgetHit = true;
   };
 
   /**
@@ -1668,6 +1801,7 @@ function runHierRegion(
       };
       return false;
     }
+    exitRegions();
     apply(stepConfig(model, cfg, choice));
     return true;
   };
@@ -1701,7 +1835,11 @@ function runHierRegion(
 
   if (cfg.stack.length === 0) return { leaf: null, complete: false, completionBudgetHit: false };
   apply(opening);
-  if (chaseHierCompletion().exhausted) completionBudgetHit = true;
+  const chaseAll = (): void => {
+    if (par !== null) for (let i = 0; i < par.regs.length; i++) chaseRegion(i);
+    if (refused === undefined && chaseHierCompletion().exhausted) completionBudgetHit = true;
+  };
+  chaseAll();
 
   for (const step of steps) {
     // A run stopped at a step it does not take takes none after it.
@@ -1717,11 +1855,36 @@ function runHierRegion(
         fire(take(enabled));
       }
     } else {
-      const enabled = enabledTransitions(model, cfg, { kind: 'trigger', trigger: step });
-      if (enabled.length > 0) fire(take(enabled));
+      const input: StepInput = { kind: 'trigger', trigger: step };
+      const enabled = enabledTransitions(model, cfg, input);
+      if (par === null) {
+        if (enabled.length > 0) fire(take(enabled));
+      } else if (enabled.length > 0) {
+        // The event leaves the parallel state (or an enclosing one) — unless a region would also take it, which is a
+        // priority the specification does not settle for this reading: the run stops here instead of choosing.
+        if (par.regs.some((rg) => enabledTransitions(model, regCfg(rg), input).length > 0)) {
+          const c = enabled[0];
+          refused = { transitionId: c.transition.id, from: c.transition.source![0], to: c.transition.target![0], trigger: c.label };
+        } else {
+          fire(take(enabled));
+          chaseAll();
+        }
+      } else {
+        const n = par.regs.length;
+        for (let i = 0; i < n && refused === undefined; i++) {
+          const en = enabledTransitions(model, regCfg(par.regs[i]), input);
+          if (en.length === 0) continue;
+          if (stepRegion(i, take(en))) chaseRegion(i);
+        }
+        if (refused === undefined && chaseHierCompletion().exhausted) completionBudgetHit = true;
+      }
     }
   }
 
+  if (par !== null) {
+    const leaves = par.regs.map((rg) => leafOf(rg.cfg) ?? rg.id);
+    return { leaf: leaves[0] ?? null, leaves, complete: false, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };
+  }
   const leaf = leafOf(cfg);
   const complete = leaf !== null && isFinalState(model, leaf);
   return { leaf, complete, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };

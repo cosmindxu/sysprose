@@ -755,6 +755,12 @@ export function directStates(model: Model, containerId: ElementId): ElementRecor
   return model.children(containerId).filter((c) => c.eClass === 'StateUsage');
 }
 
+/** Is the state a parallel state (the notation's `parallel` keyword, SysML v2 §7.18.2, or the API's `attrs.parallel`)? */
+export function isParallelState(model: Model, stateId: ElementId): boolean {
+  const el = model.get(stateId);
+  return el !== undefined && (isTruthy(el.attrs.parallel) || isTruthy(el.attrs.isParallel));
+}
+
 /** Is `el` a history pseudostate (resume-last marker)? */
 export function isHistoryPseudostate(el: ElementRecord): boolean {
   return el.attrs.kind === 'history' || el.attrs.pseudostate === 'history';
@@ -1084,6 +1090,9 @@ function enterOne(model: Model, d: Draft, scope: Scope, stateId: ElementId): voi
  */
 function enterCascade(model: Model, d: Draft, scope: Scope, stateId: ElementId): void {
   enterOne(model, d, scope, stateId);
+  // A parallel state's substates are its concurrent regions (SysML v2 §7.18.2), not alternatives: there is no ONE
+  // initial substate to cascade into. The interpreter enters the regions itself (`runHierRegion`); this stops here.
+  if (isParallelState(model, stateId)) return;
   const subs = directStates(model, stateId);
   if (subs.length === 0) return;
   let next: ElementId | null;
