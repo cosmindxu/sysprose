@@ -1091,6 +1091,10 @@ export function applyBehaviorEffect(
   store: Map<string, unknown>,
   scope: Scope,
 ): void {
+  if (el.attrs.stateSubactionRef === true) {
+    applyReferencedEffect(model, el, store, scope);
+    return;
+  }
   const effect = strAttr(el, 'effect');
   if (effect !== undefined) inlineAssign(effect, store, scope);
   if (el.eClass === 'AssignmentActionUsage') applyAssignment(el, store, scope);
@@ -1101,6 +1105,58 @@ export function applyBehaviorEffect(
         `\`${model.qualifiedName(a.id) || a.id}\` assigns a value this interpreter cannot evaluate here ` +
           '(SysML v2 §7.18.2) — so no run or walk goes on past it with the store as if it had not been written.',
       );
+    }
+  }
+}
+
+/**
+ * A bare `entry X;` / `do X;` / `exit X;` (a reference, `attrs.stateSubactionRef`) performs the action X names: its
+ * effect is X's own, exactly as if X's body were written in place. Only a body made of assignments (and `attrs.effect`)
+ * is read; an X with anything else (a parameter, a nested action, an `if`, a specialization or a typing that brings
+ * a body this reading does not see, a reference that does not resolve or loops) throws {@link EffectNotApplied}, so no
+ * run or walk goes on with the store as if X had not run (SysML v2 §7.18.2).
+ */
+function applyReferencedEffect(model: Model, ref: ElementRecord, store: Map<string, unknown>, scope: Scope): void {
+  const name = (e: ElementRecord): string => `\`${model.qualifiedName(e.id) || e.id}\``;
+  const phase = String(ref.attrs.stateSubaction);
+  const refuse = (x: ElementRecord | undefined, why: string): never => {
+    throw new EffectNotApplied(
+      `the ${phase} behaviour of ${name(model.get(ref.ownerId!) ?? ref)} names ${x ? name(x) : 'an action'}, ` +
+        `which this interpreter cannot evaluate: ${why} (SysML v2 §7.18.2) — so no run or walk goes on past it ` +
+        'with the store as if it had not run.',
+    );
+  };
+  const subs = model.children(ref.id).filter((c) => c.eClass === 'Subsetting');
+  const targets = subs.flatMap((c) => c.target ?? []);
+  const x = targets.length === 1 && subs.length === 1 ? model.get(targets[0]) : undefined;
+  if (!x) return refuse(undefined, 'the reference does not resolve to exactly one action');
+  if (x.attrs.stateSubactionRef === true || x.attrs.stateSubaction !== undefined) {
+    return refuse(x, 'it is itself a state behaviour, so the reference would chain or loop');
+  }
+  for (const c of model.children(x.id)) {
+    if (c.eClass === 'AssignmentActionUsage') continue;
+    if (c.eClass === 'FeatureTyping') {
+      for (const t of c.target ?? []) {
+        const def = model.get(t);
+        if (def?.attrs.isLibrary === true || t.startsWith('stdlib:')) continue;
+        if (!def || model.children(def.id).length > 0 || strAttr(def, 'effect') !== undefined) {
+          return refuse(x, `it is typed by ${def ? name(def) : 'a definition that does not resolve'}, whose body is not read`);
+        }
+      }
+      continue;
+    }
+    return refuse(x, `its body holds ${c.eClass} ${name(c)}, not only assignments`);
+  }
+  const effect = strAttr(x, 'effect');
+  if (effect !== undefined && !inlineAssign(effect, store, scope)) {
+    return refuse(x, `its effect \`${effect}\` is not an assignment it can evaluate`);
+  }
+  if ((x.eClass === 'AssignmentActionUsage' || strAttr(x, 'target') !== undefined) && applyAssignment(x, store, scope) === undefined) {
+    return refuse(x, 'its assignment has a value it cannot evaluate');
+  }
+  for (const a of behaviourAssignments(model, x)) {
+    if (applyAssignment(a, store, scope) === undefined) {
+      return refuse(x, `${name(a)} assigns a value it cannot evaluate`);
     }
   }
 }
@@ -1130,6 +1186,15 @@ export function stateEffectRefusal(model: Model, machineId: ElementId): string |
     }
     for (const a of model.children(el.id)) {
       if (a.attrs.stateSubaction === undefined) continue;
+      if (a.attrs.stateSubactionRef === true) {
+        try {
+          applyReferencedEffect(model, a, store, scope);
+        } catch (e) {
+          if (e instanceof EffectNotApplied) return e.message;
+          throw e;
+        }
+        continue;
+      }
       for (const asg of behaviourAssignments(model, a)) {
         if (applyAssignment(asg, store, scope) === undefined) {
           return `${name(asg.id)}, written in ${name(el.id)}'s ${String(a.attrs.stateSubaction)} behaviour, assigns a value this interpreter cannot evaluate (SysML v2 §7.18.2)`;

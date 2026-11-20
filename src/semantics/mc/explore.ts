@@ -1145,7 +1145,11 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
         'unaccounted',
         `it leaves the entry action ${nameOf(from)} for ${nameOf(to)}, so it says where a state opens, and it is not ` +
           'the one unguarded succession into a direct state that this walk reads as a start; the walk does not ' +
-          'guess another start, so the machine is not walked',
+          'guess another start, so the machine is not walked' +
+          (model.get(from)?.attrs.stateSubactionRef === true
+            ? '; the entry is a reference to an existing action, whose start is the succession written after it ' +
+              '(`entry X; then s;` or `first X then s;`), not a `transition` from the action\u2019s name'
+            : ''),
       );
     } else if (relation.has(el.id) && onStack.has(from!)) {
       row(
