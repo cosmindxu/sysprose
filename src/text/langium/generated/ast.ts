@@ -437,6 +437,8 @@ export function isArgument(item: unknown): item is Argument {
 export interface BehaviorStmt extends langium.AstNode {
     readonly $container: Body | Namespace | RequirementClause | StateBehavior;
     readonly $type: 'BehaviorStmt';
+    assignTarget?: QualifiedName;
+    assignValue?: Expression;
     body?: Body;
     chain: Array<RefName>;
     delay?: Expression;
@@ -465,7 +467,7 @@ export function isBehaviorStmt(item: unknown): item is BehaviorStmt {
 }
 
 export interface BinaryExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'BinaryExpr';
     left: Expression;
     op: '!=' | '!==' | '%' | '&&' | '&' | '*' | '**' | '+' | '-' | '..' | '/' | '<' | '<=' | '==' | '===' | '>' | '>=' | '??' | '@' | '@@' | '^' | 'and' | 'as' | 'hastype' | 'implies' | 'istype' | 'meta' | 'or' | 'xor' | '|' | '||';
@@ -512,7 +514,7 @@ export function isBody(item: unknown): item is Body {
 }
 
 export interface BodyExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'BodyExpr';
     body: Body;
 }
@@ -524,7 +526,7 @@ export function isBodyExpr(item: unknown): item is BodyExpr {
 }
 
 export interface BoolLiteral extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'BoolLiteral';
     value: 'false' | 'true';
 }
@@ -536,7 +538,7 @@ export function isBoolLiteral(item: unknown): item is BoolLiteral {
 }
 
 export interface BracketExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'BracketExpr';
     arg: Expression;
     base: Expression | NumberLiteral;
@@ -549,7 +551,7 @@ export function isBracketExpr(item: unknown): item is BracketExpr {
 }
 
 export interface CollectExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'CollectExpr';
     base: Expression;
     body: Body;
@@ -577,7 +579,7 @@ export function isComment(item: unknown): item is Comment {
 }
 
 export interface ConditionalExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'ConditionalExpr';
     cond: Expression;
     elseExpr: Expression;
@@ -606,7 +608,7 @@ export function isConnect(item: unknown): item is Connect {
 }
 
 export interface ConstructorExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'ConstructorExpr';
     args: Array<Argument>;
     type: QualifiedName;
@@ -729,7 +731,9 @@ export function isDoc(item: unknown): item is Doc {
 export interface EffectClause extends langium.AstNode {
     readonly $container: Transition;
     readonly $type: 'EffectClause';
-    effect: QualifiedName;
+    assignTarget?: QualifiedName;
+    assignValue?: Expression;
+    effect?: QualifiedName;
 }
 
 export const EffectClause = 'EffectClause';
@@ -739,7 +743,7 @@ export function isEffectClause(item: unknown): item is EffectClause {
 }
 
 export interface FeatureChainExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'FeatureChainExpr';
     base: Expression;
     member: QualifiedName;
@@ -809,7 +813,7 @@ export function isImport(item: unknown): item is Import {
 }
 
 export interface IndexExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'IndexExpr';
     base: Expression;
     index?: Expression;
@@ -822,7 +826,7 @@ export function isIndexExpr(item: unknown): item is IndexExpr {
 }
 
 export interface InvocationExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'InvocationExpr';
     args: Array<Argument>;
     callee: Expression;
@@ -853,7 +857,7 @@ export function isLoopStmt(item: unknown): item is LoopStmt {
 }
 
 export interface MetadataAccessExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'MetadataAccessExpr';
     ref: QualifiedName;
 }
@@ -889,7 +893,7 @@ export function isNamespace(item: unknown): item is Namespace {
 }
 
 export interface NavExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'NavExpr';
     args: Array<Argument>;
     base: Expression;
@@ -905,7 +909,7 @@ export function isNavExpr(item: unknown): item is NavExpr {
 }
 
 export interface NullLiteral extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'NullLiteral';
 }
 
@@ -916,7 +920,7 @@ export function isNullLiteral(item: unknown): item is NullLiteral {
 }
 
 export interface NumberLiteral extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'NumberLiteral';
     value: number;
 }
@@ -940,7 +944,7 @@ export function isPrefixMetadata(item: unknown): item is PrefixMetadata {
 }
 
 export interface RefExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'RefExpr';
     ref: QualifiedName;
 }
@@ -1038,7 +1042,7 @@ export function isSatisfy(item: unknown): item is Satisfy {
 }
 
 export interface SelectExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'SelectExpr';
     base: Expression;
     body: Body;
@@ -1051,7 +1055,7 @@ export function isSelectExpr(item: unknown): item is SelectExpr {
 }
 
 export interface SequenceExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'SequenceExpr';
     items: Array<Expression>;
 }
@@ -1098,7 +1102,7 @@ export function isStateBehavior(item: unknown): item is StateBehavior {
 }
 
 export interface StringLiteral extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'StringLiteral';
     value: string;
 }
@@ -1176,7 +1180,7 @@ export function isTransition(item: unknown): item is Transition {
 }
 
 export interface UnaryExpr extends langium.AstNode {
-    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
+    readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'UnaryExpr';
     op: '+' | '-' | 'not' | '~';
     operand: Expression;
@@ -1403,6 +1407,8 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                 return {
                     name: BehaviorStmt,
                     properties: [
+                        { name: 'assignTarget' },
+                        { name: 'assignValue' },
                         { name: 'body' },
                         { name: 'chain', defaultValue: [] },
                         { name: 'delay' },
@@ -1627,6 +1633,8 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                 return {
                     name: EffectClause,
                     properties: [
+                        { name: 'assignTarget' },
+                        { name: 'assignValue' },
                         { name: 'effect' }
                     ]
                 };

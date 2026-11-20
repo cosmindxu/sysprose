@@ -244,7 +244,9 @@ GuardClause infers GuardClause:
     | 'if' expr=Expression;
 
 EffectClause infers EffectClause:
-    'do' ('action')? effect=QualifiedName;
+    // `do assign x := 2` (SysML v2 §7.18.3): the effect written as an inline assignment, read as the effect text `x = 2`.
+    // The value follows `:=`, never a bare name, so a following `then` / `if` / `accept` is not swallowed.
+    'do' ( 'assign' assignTarget=QualifiedName ':=' assignValue=Expression | ('action')? effect=QualifiedName );
 
 // ─────────────────── state behaviours & control nodes ────────────────
 
@@ -283,7 +285,7 @@ BehaviorStmt infers BehaviorStmt:
       BehaviorStmtRest
       (delay=DelayExpr)?
       ('if' guard=Expression)?
-      ('do' ('action')? effect=QualifiedName)?
+      ('do' ( 'assign' assignTarget=QualifiedName ':=' assignValue=Expression | ('action')? effect=QualifiedName ))?
       (body=Body | ';')?
     | kind=('send' | 'assign' | 'perform' | 'include' | 'terminate')
       ('action' | 'state' | 'use' 'case')?

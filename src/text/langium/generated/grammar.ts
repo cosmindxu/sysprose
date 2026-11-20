@@ -3150,21 +3150,68 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
             "value": "do"
           },
           {
-            "$type": "Keyword",
-            "value": "action",
-            "cardinality": "?"
-          },
-          {
-            "$type": "Assignment",
-            "feature": "effect",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@75"
+            "$type": "Alternatives",
+            "elements": [
+              {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Keyword",
+                    "value": "assign"
+                  },
+                  {
+                    "$type": "Assignment",
+                    "feature": "assignTarget",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@75"
+                      },
+                      "arguments": []
+                    }
+                  },
+                  {
+                    "$type": "Keyword",
+                    "value": ":="
+                  },
+                  {
+                    "$type": "Assignment",
+                    "feature": "assignValue",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@57"
+                      },
+                      "arguments": []
+                    }
+                  }
+                ]
               },
-              "arguments": []
-            }
+              {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Keyword",
+                    "value": "action",
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Assignment",
+                    "feature": "effect",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@75"
+                      },
+                      "arguments": []
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -3689,21 +3736,68 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                         "value": "do"
                       },
                       {
-                        "$type": "Keyword",
-                        "value": "action",
-                        "cardinality": "?"
-                      },
-                      {
-                        "$type": "Assignment",
-                        "feature": "effect",
-                        "operator": "=",
-                        "terminal": {
-                          "$type": "RuleCall",
-                          "rule": {
-                            "$ref": "#/rules@75"
+                        "$type": "Alternatives",
+                        "elements": [
+                          {
+                            "$type": "Group",
+                            "elements": [
+                              {
+                                "$type": "Keyword",
+                                "value": "assign"
+                              },
+                              {
+                                "$type": "Assignment",
+                                "feature": "assignTarget",
+                                "operator": "=",
+                                "terminal": {
+                                  "$type": "RuleCall",
+                                  "rule": {
+                                    "$ref": "#/rules@75"
+                                  },
+                                  "arguments": []
+                                }
+                              },
+                              {
+                                "$type": "Keyword",
+                                "value": ":="
+                              },
+                              {
+                                "$type": "Assignment",
+                                "feature": "assignValue",
+                                "operator": "=",
+                                "terminal": {
+                                  "$type": "RuleCall",
+                                  "rule": {
+                                    "$ref": "#/rules@57"
+                                  },
+                                  "arguments": []
+                                }
+                              }
+                            ]
                           },
-                          "arguments": []
-                        }
+                          {
+                            "$type": "Group",
+                            "elements": [
+                              {
+                                "$type": "Keyword",
+                                "value": "action",
+                                "cardinality": "?"
+                              },
+                              {
+                                "$type": "Assignment",
+                                "feature": "effect",
+                                "operator": "=",
+                                "terminal": {
+                                  "$type": "RuleCall",
+                                  "rule": {
+                                    "$ref": "#/rules@75"
+                                  },
+                                  "arguments": []
+                                }
+                              }
+                            ]
+                          }
+                        ]
                       }
                     ],
                     "cardinality": "?"

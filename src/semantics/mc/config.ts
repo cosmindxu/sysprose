@@ -1067,8 +1067,26 @@ export function initialSubstate(model: Model, containerId: ElementId): ElementId
   return initialStateOf(model, region, region.directStates(containerId));
 }
 
-/** Apply a behavior action's store effect (an assignment or `attrs.effect`). */
+/**
+ * A state effect (an entry/do/exit assignment, or a transition's effect text) that this evaluator cannot apply: the
+ * run or the walk that meets it is REFUSED with {@link EffectNotApplied.message}, never continued with the store
+ * as if the effect had not been written.
+ */
+export class EffectNotApplied extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EffectNotApplied';
+  }
+}
+
+/** The assignments a behaviour owns (`entry assign x := 1;` / `entry action a { assign x := 1; }`), in declaration order. */
+export function behaviourAssignments(model: Model, el: ElementRecord): ElementRecord[] {
+  return model.children(el.id).filter((c) => c.eClass === 'AssignmentActionUsage');
+}
+
+/** Apply a behavior action's store effect (an assignment or `attrs.effect`), then the assignments it owns, in order. */
 export function applyBehaviorEffect(
+  model: Model,
   el: ElementRecord,
   store: Map<string, unknown>,
   scope: Scope,
@@ -1077,6 +1095,49 @@ export function applyBehaviorEffect(
   if (effect !== undefined) inlineAssign(effect, store, scope);
   if (el.eClass === 'AssignmentActionUsage') applyAssignment(el, store, scope);
   else if (strAttr(el, 'target') !== undefined) applyAssignment(el, store, scope);
+  for (const a of behaviourAssignments(model, el)) {
+    if (applyAssignment(a, store, scope) === undefined) {
+      throw new EffectNotApplied(
+        `\`${model.qualifiedName(a.id) || a.id}\` assigns a value this interpreter cannot evaluate here ` +
+          '(SysML v2 §7.18.2) — so no run or walk goes on past it with the store as if it had not been written.',
+      );
+    }
+  }
+}
+
+/**
+ * Why a machine's state effects cannot be applied, or `undefined`: a dry run of every entry/do/exit assignment and
+ * every transition effect written as an assignment (`n = 1`), in declaration order, over the store the machine opens
+ * with. One that does not evaluate is named. The interpreter and the explorer both ask this before they start, so
+ * neither shows a value from a store an unapplied effect left wrong; a run that meets a different failure later
+ * throws {@link EffectNotApplied} and is refused the same way.
+ */
+export function stateEffectRefusal(model: Model, machineId: ElementId): string | undefined {
+  const machine = model.get(machineId);
+  if (!machine) return undefined;
+  const view = machineRegion(model, machineId);
+  const store = new Map<string, unknown>();
+  seedStore(model, machine, store);
+  const scope = regionScope(model, machineId);
+  const name = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  for (const el of [machine, ...view.descendants]) {
+    if (el.id !== machineId && el.eClass === 'TransitionUsage') {
+      const effect = strAttr(el, 'effect');
+      if (effect !== undefined && /[^=!<>]=(?!=)/.test(effect) && !inlineAssign(effect, store, scope)) {
+        return `the effect \`${effect}\` of ${name(el.id)} is an assignment this interpreter cannot evaluate (SysML v2 §7.18.3)`;
+      }
+      continue;
+    }
+    for (const a of model.children(el.id)) {
+      if (a.attrs.stateSubaction === undefined) continue;
+      for (const asg of behaviourAssignments(model, a)) {
+        if (applyAssignment(asg, store, scope) === undefined) {
+          return `${name(asg.id)}, written in ${name(el.id)}'s ${String(a.attrs.stateSubaction)} behaviour, assigns a value this interpreter cannot evaluate (SysML v2 §7.18.2)`;
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Apply a transition's effect (an `attrs.effect` assignment) to the store. */
@@ -1101,7 +1162,7 @@ export function runStatePhase(
   for (const a of model.children(stateId)) {
     if (a.attrs.stateSubaction !== phase) continue;
     performed.push({ stateId, phase, actionId: a.id, name: a.declaredName ?? '' });
-    applyBehaviorEffect(a, store, scope);
+    applyBehaviorEffect(model, a, store, scope);
   }
 }
 

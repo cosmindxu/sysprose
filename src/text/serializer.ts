@@ -1036,6 +1036,15 @@ function stateBehaviorLine(model: Model, el: ElementRecord, indent: number): str
     const target = rel === undefined ? undefined : (rel.target ?? [])[0];
     if (target !== undefined) return `${INDENT.repeat(indent)}${parts[0]} ${model.qualifiedName(target)};`;
   }
+  if (el.declaredName === undefined && specializationFragments(model, el).length === 0 && multFragment(el).length === 0 && valueClause(el).length === 0) {
+    // A nameless behaviour that is one plain assignment is written `entry assign x := 1;` (SysML v2 §7.18.2), the
+    // form that reads back as the same model; any other body keeps the long form.
+    const body = bodyMembers(model, el);
+    if (body.length === 1 && body[0].eClass === 'AssignmentActionUsage') {
+      const one = serializeElement(model, body[0].id, 0);
+      if (/^assign [^\n{}]*;$/.test(one)) return `${INDENT.repeat(indent)}${parts[0]} ${one}`;
+    }
+  }
   if (el.declaredName !== undefined) parts.push('action', quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el), ...valueClause(el));
   return renderWithBody(model, el, indent, parts.join(' '));
@@ -1409,6 +1418,12 @@ function aliasLine(model: Model, el: ElementRecord, indent: number): string {
   return renderWithBody(model, el, indent, head);
 }
 
+/** A transition's effect text: an assignment `x = e` is written `assign x := e` (SysML v2 §7.18.3), an action name as it is. */
+function effectClauseText(effect: string): string {
+  const m = /^('(?:[^']|'')*'|[A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)\s*([^]+)$/.exec(effect.trim());
+  return m === null ? effect : `assign ${m[1]} := ${m[2]}`;
+}
+
 function transitionLine(model: Model, el: ElementRecord, pad: string): string {
   const parts = ['transition'];
   if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
@@ -1418,7 +1433,7 @@ function transitionLine(model: Model, el: ElementRecord, pad: string): string {
   if (typeof el.attrs.trigger === 'string' && el.attrs.trigger) parts.push('accept', el.attrs.trigger);
   if (typeof el.attrs.timeTrigger === 'string' && el.attrs.timeTrigger) parts.push('accept after', el.attrs.timeTrigger);
   if (typeof el.attrs.guard === 'string' && el.attrs.guard) parts.push(`if ${el.attrs.guard}`);
-  if (typeof el.attrs.effect === 'string' && el.attrs.effect) parts.push('do', el.attrs.effect);
+  if (typeof el.attrs.effect === 'string' && el.attrs.effect) parts.push('do', effectClauseText(el.attrs.effect));
   parts.push('then', endpoint(model, el, 'target'));
   return `${pad}${parts.join(' ')};`;
 }

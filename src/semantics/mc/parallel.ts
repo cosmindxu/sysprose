@@ -84,6 +84,15 @@ function regionNames(model: Model, regionId: ElementId, ids: ReadonlySet<Element
       addEffect(strAttr(el, 'effect'));
     }
     if (el.attrs.stateSubaction !== undefined) {
+      for (const asg of model.children(el.id).filter((c) => c.eClass === 'AssignmentActionUsage')) {
+        const t = strAttr(asg, 'target') ?? strAttr(asg, 'referent') ?? strAttr(asg, 'feature') ?? asg.declaredName;
+        if (t) {
+          writes.add(t.replace(/^'|'$/g, ''));
+          all.add(t.replace(/^'|'$/g, ''));
+        }
+        tokens(asg.attrs.value, all);
+        tokens(strAttr(asg, 'expression'), all);
+      }
       addEffect(strAttr(el, 'effect'));
       tokens(el.attrs.value, all);
       tokens(strAttr(el, 'expression'), all);
@@ -96,6 +105,15 @@ function regionNames(model: Model, regionId: ElementId, ids: ReadonlySet<Element
   }
   for (const a of model.children(regionId)) {
     if (a.attrs.stateSubaction === undefined) continue;
+    for (const asg of model.children(a.id).filter((c) => c.eClass === 'AssignmentActionUsage')) {
+      const t = strAttr(asg, 'target') ?? strAttr(asg, 'referent') ?? strAttr(asg, 'feature') ?? asg.declaredName;
+      if (t) {
+        writes.add(t.replace(/^'|'$/g, ''));
+        all.add(t.replace(/^'|'$/g, ''));
+      }
+      tokens(asg.attrs.value, all);
+      tokens(strAttr(asg, 'expression'), all);
+    }
     addEffect(strAttr(a, 'effect'));
     tokens(a.attrs.value, all);
     tokens(strAttr(a, 'expression'), all);

@@ -73,13 +73,23 @@ describe('`entry action initial`', () => {
 });
 
 describe('`entry assign x := 1;` and `do send X to Y;`', () => {
-  it('are refused, not split into a nameless behaviour and a loose action', async () => {
-    const { model, report } = await load(wrap('    entry assign x := 1;\n    do send X to Y;\n    state off;', '  attribute x : Integer;\n'));
-    expect(codes(report)).toEqual(['mapper/state-form-unread', 'mapper/state-form-unread']);
+  const pre = '  attribute x : Integer;\n';
+  it('reads `entry assign` as the long form reads it: a nameless entry action owning the assignment', async () => {
+    const a = await load(wrap('    entry assign x := 1;\n    state off;', pre));
+    const b = await load(wrap('    entry action { assign x := 1; }\n    state off;', pre));
+    expect(errors(a.report)).toEqual([]);
+    const shape = (m: any): any =>
+      m.model.all().filter((e: any) => !e.attrs.isLibrary && (e.attrs.stateSubaction !== undefined || e.eClass === 'AssignmentActionUsage')).map((e: any) => [e.eClass, e.declaredName, e.attrs]);
+    expect(shape(a)).toEqual(shape(b));
+    expect(shape(a)).toHaveLength(2);
+  });
+  it('refuses `do send X to Y;`, not split into a nameless behaviour and a loose action', async () => {
+    const { model, report } = await load(wrap('    do send X to Y;\n    state off;', pre));
+    expect(codes(report)).toEqual(['mapper/state-form-unread']);
     expect(model.all().filter((e: any) => (e.attrs.actionKind === 'assign' || e.attrs.actionKind === 'send') && !e.attrs.isLibrary)).toEqual([]);
   });
   it('still reads the long form with a body', async () => {
-    const { report } = await load(wrap('    entry action a { assign x := 1; }\n    state off;', '  attribute x : Integer;\n'));
+    const { report } = await load(wrap('    entry action a { assign x := 1; }\n    state off;', pre));
     expect(errors(report)).toEqual([]);
   });
 });

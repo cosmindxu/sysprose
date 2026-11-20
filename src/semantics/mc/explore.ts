@@ -98,6 +98,8 @@ import {
   CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
   activeLeavesOf,
+  EffectNotApplied,
+  stateEffectRefusal,
   activeStatesOf,
   afterDuration,
   hashConfig,
@@ -1537,6 +1539,13 @@ function unsupportedConstructs(
       out.push({ construct: 'parallel-regions', detail: refusal.reason, elementId: refusal.elementId });
     }
   }
+  // An entry/do/exit assignment or an assignment effect this evaluator cannot apply is not skipped: a walk over a
+  // store it left wrong would publish values the machine does not take (`stateEffectRefusal`, `./config`, shared with the
+  // interpreter, which refuses the same machine in the same words).
+  const effectRefusal = stateEffectRefusal(model, machineId);
+  if (effectRefusal !== undefined) {
+    out.push({ construct: 'state-effect', detail: `${effectRefusal}, so no walk of it is a claim about it as written.`, elementId: machineId });
+  }
   for (const el of [machine, ...machineRegion(model, machineId).descendants]) {
     if (!el) continue;
     if (isHistoryPseudostate(el) || (el.eClass === 'StateUsage' && isHistoryComposite(model, el.id))) {
@@ -1831,7 +1840,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
   // machine anyway and marking the result non-exhaustive would publish a
   // reachable set computed under semantics the report says it does not
   // implement — a figure worse than no figure.
-  if (unsupported.length > 0) {
+  const refusedWalk = (unsupported: UnsupportedConstruct[]): ExploreResult => {
     return {
       machineId,
       bounds,
@@ -1866,7 +1875,8 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
       budgetStops: [],
       chaseCycles: [],
     };
-  }
+  };
+  if (unsupported.length > 0) return refusedWalk(unsupported);
 
   // Once without the chase position, which is every walk this engine has ever
   // published; again with it only where the budget can stop a chase AND
@@ -1874,12 +1884,21 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
   // trigger, or the states past a chain the first walk had to cut. A machine
   // that names no trigger otherwise keeps its walk, and the configurations
   // where the budget stops its one chase are named on it — see the note above.
-  const plain = walkConfigurations(model, machineId, bounds, false);
-  const budgetCanStop = chaseBudgetDecides(plain, bounds);
-  const walked =
-    budgetCanStop && (bounds.alphabet.length > 0 || plain.boundHit === 'completion')
-      ? walkConfigurations(model, machineId, bounds, true)
-      : plain;
+  let plain: ReturnType<typeof walkConfigurations>;
+  let walked: ReturnType<typeof walkConfigurations>;
+  let budgetCanStop: boolean;
+  try {
+    plain = walkConfigurations(model, machineId, bounds, false);
+    budgetCanStop = chaseBudgetDecides(plain, bounds);
+    walked =
+      budgetCanStop && (bounds.alphabet.length > 0 || plain.boundHit === 'completion')
+        ? walkConfigurations(model, machineId, bounds, true)
+        : plain;
+  } catch (e) {
+    // An effect met mid-walk that cannot be applied: the machine is refused, no figure from the walk so far stands.
+    if (!(e instanceof EffectNotApplied)) throw e;
+    return refusedWalk([{ construct: 'state-effect', detail: `${e.message}`, elementId: machineId }]);
+  }
   const budgetStops = !walked.chaseKeyed && budgetCanStop ? openingChaseStops(plain, bounds) : [];
   return {
     machineId,

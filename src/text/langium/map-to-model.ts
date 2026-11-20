@@ -701,6 +701,12 @@ function semicolonOutsideText(text: string, from: number): number {
  */
 const UNREAD_ABOUT_SEGMENTS: ReadonlySet<string> = new Set([VERIFICATION_METHOD_DEF, RM_METADATA_NAME]);
 
+/** A transition's effect as text: `do eff` is the action's name, `do assign x := e` the assignment `x = e` (the form the interpreter applies). */
+function effectTextOf(c: { effect?: string; assignTarget?: string; assignValue?: Expression }): string | undefined {
+  if (c.assignTarget !== undefined && c.assignValue !== undefined) return `${c.assignTarget} = ${exprText(c.assignValue)}`;
+  return c.effect;
+}
+
 class Mapper {
   readonly model = new Model();
   readonly factory = new ModelFactory(this.model);
@@ -2283,7 +2289,7 @@ class Mapper {
 
   /** accept / send / assign / perform / exhibit / include / terminate action. */
   private mapBehaviorStmt(node: BehaviorStmt, ownerId: ElementId | null): void {
-    if (node.kind === 'accept' && (node.delay || node.guard || node.effect) && !(node.succession === undefined && this.isStateOwner(ownerId))) {
+    if (node.kind === 'accept' && (node.delay || node.guard || node.effect || node.assignTarget) && !(node.succession === undefined && this.isStateOwner(ownerId))) {
       this.refuseStateForm(node, `\`accept ${node.name ?? ''}\` with a delay, a guard or an effect outside a state body`);
       return;
     }
@@ -2310,7 +2316,8 @@ class Mapper {
       if (timed) attrs.timeTrigger = exprText(node.delay!);
       else attrs.trigger = unquoteName(node.name) ?? node.name;
       if (node.guard) attrs.guard = exprText(node.guard);
-      if (node.effect) attrs.effect = node.effect;
+      const eff = effectTextOf(node);
+      if (eff) attrs.effect = eff;
       this.consumedThen.add(then);
       this.createTargetTransition(node, ownerId, src, then.target!, attrs);
       return;
@@ -2517,7 +2524,7 @@ class Mapper {
         } else trigger = c.payload;
       }
       else if (c.$type === 'GuardClause') guard = exprText(c.expr);
-      else if (c.$type === 'EffectClause') effect = c.effect;
+      else if (c.$type === 'EffectClause') effect = effectTextOf(c);
     }
     const srcRef = node.source;
     const tgtRef = node.target;
@@ -2557,10 +2564,25 @@ class Mapper {
   /** `entry` / `do` / `exit` (action)? (name)? (: T)? (= value)? (body)? — kept like any behaviour statement's. */
   private mapStateBehavior(node: StateBehavior, ownerId: ElementId | null): void {
     if (node.inline) {
-      // `entry assign x := 1;` / `do send X to Y;`: the notation's inline action. Neither the walk nor the
-      // interpreter runs an action written this way, so it is refused whole rather than kept as a bare behaviour
-      // beside a loose action statement.
-      this.refuseStateForm(node, `\`${node.kind} ${node.inline.kind} …\`, an action written in place of the ${node.kind} action's body`);
+      // `entry assign x := 1;` (SysML v2 §7.18.2): the entry/do/exit action is the assignment, read as the long form
+      // `entry action { assign x := 1; }` reads: a nameless behaviour owning the assignment. Only an assignment is
+      // read (nothing interprets a `send`), and only in its plain shape; any other action written in place of the
+      // body is refused whole rather than kept as a bare behaviour beside a loose action statement.
+      const i = node.inline;
+      const plain =
+        i.kind === 'assign' && i.name !== undefined && i.valueOp !== undefined && i.value !== undefined &&
+        !node.isAction && node.name === undefined && node.chain.length === 0 && node.specializations.length === 0 &&
+        node.multiplicity.length === 0 && node.value === undefined && node.body === undefined &&
+        i.succession === undefined && i.visibility === undefined && !i.isAbstract && i.shortName === undefined &&
+        i.specializations.length === 0 && i.multiplicity.length === 0 && i.via === undefined && i.target === undefined &&
+        i.body === undefined && i.chain.length === 0;
+      if (!plain) {
+        this.refuseStateForm(node, `\`${node.kind} ${i.kind} …\`, an action written in place of the ${node.kind} action's body (only \`${node.kind} assign x := e;\` is read)`);
+        return;
+      }
+      const behaviour = this.create('ActionUsage', { ownerId: ownerId ?? undefined, attrs: { stateSubaction: node.kind } });
+      if (node.kind === 'entry') this.pendingEntry.set(ownerId, behaviour.id);
+      this.mapBehaviorStmt(i, behaviour.id);
       return;
     }
     // `entry P::a;` (a qualified name) can only be a reference: nothing declares a qualified name.

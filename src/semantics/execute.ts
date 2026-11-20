@@ -45,6 +45,8 @@ import {
   afterDuration,
   applyAssignment,
   applyTransitionEffect,
+  EffectNotApplied,
+  stateEffectRefusal,
   combinedScope,
   enabledTransitions,
   evalStr,
@@ -994,6 +996,23 @@ export function runStateMachine(
   triggers: StateStep[] = [],
   opts: RunStateOptions = {},
 ): StateRunResult {
+  try {
+    return runStateMachineChecked(model, stateId, triggers, opts);
+  } catch (e) {
+    // An effect met mid-run that cannot be applied (`EffectNotApplied`): the run is refused whole, with its reason.
+    if (!(e instanceof EffectNotApplied)) throw e;
+    const container = model.get(stateId);
+    const unopened = `${container ? model.qualifiedName(container.id) || container.id : stateId} is not run: ${e.message}`;
+    return { visited: [], fired: [], performed: [], valueStore: new Map(), activeStates: [], finalState: null, complete: false, unopened };
+  }
+}
+
+function runStateMachineChecked(
+  model: Model,
+  stateId: ElementId,
+  triggers: StateStep[],
+  opts: RunStateOptions,
+): StateRunResult {
   const container = model.get(stateId);
   const valueStore = new Map<string, unknown>();
   if (!container) {
@@ -1043,6 +1062,13 @@ export function runStateMachine(
     const unopened =
       `${model.qualifiedName(container.id) || container.id} is not run: ${nestedRefusal} ` +
       '(SysML v2 §7.18.2) — so no run is started and no state is shown.';
+    return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
+  }
+  // An effect written in a state or on a transition that this evaluator cannot apply is refused here, not skipped:
+  // the store, and every guard read from it, would be wrong from that step on.
+  const effectRefusal = stateEffectRefusal(model, container.id);
+  if (effectRefusal !== undefined) {
+    const unopened = `${model.qualifiedName(container.id) || container.id} is not run: ${effectRefusal} — so no run is started and no value is shown.`;
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
   seedStore(model, container, valueStore, opts.store);
