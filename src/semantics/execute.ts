@@ -39,6 +39,7 @@ import { isBindingEdge, propagateValues } from './connectors';
 // of this file so a checker can ask what is enabled without firing it (plan
 // §3.8); the interpreter imports them back and takes the FIRST enabled
 // transition, which is the tie-break it always had.
+import { rootConfig } from './mc/parallel';
 import {
   SUCCESSION_KINDS,
   advanceClock,
@@ -76,7 +77,6 @@ import {
   stepOutsideStates,
   strAttr,
   triggerEquals,
-  triggerLabelOf,
   type EnabledTransition,
   type MachineConfig,
   type StepEffects,
@@ -902,7 +902,7 @@ export interface StateRunResult {
   activeStates: ElementId[];
   /**
    * The current state after all triggers are processed for a single-region
-   * machine (or null / the first region's state for a parallel machine).
+   * machine (or null / the first region's active leaf for a parallel machine).
    */
   finalState: ElementId | null;
   /**
@@ -913,7 +913,7 @@ export interface StateRunResult {
   /**
    * True when every concurrent region reached a final/complete state (and any
    * orthogonal join transition fired). Additive field; `undefined` on the legacy
-   * flat/parallel path where completeness is not tracked.
+   * flat path where completeness is not tracked.
    */
   complete?: boolean;
   /**
@@ -952,22 +952,15 @@ export interface StateRunResult {
    * entering the far state of a boundary crossing and staying there — a run the
    * Simulation tab showed and nothing defined.
    *
-   * ON A PARALLEL MACHINE ({@link runsParallel}, from the notation's `parallel`
-   * keyword or the API's `attrs.parallel`) the stop is the REGION's: each region is driven on its own over the whole
-   * script, one after another, so the region the step came in stops and takes
-   * no step after it, and the other regions run on. `refused` is the FIRST
-   * region's refusal; {@link refusals} lists every region's. The walk refuses
-   * every parallel machine (`parallel-regions`), so this too is a trace, never
-   * a verdict.
+   * ON A PARALLEL MACHINE ({@link parallelRoot}, from the notation's `parallel`
+   * keyword or the API's `attrs.parallel`) the regions are performed together, one event offered to every region, so
+   * the stop is the RUN's: no region takes a step after it. {@link refusals} is that one step and `regionCount` is 1.
    */
   refused?: StateFire;
   /**
-   * Every region's refusal, in region order (`refused` is its first), and how
-   * many regions the machine was driven as (`regionCount`: one for a machine
-   * that is not parallel). Both are set exactly when `refused` is. When
-   * `refusals.length` reaches `regionCount` every region has stopped and
-   * nothing advances ({@link refusalStopsRun}); until then the regions that
-   * have not stopped run on.
+   * The refusals (`refused` is the first), and how many regions stopped
+   * together with the run (`regionCount`, 1: a run is one). Both are set
+   * exactly when `refused` is, and nothing advances after it ({@link refusalStopsRun}).
    */
   refusals?: StateFire[];
   regionCount?: number;
@@ -1076,48 +1069,40 @@ function runStateMachineChecked(
   const performed: PerformedAction[] = [];
   const tie: TieBreak = { follow: opts.follow, at: 0 };
 
-  const parallel = runsParallel(model, container.id);
+  // A parallel machine ROOT (`state def M parallel { state nav {…} state comms {…} }`, SysML v2 §7.18.2) is performed
+  // exactly as a parallel state nested in an ordinary machine is: `runHierRegion` opens the machine as the parallel
+  // state, enters every region at its own start, and offers every event to every region in declaration order.
+  const rootParallel = parallelRoot(model, container);
 
   // Route to the fuller HIERARCHICAL / TIMED interpreter when the machine has
   // nested composite states, a history pseudostate, an orthogonal join
   // transition, a step into a node written below one of its states, or the run
-  // carries timed steps. Otherwise use the (unchanged) flat/simple-parallel
-  // path so existing behavior is preserved exactly.
+  // carries timed steps. Otherwise use the (unchanged) flat path so existing
+  // behavior is preserved exactly.
   const timed = triggers.some(isTimedStep);
-  if (timed || needsHierarchical(model, container, parallel)) {
-    return runHierMachine(model, container, triggers, valueStore, performed, maxCompletion, parallel, tie);
+  if (rootParallel || timed || needsHierarchical(model, container)) {
+    return runHierMachine(model, container, triggers, valueStore, performed, maxCompletion, rootParallel, tie);
   }
 
   const stringTriggers = triggers.filter((t): t is string => typeof t === 'string');
-  const regions = flatRegions(model, container, parallel);
-
-  const visited: ElementId[] = [];
-  const fired: StateFire[] = [];
-  const finals: (ElementId | null)[] = [];
-  let completionBudgetHit = false;
-  const refusals: StateFire[] = [];
-  for (const region of regions) {
-    const res = runRegion(model, container.id, region.id, stringTriggers, valueStore, performed, maxCompletion, tie);
-    visited.push(...res.visited);
-    fired.push(...res.fired);
-    finals.push(res.finalState);
-    if (res.completionBudgetHit) completionBudgetHit = true;
-    if (res.refused !== undefined) refusals.push(res.refused);
-  }
-
-  const activeStates = finals.filter((s): s is ElementId => s !== null);
-  const finalState = parallel ? (finals[0] ?? null) : (finals[0] ?? null);
-  // A refused run did not complete; every other flat run leaves `complete`
-  // untracked, as it always did.
-  const stopped =
-    refusals.length === 0 ? {} : { complete: false, refused: refusals[0]!, refusals, regionCount: regions.length };
-  return { visited, fired, performed, valueStore, activeStates, finalState, completionBudgetHit, ...stopped };
+  const res = runRegion(model, container.id, container.id, stringTriggers, valueStore, performed, maxCompletion, tie);
+  return {
+    visited: res.visited,
+    fired: res.fired,
+    performed,
+    valueStore,
+    activeStates: res.finalState !== null ? [res.finalState] : [],
+    finalState: res.finalState,
+    completionBudgetHit: res.completionBudgetHit,
+    // A refused run did not complete; every other flat run leaves `complete` untracked, as it always did.
+    ...(res.refused === undefined ? {} : { complete: false, refused: res.refused, refusals: [res.refused], regionCount: 1 }),
+  };
 }
 
 /**
- * Did a refusal stop the whole run ({@link StateRunResult.refusals}): the
- * machine is not parallel, has a single region, or every region has refused.
- * Until then a parallel machine's other regions run on and Play goes on.
+ * Did a refusal stop the whole run ({@link StateRunResult.refusals}). Always, now: the regions of a parallel machine
+ * are performed together, one step offered to every region, so the step a region does not take stops them all
+ * (`regionCount` is 1 on every run this interpreter makes). Kept for a result that lists more regions than refusals.
  */
 export function refusalStopsRun(
   model: Model,
@@ -1128,38 +1113,31 @@ export function refusalStopsRun(
 }
 
 /**
- * The clause of {@link refusedStepSentence} that says what stopped. On a
- * parallel machine it reads how many regions have refused: one, and the rest
- * run on; several, and the remaining regions run on; all of them, and the run
- * stops (a lone region is the whole run, as on a machine that is not parallel).
+ * The clause of {@link refusedStepSentence} that says what stopped. The regions of a parallel machine are performed
+ * together (SysML v2 §7.18.2), so a step one of them does not take stops the whole run: the sentence says so.
  */
 function stopClause(model: Model, machineId: ElementId, regions?: { stopped: number; of: number }): string {
   const whole = 'the run stops where it stands without taking it, and takes no step after it';
-  if (!runsParallel(model, machineId)) return whole;
-  if (regions !== undefined && regions.of <= 1) return whole;
-  const own = 'its region stops where it stands without taking it and takes no step after it';
-  if (regions !== undefined && regions.stopped >= regions.of) {
-    return `${own}, and so does every other region of the machine at a step it does not take, so the run stops`;
-  }
-  if (regions !== undefined && regions.stopped > 1) {
-    return (
-      `${own}, as do the other regions that stopped at a step they do not take, while the machine’s remaining ` +
-      'regions, each run on its own over the whole script, run on'
-    );
-  }
-  return `${own}, while the machine’s other regions, each run on its own over the whole script, run on`;
+  void regions;
+  const el = model.get(machineId);
+  return el !== undefined && parallelRoot(model, el) ? `${whole}; the regions of a parallel machine are performed together, so every region stops` : whole;
 }
 
 /**
- * Is the machine rooted at `machineId` run as a parallel one (the notation's
- * `parallel` on a state definition or usage, SysML v2 §7.18.2, or the API's
- * `attrs.parallel`): each child region driven on its own over the whole script,
- * one region after another? Then a step a region does not take
- * ({@link StateRunResult.refused}) stops that region, not the run.
+ * Is the machine rooted at `machineId` marked parallel (the notation's `parallel` on a state definition or usage,
+ * SysML v2 §7.18.2, or the API's `attrs.parallel`)? {@link parallelRoot} adds that it has regions to perform.
  */
 export function runsParallel(model: Model, machineId: ElementId): boolean {
   const el = model.get(machineId);
   return el !== undefined && (isTruthy(el.attrs.parallel) || isTruthy(el.attrs.isParallel));
+}
+
+/**
+ * Is the machine a parallel one that is PERFORMED as such: marked parallel and holding at least one state (its
+ * regions, each child state one). A parallel machine with no state has no regions and runs as any machine does.
+ */
+export function parallelRoot(model: Model, container: ElementRecord): boolean {
+  return runsParallel(model, container.id) && machineRegion(model, container.id).directStates(container.id).length > 0;
 }
 
 /**
@@ -1176,12 +1154,8 @@ export function runsParallel(model: Model, machineId: ElementId): boolean {
  * on both machines it joins (`machine-boundary`).
  *
  * TWO RUNS ARE WORDED APART, because the plain sentence would be false of them:
- * - On a parallel machine ({@link runsParallel}) the step stops its own region,
- *   and the other regions run on; the sentence says so, where "takes no step
- *   after it" would be contradicted by the steps they fire. `regions` (how many
- *   have refused, of how many) words the rest: several refused and some run on,
- *   or every region refused and the run stops, which "the other regions run on"
- *   would contradict.
+ * - On a parallel machine ({@link parallelRoot}) the regions are performed together, so
+ *   the step stops every region; the sentence says so.
  * - A composite state run on its own — `executionReport` runs every element
  *   that owns a transition, a state written inside a machine among them — that
  *   steps into ITSELF is not stepping into a machine's root: in the machine
@@ -1239,19 +1213,6 @@ export function refusedStepSentence(
     `${qn(transitionId)} leads from ${qn(edge.source[0])} ${outsideStatesSentence(model, machineId, edge)}. ` +
     `Its target sits in no chain of the machine’s states, so what the step exits and enters is not defined here: ${stop}.`
   );
-}
-
-/**
- * The regions the flat path runs. A state marked parallel runs each child
- * composite state as an independent region; otherwise the container is one
- * region. {@link needsHierarchical} reads the same list.
- */
-function flatRegions(model: Model, container: ElementRecord, parallel: boolean): ElementRecord[] {
-  if (!parallel) return [container];
-  const regions = machineRegion(model, container.id)
-    .directStates(container.id)
-    .filter((c) => machineRegion(model, c.id).descendants.some((d) => d.eClass === 'StateUsage'));
-  return regions.length === 0 ? [container] : regions;
 }
 
 /** A driving step is a discrete-clock time advance rather than a named trigger. */
@@ -1468,20 +1429,22 @@ function containerTransitions(model: Model, containerId: ElementId): ElementReco
  * Why a machine holding a parallel state below its root cannot be run, or `undefined` when every such state has a
  * shape `runHierRegion` performs: a parallel state of an ordinary (or non-parallel) machine, entered as a whole
  * (never by a step into one of its regions), left by a triggered transition, whose regions hold no history and no
- * further parallel state, and whose own entry action names no start. A top-level parallel machine
- * ({@link runsParallel}) is run region by region, and a parallel state below it is not performed.
+ * further parallel state, and whose own entry action names no start. A parallel machine ROOT
+ * ({@link parallelRoot}) is checked as the parallel state it is; a parallel state below it is not performed.
  */
 function nestedParallelRefusal(model: Model, container: ElementRecord): string | undefined {
   const view = machineRegion(model, container.id);
   const pars = view.descendants.filter(
     (e) => e.id !== container.id && e.eClass !== 'TransitionUsage' && isParallelState(model, e.id),
   );
+  const root = parallelRoot(model, container);
   const name = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
-  for (const p of pars) {
+  if (root && pars.length > 0) {
+    return `its state ${name(pars[0].id)} is a parallel state below a parallel machine, and nested parallel states are not performed concurrently here`;
+  }
+  // A parallel machine root is checked as the parallel state it is: its regions are its child states.
+  for (const p of root ? [container] : pars) {
     const inside = new Set(machineRegion(model, p.id).descendants.map((e) => e.id));
-    if (runsParallel(model, container.id)) {
-      return `its state ${name(p.id)} is a parallel state below a parallel machine, and nested parallel states are not performed concurrently here`;
-    }
     if (pars.some((q) => q.id !== p.id && inside.has(q.id))) {
       return `its parallel state ${name(p.id)} holds another parallel state, and nested parallel states are not performed concurrently here`;
     }
@@ -1500,6 +1463,8 @@ function nestedParallelRefusal(model: Model, container: ElementRecord): string |
     for (const tr of view.transitions) {
       const from = tr.source?.[0];
       const to = tr.target?.[0];
+      // A step into the machine's own root is not taken at run time (`stepOutsideStates`): the run stops there.
+      if (root && to === p.id) continue;
       if (from !== undefined && to !== undefined && inside.has(from) && regionOf(from) !== (inside.has(to) ? regionOf(to) : undefined)) {
         return `a transition of its parallel state ${name(p.id)} leaves its region or connects two regions, which a parallel state does not allow and this interpreter does not perform`;
       }
@@ -1542,16 +1507,10 @@ function isJoinTransition(tr: ElementRecord): boolean {
  * and either path stops before a step into the root or a node under an action
  * ({@link StateRunResult.refused}).
  */
-function needsHierarchical(model: Model, container: ElementRecord, parallel: boolean): boolean {
+function needsHierarchical(model: Model, container: ElementRecord): boolean {
   const view = machineRegion(model, container.id);
-  const regionIds = new Set<ElementId>();
-  if (parallel) {
-    for (const c of view.directStates(container.id)) {
-      if (view.directStates(c.id).length > 0) regionIds.add(c.id);
-    }
-  }
   for (const s of view.descendants) {
-    if (s.eClass !== 'StateUsage' || regionIds.has(s.id)) continue;
+    if (s.eClass !== 'StateUsage') continue;
     if (view.directStates(s.id).length > 0) return true; // nested composite state
     if (isHistoryPseudostate(s) || isHistoryComposite(model, s.id)) return true;
   }
@@ -1560,7 +1519,7 @@ function needsHierarchical(model: Model, container: ElementRecord, parallel: boo
     machineRegion(model, regionId).transitions.some(
       (t) => (hierarchyPath(model, regionId, t.target![0])?.length ?? 1) > 1,
     );
-  if (flatRegions(model, container, parallel).some((r) => nestedTarget(r.id))) return true;
+  if (nestedTarget(container.id)) return true;
   return containerTransitions(model, container.id).some(isJoinTransition);
 }
 
@@ -1579,7 +1538,7 @@ function runHierMachine(
   store: Map<string, unknown>,
   performed: PerformedAction[],
   maxCompletion: number,
-  parallel: boolean,
+  rootParallel: boolean,
   tie: TieBreak,
 ): StateRunResult {
   const visited: ElementId[] = [];
@@ -1587,66 +1546,23 @@ function runHierMachine(
   const history = new Map<ElementId, ElementId>();
   const clockRef = { clock: 0 };
 
-  let regionContainers: ElementRecord[];
-  if (parallel) {
-    const view = machineRegion(model, container.id);
-    regionContainers = view.directStates(container.id).filter((c) => view.directStates(c.id).length > 0);
-    if (regionContainers.length === 0) regionContainers = [container];
-  } else {
-    regionContainers = [container];
-  }
-
-  const leaves: (ElementId | null)[] = [];
-  const completes: boolean[] = [];
-  let completionBudgetHit = false;
-  const refusals: StateFire[] = [];
-  for (const rc of regionContainers) {
-    const r = runHierRegion(model, container.id, rc.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion, tie);
-    if (r.leaves) leaves.push(...r.leaves);
-    else leaves.push(r.leaf);
-    // A region stopped at a step it does not take did not complete.
-    completes.push(r.complete && r.refused === undefined);
-    if (r.completionBudgetHit) completionBudgetHit = true;
-    if (r.refused !== undefined) refusals.push(r.refused);
-  }
-
-  const activeStates = leaves.filter((s): s is ElementId => s !== null);
-  let complete = completes.length > 0 && completes.every(Boolean);
-  let finalState = leaves[0] ?? null;
-
-  // Orthogonal JOIN: a container-level join/completion transition fires only
-  // when every region has reached a final/complete state.
-  if (parallel) {
-    const join = containerTransitions(model, container.id).find(isJoinTransition);
-    if (join) {
-      if (complete) {
-        const scope = regionScope(model, container.id);
-        const to = join.target![0];
-        applyTransitionEffect(join, store, scope);
-        fired.push({ transitionId: join.id, from: container.id, to, trigger: triggerLabelOf(join) });
-        visited.push(to);
-        enterState(model, to, store, scope, performed);
-        finalState = to;
-        complete = true;
-      } else {
-        complete = false;
-      }
-    }
-  }
+  // One region run: the machine itself. A parallel machine root is opened AS the parallel state (`runHierRegion`),
+  // which holds the machine's regions and performs them together.
+  const r = runHierRegion(model, container.id, container.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion, tie, rootParallel);
+  const leaves = r.leaves ?? [r.leaf];
+  const complete = r.complete && r.refused === undefined;
 
   return {
     visited,
     fired,
     performed,
     valueStore: store,
-    activeStates,
-    finalState,
+    activeStates: leaves.filter((s): s is ElementId => s !== null),
+    finalState: leaves[0] ?? null,
     clock: clockRef.clock,
     complete,
-    completionBudgetHit,
-    ...(refusals.length === 0
-      ? {}
-      : { refused: refusals[0]!, refusals, regionCount: regionContainers.length }),
+    completionBudgetHit: r.completionBudgetHit,
+    ...(r.refused === undefined ? {} : { refused: r.refused, refusals: [r.refused], regionCount: 1 }),
   };
 }
 
@@ -1686,16 +1602,17 @@ function runHierRegion(
   clockRef: { clock: number },
   maxCompletion: number,
   tie: TieBreak,
+  rootParallel = false,
 ): { leaf: ElementId | null; leaves?: ElementId[]; complete: boolean; completionBudgetHit: boolean; refused?: StateFire } {
   const COMPLETION: StepInput = { kind: 'completion' };
   const TIMEOUT: StepInput = { kind: 'timeout' };
   let refused: StateFire | undefined;
 
-  // The region starts from the RUN's store, clock and history, because regions
-  // share all three: region 2 sees what region 1 wrote (`runStateMachine`
-  // concatenates regions, it does not interleave them — the semantic profile
-  // says so in those words).
-  const opening = initialConfig(model, containerId, { store, clock: clockRef.clock, history });
+  // The run starts from the RUN's store, clock and history. The regions of a parallel state (or machine root) share
+  // them: a region sees the store as the previous region left it, within one event (the semantic profile, `regions`).
+  const opening = rootParallel
+    ? rootConfig(containerId, { store, clock: clockRef.clock, history })
+    : initialConfig(model, containerId, { store, clock: clockRef.clock, history });
   let cfg: MachineConfig = opening.config;
   let completionBudgetHit = false;
 
@@ -1909,7 +1826,10 @@ function runHierRegion(
 
   if (par !== null) {
     const leaves = par.regs.map((rg) => leafOf(rg.cfg) ?? rg.id);
-    return { leaf: leaves[0] ?? null, leaves, complete: false, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };
+    // A nested parallel state is a leaf of the outer machine, which is not final; a parallel machine ROOT is complete
+    // when every region has reached a final state (each region's own completion).
+    const done = rootParallel && par.regs.every((rg) => { return isFinalState(model, leafOf(rg.cfg) ?? rg.id); });
+    return { leaf: leaves[0] ?? null, leaves, complete: done, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };
   }
   const leaf = leafOf(cfg);
   const complete = leaf !== null && isFinalState(model, leaf);

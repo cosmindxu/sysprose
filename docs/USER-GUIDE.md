@@ -3970,10 +3970,10 @@ steps), priority (innermost substate first), exits (a step exits to the least
 common ancestor of its source and its target, and every transition is external:
 the next paragraph), history (shallow, by parent map), regions (a parallel state
 nested in an ordinary machine is performed concurrently, in declaration order,
-by the interpreter and the walk; a parallel machine root — a state definition or
-usage, an exhibit state among them, marked `parallel`, SysML v2 §7.18.2 — and
-a parallel state whose regions are coupled through an attribute are not
-explored), deferred
+by the interpreter and the walk, and so is a parallel machine root — a state
+definition or usage, an exhibit state among them, marked `parallel`, SysML v2
+§7.18.2; a parallel machine or state whose regions are coupled through an
+attribute is not explored), deferred
 events (none — there is no event pool), and time (discrete `after(n)`; the walk
 offers each `after(n)` label as an event rather than advancing a clock). A
 verdict about a machine is a verdict under a reading of those seven, and one
@@ -4024,11 +4024,10 @@ machines: a state or `state def` above it that owns a transition, with no other
 `state S { state C { … } }` or with a lone `state def` around it, the composite
 is the machine itself, and the sentence is the plain one above, the one `reach`
 prints for the same step. On a parallel machine — a state definition or usage
-marked `parallel`, SysML v2 §7.18.2 — each region runs on its own over the whole
-script, so the step stops only its own region, the regions that have not stopped
-run on, and the sentence says so; when
-every region has refused it says the run stops, lists each region's step, and
-**Play** stops. The simulator used
+marked `parallel`, SysML v2 §7.18.2 — the regions are performed together, so the
+step stops every region: the run stops there, the sentence says so, and
+**Play** stops (until 2026-11-20 each region ran on its own over the whole
+script and a stop in one let the others run on). The simulator used
 to take it the old way, standing at the machine itself or at the node under the
 action, or restarting under the source's composite. A step across a machine's
 boundary, below, stops a run the same way. Until 2026-10-21 a step

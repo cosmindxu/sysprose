@@ -517,14 +517,16 @@ describe('the three sentences this engine refuses to produce', () => {
     const f = new ModelFactory(m);
     const sm = f.stateDef('Parallel');
     m.update(sm.id, { attrs: { parallel: true } });
+    f.attribute('n', sm.id, { type: 'Integer', value: 0 });
     const r1 = f.state('R1', sm.id);
     const r2 = f.state('R2', sm.id);
     const a1 = f.state('a1', r1.id);
     const a2 = f.state('a2', r1.id);
     const b1 = f.state('b1', r2.id);
     const b2 = f.state('b2', r2.id);
-    f.transition(a1.id, a2.id, { ownerId: r1.id, trigger: 'go' });
-    f.transition(b1.id, b2.id, { ownerId: r2.id, trigger: 'go' });
+    // The regions are coupled through `n` (one writes it, the other reads it): the explorer refuses, the interpreter runs
+    f.transition(a1.id, a2.id, { ownerId: r1.id, trigger: 'go', effect: 'n = 1' });
+    f.transition(b1.id, b2.id, { ownerId: r2.id, trigger: 'go', guard: 'n == 1' });
     expect(exploreMachine(m, sm.id).unsupported.map((u) => u.construct)).toEqual([
       'parallel-regions',
     ]);
@@ -1863,9 +1865,10 @@ describe('the semantic profile is a description of what the interpreter does', (
     expect(build(false), 'an ordinary composite re-enters its initial child').toBe('i1');
   });
 
-  it('regions: a parallel state is performed concurrently; a parallel machine root is still driven region by region and refused', () => {
+  it('regions: a parallel state and a parallel machine root are performed concurrently, regions together', () => {
     expect(field('regions').reading).toContain('performed concurrently');
-    expect(field('regions').reading).toContain('over the whole script in turn');
+    expect(field('regions').reading).toContain('MACHINE ROOT');
+    expect(field('regions').reading).not.toContain('over the whole script in turn');
     const m = new Model();
     const f = new ModelFactory(m);
     const sm = f.stateDef('R');
@@ -1879,10 +1882,10 @@ describe('the semantic profile is a description of what the interpreter does', (
     f.transition(a1.id, a2.id, { ownerId: r1.id, trigger: 'go' });
     f.transition(b1.id, b2.id, { ownerId: r2.id, trigger: 'go' });
     const run = runStateMachine(m, sm.id, ['go']);
-    // Concatenated: the whole of region 1, then the whole of region 2. An
-    // interleaving interpreter would visit a1, b1, a2, b2.
-    expect(run.visited.map((v) => m.get(v)?.declaredName)).toEqual(['a1', 'a2', 'b1', 'b2']);
-    expect(exploreMachine(m, sm.id).exhaustive).toBe(false);
+    // Both regions are entered, then each takes the event: the visits interleave (a1, b1, a2, b2) where concatenated
+    // regions would have visited a1, a2, b1, b2.
+    expect(run.visited.map((v) => m.get(v)?.declaredName)).toEqual(['R1', 'a1', 'R2', 'b1', 'a2', 'b2']);
+    expect(exploreMachine(m, sm.id).exhaustive).toBe(true);
   });
 
   it('deferred events: none — an event nothing accepts is dropped where it was offered', () => {

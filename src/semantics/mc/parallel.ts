@@ -10,8 +10,12 @@
  * that holds it) exits every region first. Trigger-less transitions of a region are chased, region by region, as
  * ordinary completion steps.
  *
- * WHAT IS REFUSED (`parallelRefusal`), with the interpreter's own reasons where it refuses too: a parallel machine
- * root, a parallel state inside a parallel state, an entry action naming a start, a history state inside, a
+ * A PARALLEL MACHINE ROOT (`state def M parallel { state nav {…} state comms {…} }`) is that same parallel state with
+ * the machine as `p`: it opens in `[M]` with every child state entered as a region ({@link rootConfig}), nothing
+ * leaves it, and the walk is the one below.
+ *
+ * WHAT IS REFUSED (`parallelRefusal`), with the interpreter's own reasons where it refuses too: a parallel state
+ * below a parallel machine root, a parallel state inside a parallel state, an entry action naming a start, a history state inside, a
  * transition between regions or out of one, a completion transition out of `p`, a step into a region, a region with
  * an unread start — and three reasons the explorer adds, because the interpreter applies the regions in ONE fixed
  * order while the specification admits any interleaving, and an exhaustive verdict must not be claimed over an order
@@ -54,6 +58,32 @@ export function hasNestedParallel(model: Model, machineId: ElementId): boolean {
   return machineRegion(model, machineId).descendants.some(
     (e) => e.id !== machineId && e.eClass !== 'TransitionUsage' && isParallelState(model, e.id),
   );
+}
+
+/** Is the machine a parallel one with regions to perform: marked parallel, holding at least one state? */
+export function isParallelRoot(model: Model, machineId: ElementId): boolean {
+  return isParallelState(model, machineId) && machineRegion(model, machineId).directStates(machineId).length > 0;
+}
+
+/**
+ * The opening of a parallel machine ROOT, before its regions are entered: the machine is the active state, as a
+ * parallel state nested in an ordinary machine is once the machine reaches it. The machine's own entry is not run
+ * (as for any machine root: `initialConfig` enters its first state, not the machine); the regions are entered by
+ * {@link enterRegions} here and by the interpreter's own copy of it.
+ */
+export function rootConfig(machineId: ElementId, seed: Parameters<typeof initialConfig>[2] = {}): StepResult {
+  const clock = seed.clock ?? 0;
+  return {
+    config: {
+      regionId: machineId,
+      stack: [machineId],
+      store: new Map(seed.store ?? []),
+      clock,
+      entryTime: new Map([[machineId, clock]]),
+      history: new Map(seed.history ?? []),
+    },
+    effects: { visited: [], fired: [], performed: [] },
+  };
 }
 
 /** Identifier-like tokens of a text. */
@@ -146,12 +176,17 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
   const pars = view.descendants.filter(
     (e) => e.id !== machineId && e.eClass !== 'TransitionUsage' && isParallelState(model, e.id),
   );
+  const root = isParallelRoot(model, machineId);
   const name = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
   const out = (elementId: ElementId, reason: string): ParallelRefusal => ({
     elementId,
     reason: `${reason} (SysML v2 §7.18.2)`,
   });
-  for (const p of pars) {
+  if (root && pars.length > 0) {
+    return out(pars[0].id, `its state ${name(pars[0].id)} is a parallel state below a parallel machine, and nested parallel states are not performed concurrently here`);
+  }
+  // A parallel machine root is checked as the parallel state it is: its regions are its child states.
+  for (const p of root ? [model.get(machineId)!] : pars) {
     const inside = new Set(machineRegion(model, p.id).descendants.map((e) => e.id));
     if (pars.some((q) => q.id !== p.id && inside.has(q.id))) {
       return out(p.id, `its parallel state ${name(p.id)} holds another parallel state, and nested parallel states are not performed concurrently here`);
@@ -176,6 +211,8 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
     for (const tr of view.transitions) {
       const from = tr.source?.[0];
       const to = tr.target?.[0];
+      // A step into the machine's own root is refused by the census (`step-outside-states`); the run stops there.
+      if (root && to === p.id) continue;
       if (from !== undefined && to !== undefined && inside.has(from) && regionOf(from) !== (inside.has(to) ? regionOf(to) : undefined)) {
         return out(p.id, `a transition of its parallel state ${name(p.id)} leaves its region or connects two regions, which a parallel state does not allow and this interpreter does not perform`);
       }
@@ -256,7 +293,7 @@ export function openConfig(
   regionId: ElementId,
   seed: Parameters<typeof initialConfig>[2] = {},
 ): StepResult {
-  const o = initialConfig(model, regionId, seed);
+  const o = isParallelRoot(model, regionId) ? rootConfig(regionId, seed) : initialConfig(model, regionId, seed);
   const e = enterRegions(model, o.config);
   return { config: e.config, effects: merge(o.effects, e.effects) };
 }

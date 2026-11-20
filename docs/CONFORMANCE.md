@@ -1135,7 +1135,7 @@ defines, and every verdict it prints carries the seven-field semantic profile th
 says what that interpreter does — run-to-completion bounded at 64 chase steps,
 innermost-substate priority, a step that exits to the least common ancestor of
 its source and its target (every transition external), shallow history by parent
-map, a parallel state's regions performed concurrently in a fixed declaration order (coupled regions refused, not interleaved), **no event pool at all**, and a
+map, a parallel state's regions, and a parallel machine root's, performed concurrently in a fixed declaration order (coupled regions refused, not interleaved), **no event pool at all**, and a
 discrete `after(n)` clock the walk over-approximates by offering each label as an
 event. `andre-2023` §2.6's point is that every published formalisation of
 state-machine semantics differs on fields like these, so a verdict that did not
@@ -1178,7 +1178,7 @@ and a bad-prefix search finds no bad prefix for either on any graph; both report
 fairness assumption is named. A `pass` is emitted only when the walk saw the
 graph **whole**: the four conditions §3.8 states, computed from
 `exploreMachine`'s walk, **and** the fifth this tool added afterwards — every
-guard the walk consulted decided something. A bound hit, a parallel machine root or a parallel state of a shape not performed (coupled regions, nested parallel) or a history
+guard the walk consulted decided something. A bound hit, a parallel machine or a parallel state of a shape not performed (coupled regions, nested parallel) or a history
 machine, a guard the walk could not evaluate, an unreadable property, an atom
 that names nothing, a witness the interpreter does not take
 (`verification/witness-not-replayed`) or a `recovery` withheld because the

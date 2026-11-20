@@ -212,10 +212,10 @@ describe('runStateMachine — history pseudostate resumes the last substate', ()
   });
 });
 
-/* ─────────────────── 4. orthogonal regions + join ─────────────────────── */
+/* ─────────────────── 4. orthogonal regions: completion per region ─────── */
 
-describe('runStateMachine — orthogonal regions join only when both complete', () => {
-  function build() {
+describe('runStateMachine — orthogonal regions complete when every region is final', () => {
+  function build(withJoin: boolean) {
     const m = new Model();
     const f = new ModelFactory(m);
     const par = m.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
@@ -227,32 +227,35 @@ describe('runStateMachine — orthogonal regions join only when both complete', 
     const b1 = f.state('b1', r2.id);
     const b2f = m.create('StateUsage', { declaredName: 'b2f', ownerId: r2.id, attrs: { kind: 'final' } });
     f.transition(b1.id, b2f.id, { ownerId: r2.id, trigger: 't2' });
-    const allDone = f.state('AllDone', par.id);
-    const join = m.create('TransitionUsage', {
-      ownerId: par.id,
-      source: [par.id],
-      target: [allDone.id],
-      attrs: { kind: 'join' },
-    });
-    return { model: m, parId: par.id, ids: { a1f: a1f.id, b1: b1.id, b2f: b2f.id, allDone: allDone.id, join: join.id } };
+    if (withJoin) {
+      const allDone = f.state('AllDone', par.id);
+      m.create('TransitionUsage', { ownerId: par.id, source: [par.id], target: [allDone.id], attrs: { kind: 'join' } });
+    }
+    return { model: m, parId: par.id, ids: { a1f: a1f.id, b1: b1.id, b2f: b2f.id } };
   }
 
-  it('does not fire the join until every region is complete', () => {
-    const { model, parId, ids } = build();
+  it('is not complete until every region is at a final state', () => {
+    const { model, parId, ids } = build(false);
     const res = runStateMachine(model, parId, ['t1']);
     expect(res.complete).toBe(false);
-    expect(res.visited).not.toContain(ids.allDone);
     expect(res.activeStates).toContain(ids.a1f);
     expect(res.activeStates).toContain(ids.b1);
   });
 
-  it('fires the join once both regions reach a final state', () => {
-    const { model, parId, ids } = build();
+  it('is complete once both regions reach a final state', () => {
+    const { model, parId, ids } = build(false);
     const res = runStateMachine(model, parId, ['t1', 't2']);
     expect(res.complete).toBe(true);
-    expect(res.finalState).toBe(ids.allDone);
-    expect(res.visited).toContain(ids.allDone);
-    expect(res.fired[res.fired.length - 1].transitionId).toBe(ids.join);
+    expect(res.activeStates).toEqual([ids.a1f, ids.b2f]);
+  });
+
+  it('a join transition out of the parallel machine is refused with a reason, not performed (SysML v2 §7.18.2)', () => {
+    // The join used to fire once both regions were final; its target is a child of the parallel machine, which is a
+    // region of it, and a completion transition out of a parallel state is not performed (as for a nested one).
+    const { model, parId } = build(true);
+    const res = runStateMachine(model, parId, ['t1', 't2']);
+    expect(res.unopened).toMatch(/completion transition/);
+    expect(res.activeStates).toEqual([]);
   });
 });
 

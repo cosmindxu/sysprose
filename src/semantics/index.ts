@@ -87,6 +87,7 @@ export {
   executeBehavior,
   propagateBindings,
   runsParallel,
+  parallelRoot,
   evaluateModel,
   executeModel,
   type ExecutionStep,

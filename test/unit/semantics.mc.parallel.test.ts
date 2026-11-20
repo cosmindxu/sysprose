@@ -180,11 +180,11 @@ describe('what stays refused, with a reason', () => {
     });
   }
 
-  it('a parallel machine root stays refused', async () => {
+  it('a parallel machine root is explored, not refused (the root cases are pinned in semantics.parallel-root.test.ts)', async () => {
     const model = await load(`package P { state def M parallel { state x; state y; } }`);
-    const u = exploreMachine(model, find(model, 'P::M').id).unsupported;
-    expect(u.map((x) => x.construct)).toEqual(['parallel-regions']);
-    expect(u[0].detail).toContain('region');
+    const walk = exploreMachine(model, find(model, 'P::M').id);
+    expect(walk.unsupported).toEqual([]);
+    expect(walk.exhaustive).toBe(true);
   });
 
   it('coupled regions are refused: the fixed order decides the outcome the specification leaves open', async () => {

@@ -2778,7 +2778,9 @@ wave 2.
   on, and a sentence saying the run "takes no step after it" was contradicted
   by the Fired line of the same sample. The sentence now says the other regions
   run on, and `SimRefusal.stopsRun` is false there, so Play goes on (until every
-  region has refused, §8.16). And
+  region has refused, §8.16). *Superseded 2026-11-20: a parallel machine root is
+  performed concurrently like a parallel state, so a refusal stops every region
+  and `stopsRun` is true.* And
   `executionReport` runs every element that owns a transition, a composite
   written inside a machine among them: a composite `C` holding `c2 -re-> C`,
   run alone, stops there too, since it has nothing above it to exit to, but
@@ -3106,7 +3108,9 @@ change. The three decisions were delegated to this round by the coordinator unde
 the standing instruction to continue without asking; each can be reversed by
 reopening the entry named.
 
-- **Every region's refusal on a parallel machine (changed).** A parallel
+- **Every region's refusal on a parallel machine (changed; superseded
+  2026-11-20 — the regions are performed together and one refusal stops the
+  run, `regionCount` is 1).** A parallel
   machine (`parallel` in the notation, or `attrs.parallel` from the API) drives
   each region on its own over the
   whole script, so a step a region does not take stops that region. Until now
