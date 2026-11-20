@@ -2325,7 +2325,11 @@ class Mapper {
       // `accept s : T then on;` (§7.17.8): one plain typing `: T` is the payload type, read as the trigger T with payload name s.
       const sp = node.specializations[0];
       const payloadType = node.specializations.length === 1 && sp.op === ':' && sp.types.length === 1 && !sp.conjugated ? sp.types[0] : undefined;
-      const extras = (node.specializations.length > 0 && payloadType === undefined) || node.multiplicity.length > 0 || node.valueOp !== undefined ||
+      // `accept E [g] then on;` is NOT read: in SysML v2 a guard is written `if g` (§7.18.3) and `[g]` after the payload name is its
+      // MULTIPLICITY (§7.17.8), so a bracket here is refused rather than read as a guard (the long form's UML-style `[g]` guard is a
+      // departure filed in TODO.md, not a reading to extend).
+      const bracketGuard: string | undefined = undefined;
+      const extras = (node.specializations.length > 0 && payloadType === undefined) || (node.multiplicity.length > 0 && bracketGuard === undefined) || node.valueOp !== undefined ||
         node.body !== undefined || node.target !== undefined || node.shortName !== undefined || node.chain.length > 0 || node.isAbstract;
       const timed = node.name === 'after' && node.delay !== undefined && !node.via;
       if (node.isSend) {
@@ -2344,6 +2348,7 @@ class Mapper {
       else if (payloadType !== undefined) { attrs.trigger = payloadType; attrs.payloadName = unquoteName(node.name) ?? node.name; }
       else attrs.trigger = unquoteName(node.name) ?? node.name;
       if (node.guard) attrs.guard = exprText(node.guard);
+      else if (bracketGuard !== undefined) attrs.guard = bracketGuard;
       const eff = effectTextOf(node);
       if (eff) attrs.effect = eff;
       if (node.effectType) attrs.effectType = node.effectType;
@@ -2359,10 +2364,9 @@ class Mapper {
       this.refuseStateForm(node, `\`send ${exprText(node.sendPayload)}…\`, a send action with a payload expression`);
       return;
     }
-    if (node.kind === 'exhibit' && node.chain && node.chain.length > 0) {
-      this.refuseStateForm(node, `\`exhibit ${[node.name, ...node.chain].join('::')}\`, an exhibit of a state by a qualified name`);
-      return;
-    }
+    // `exhibit A::B :> C;` (SysML v2 §7.18.4): an exhibit state usage with no name; the qualified name after `exhibit` is its
+    // exhibited state, read as the reference subsetting `::> A::B` (as `exhibit state x references A::B;`), then the written ones.
+    const exhibitedChain = node.kind === 'exhibit' && node.chain && node.chain.length > 0 ? [node.name, ...node.chain].join('::') : undefined;
     const eClass = BEHAVIOR_ECLASS[node.kind] ?? 'ActionUsage';
     const attrs: Record<string, AttrValue> = { actionKind: node.kind };
     if (node.isAbstract) attrs.isAbstract = true;
@@ -2375,10 +2379,11 @@ class Mapper {
     if (node.isParallel || shortParallel) attrs.isParallel = true;
     const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
-      declaredName: shortParallel ? undefined : unquoteName(node.name),
+      declaredName: shortParallel || exhibitedChain !== undefined ? undefined : unquoteName(node.name),
       declaredShortName: unquoteName(node.shortName),
       attrs,
     });
+    if (exhibitedChain !== undefined) this.deferredSpecs.push({ elementId: el.id, op: '::>', ref: exhibitedChain, node });
     for (const spec of node.specializations) this.applySpecialization(el, spec);
     const mults = readableMultiplicities(node.multiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
