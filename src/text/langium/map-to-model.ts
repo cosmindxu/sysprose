@@ -766,6 +766,57 @@ class Mapper {
     });
   }
 
+  /** `then X;` nodes already read as the target of a target-transition `accept …`. */
+  private readonly consumedThen = new Set<AstNode>();
+
+  /** Target-transition shorthand statements already read (so a following one shares their source). */
+  private readonly shorthandNodes = new Set<AstNode>();
+
+  /**
+   * The SOURCE of a target transition (SysML v2 §7.18.3, `state off; accept E then on;`): the state declared just
+   * before, looking back over comments and over earlier target transitions of the same source. Anything else
+   * before it (the entry action, a do action, an action, nothing) is not a state to leave, so it gives undefined.
+   */
+  private targetTransitionSource(node: AstNode): string | undefined {
+    const members = ((node.$container as { members?: AstNode[] } | undefined)?.members ?? []) as AstNode[];
+    for (let i = members.indexOf(node) - 1; i >= 0; i--) {
+      const m = members[i] as any;
+      if (m.$type === 'Doc' || m.$type === 'Comment' || m.$type === 'TextualRep') continue;
+      if (m.$type === 'FirstThen' && m.source === undefined && this.consumedThen.has(m)) continue;
+      if ((m.$type === 'IfStmt' || m.$type === 'BehaviorStmt') && this.shorthandNodes.has(m)) continue;
+      if (m.$type === 'Definition' && m.keyword === 'state' && !m.isDef && m.name !== undefined) return unquoteName(m.name);
+      return undefined;
+    }
+    return undefined;
+  }
+
+  /** The `then X;` written right after an `accept …` statement, if it has one. */
+  private followingThen(node: AstNode): FirstThen | undefined {
+    const members = ((node.$container as { members?: AstNode[] } | undefined)?.members ?? []) as AstNode[];
+    const next = members[members.indexOf(node) + 1] as FirstThen | undefined;
+    return next && next.$type === 'FirstThen' && next.source === undefined && next.target ? next : undefined;
+  }
+
+  /** A TransitionUsage from a target-transition shorthand: the long form `transition first S accept … then T;`. */
+  private createTargetTransition(node: AstNode, ownerId: ElementId | null, srcRef: string, tgtRef: string, attrs: Record<string, AttrValue>): void {
+    const el = this.create('TransitionUsage', {
+      ownerId: ownerId ?? undefined,
+      source: [],
+      target: [],
+      attrs: { ...attrs, sourceRef: srcRef, targetRef: tgtRef },
+    });
+    this.deferEnds(
+      el.id,
+      srcRef,
+      tgtRef,
+      node,
+      'ref/unresolved-transition-end',
+      (r) => `Unresolved transition target '${r}'`,
+      (r) => `Unresolved transition source '${r}'`,
+    );
+    this.shorthandNodes.add(node);
+  }
+
   private isStateOwner(ownerId: ElementId | null): boolean {
     const c = ownerId != null ? this.model.get(ownerId)?.eClass : undefined;
     return c === 'StateDefinition' || c === 'StateUsage' || c === 'ExhibitStateUsage';
@@ -1896,6 +1947,7 @@ class Mapper {
       case 'FirstThen': {
         const ft = node as FirstThen;
         if (!ft.target) return;
+        if (this.consumedThen.has(node)) return; // read with the target-transition `accept … then X;` before it
         if (ft.source === undefined && this.refusedTargetThen.delete(ownerId)) return; // the refused `accept … then X;`
         const entry = ft.source === undefined ? this.pendingEntry.get(ownerId) : undefined;
         if (entry !== undefined) {
@@ -2205,10 +2257,15 @@ class Mapper {
         this.deferEnds(edge.id, undefined, node.thenTarget, node, 'ref/unresolved-reference', (r) => `Unresolved reference '${r}'`);
         return;
       }
+      const ifSrc = this.isStateOwner(ownerId) ? this.targetTransitionSource(node) : undefined;
+      if (ifSrc !== undefined) {
+        this.createTargetTransition(node, ownerId, ifSrc, node.thenTarget, { guard: exprText(node.cond) });
+        return;
+      }
       this.refuseStateForm(
         node,
         this.isStateOwner(ownerId)
-          ? `the target-transition shorthand \`if ${exprText(node.cond)} then ${node.thenTarget}\``
+          ? `the target-transition shorthand \`if ${exprText(node.cond)} then ${node.thenTarget}\` with no state before it to leave`
           : `\`if ${exprText(node.cond)} then ${node.thenTarget}\` outside a state body`,
       );
       if (this.isStateOwner(ownerId)) this.refusedTargetThen.add(ownerId);
@@ -2226,12 +2283,36 @@ class Mapper {
 
   /** accept / send / assign / perform / exhibit / include / terminate action. */
   private mapBehaviorStmt(node: BehaviorStmt, ownerId: ElementId | null): void {
+    if (node.kind === 'accept' && (node.delay || node.guard || node.effect) && !(node.succession === undefined && this.isStateOwner(ownerId))) {
+      this.refuseStateForm(node, `\`accept ${node.name ?? ''}\` with a delay, a guard or an effect outside a state body`);
+      return;
+    }
     if (node.kind === 'accept' && node.succession === undefined && this.isStateOwner(ownerId)) {
-      // `state off; accept TurnOn via commPort then on;` (OnOff5/6, SysML v2 §7.18.3): the target-transition shorthand,
-      // a transition out of the state written just before. Read as an accept ACTION beside the states it would be a
-      // different statement, so it is refused, and the `then X;` that completes it with it.
-      this.refuseStateForm(node, `the target-transition shorthand \`accept ${node.name ?? ''}…\` directly in a state`);
-      this.refusedTargetThen.add(ownerId);
+      // `state off; accept TurnOn via commPort then on;` (OnOff5/6, SysML v2 §7.18.3): the TARGET TRANSITION, a
+      // transition out of the state written just before (and, chained, out of the same state again). It is read as
+      // the long form `transition first off accept TurnOn via commPort then on;`. With no state before it, no `then X;`
+      // after it, or any part that would be dropped (a typing, a multiplicity, a value, a body, `to`), it is refused
+      // whole, and the `then X;` that completes it with it: read as an accept ACTION beside the states it would be a
+      // different statement.
+      const what = `the target-transition shorthand \`accept ${node.name ?? ''}…\``;
+      const src = this.targetTransitionSource(node);
+      const then = this.followingThen(node);
+      const extras = node.specializations.length > 0 || node.multiplicity.length > 0 || node.valueOp !== undefined ||
+        node.body !== undefined || node.target !== undefined || node.shortName !== undefined || node.chain.length > 0 || node.isAbstract;
+      const timed = node.name === 'after' && node.delay !== undefined && !node.via;
+      if (src === undefined || then === undefined || extras || node.name === undefined || (node.delay !== undefined && !timed)) {
+        const why = src === undefined ? 'with no state before it to leave' : then === undefined ? 'with no `then` target' : 'with a part this tool does not read';
+        this.refuseStateForm(node, `${what} ${why}`);
+        this.refusedTargetThen.add(ownerId);
+        return;
+      }
+      const attrs: Record<string, AttrValue> = {};
+      if (timed) attrs.timeTrigger = exprText(node.delay!);
+      else attrs.trigger = unquoteName(node.name) ?? node.name;
+      if (node.guard) attrs.guard = exprText(node.guard);
+      if (node.effect) attrs.effect = node.effect;
+      this.consumedThen.add(then);
+      this.createTargetTransition(node, ownerId, src, then.target!, attrs);
       return;
     }
     if (node.kind === 'exhibit' && node.chain && node.chain.length > 0) {

@@ -33,16 +33,24 @@ describe('guarded entry succession `entry; if c then off;`', () => {
     const census: any = edgeCensus(model!, find(model, 'P::M').id);
     expect(JSON.stringify(census)).toContain('unaccounted');
   });
-  it('an `if c then X` outside an entry succession is refused', async () => {
-    const { report } = await load(wrap('    state off;\n    if 1 > 0 then on;\n    state on;'));
+  it('an `if c then X` with no state before it and outside an entry succession is refused', async () => {
+    const { report } = await load(wrap('    if 1 > 0 then on;\n    state on;'));
     expect(codes(report)).toContain('mapper/state-form-unread');
   });
 });
 
 describe('target-transition shorthand (OnOff5/6)', () => {
-  it('is refused, and the completing `then` with it', async () => {
+  it('is read as a transition out of the state before it (see text.target-transition.test.ts)', async () => {
     const { model, report } = await load(
       wrap('    entry; then off;\n    state off;\n    accept TurnOn via commPort then on;\n    state on;', '  item def TurnOn;\n  port commPort;\n'),
+    );
+    expect(codes(report).filter((c: string) => c.startsWith('mapper/'))).toEqual([]);
+    expect(model.all().filter((e: any) => e.eClass === 'AcceptActionUsage' && !e.attrs.isLibrary)).toEqual([]);
+    expect(model.all().filter((e: any) => e.eClass === 'TransitionUsage' && !e.attrs.isLibrary)).toHaveLength(1);
+  });
+  it('is refused, and the completing `then` with it, when no state comes before it', async () => {
+    const { model, report } = await load(
+      wrap('    entry; then off;\n    accept TurnOn via commPort then on;\n    state off;\n    state on;', '  item def TurnOn;\n  port commPort;\n'),
     );
     expect(codes(report).filter((c: string) => c.startsWith('mapper/'))).toEqual(['mapper/state-form-unread']);
     expect(model.all().filter((e: any) => e.eClass === 'AcceptActionUsage' && !e.attrs.isLibrary)).toEqual([]);
