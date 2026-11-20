@@ -1328,7 +1328,7 @@ function runRegion(
     // in the region, so the least common ancestor of a step's two ends is the
     // region, and `stepConfig`'s exit to it is this one exit.
     exitState(model, cur, store, scope, performed);
-    applyTransitionEffect(t, store, scope);
+    applyTransitionEffect(model, t, store, scope);
     fired.push({ transitionId: t.id, from: cur, to, trigger });
     current = to;
     visited.push(to);
@@ -1378,7 +1378,7 @@ function chaseCompletion(
     const to = t.target![0];
     if (outside(t)) return { current, exhausted: false, refused: { transitionId: t.id, from: current, to, trigger: '' } };
     exitState(model, current, store, scope, performed);
-    applyTransitionEffect(t, store, scope);
+    applyTransitionEffect(model, t, store, scope);
     fired.push({ transitionId: t.id, from: current, to, trigger: '' });
     current = to;
     visited.push(to);
@@ -1455,6 +1455,9 @@ function nestedParallelRefusal(model: Model, container: ElementRecord): string |
     }
     if (entryControlEdges(model, p.id).length > 0) {
       return `its parallel state ${name(p.id)} has an entry action naming a start, but a parallel state enters all its regions, each at its own start`;
+    }
+    if (view.transitions.some((t) => t.source?.[0] !== undefined && inside.has(t.source[0]) && afterDuration(t) !== undefined)) {
+      return `a region of its parallel state ${name(p.id)} has a timed (\`after\`) transition, which the interpreter never fires inside a region, so no verdict is given over it`;
     }
     const regions = view.directStates(p.id);
     if (regions.some((r) => entryStartUnreadOf(model, machineRegion(model, r.id), view.directStates(r.id)))) {

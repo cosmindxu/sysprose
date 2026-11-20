@@ -1096,7 +1096,12 @@ export function applyBehaviorEffect(
     return;
   }
   const effect = strAttr(el, 'effect');
-  if (effect !== undefined) inlineAssign(effect, store, scope);
+  if (effect !== undefined && !inlineAssign(effect, store, scope) && isAssignmentText(effect)) {
+    throw new EffectNotApplied(
+      `the effect \`${effect}\` of \`${model.qualifiedName(el.id) || el.id}\` is an assignment this interpreter cannot evaluate when it runs ` +
+        '(SysML v2 §7.18.2) — so no run or walk goes on past it with the store as if it had not been written.',
+    );
+  }
   if (el.eClass === 'AssignmentActionUsage') applyAssignment(el, store, scope);
   else if (strAttr(el, 'target') !== undefined) applyAssignment(el, store, scope);
   for (const a of behaviourAssignments(model, el)) {
@@ -1130,6 +1135,18 @@ function applyReferencedEffect(model: Model, ref: ElementRecord, store: Map<stri
   const targets = subs.flatMap((c) => c.target ?? []);
   const x = targets.length === 1 && subs.length === 1 ? model.get(targets[0]) : undefined;
   if (!x) return refuse(undefined, 'the reference does not resolve to exactly one action');
+  applyActionBody(model, x, store, scope, refuse);
+}
+
+/** Apply the body of action X (assignments and `attrs.effect` only); anything else is refused through `refuse`. */
+function applyActionBody(
+  model: Model,
+  x: ElementRecord,
+  store: Map<string, unknown>,
+  scope: Scope,
+  refuse: (x: ElementRecord | undefined, why: string) => never,
+): void {
+  const name = (e: ElementRecord): string => `\`${model.qualifiedName(e.id) || e.id}\``;
   if (x.attrs.stateSubactionRef === true || x.attrs.stateSubaction !== undefined) {
     return refuse(x, 'it is itself a state behaviour, so the reference would chain or loop');
   }
@@ -1179,8 +1196,13 @@ export function stateEffectRefusal(model: Model, machineId: ElementId): string |
   for (const el of [machine, ...view.descendants]) {
     if (el.id !== machineId && el.eClass === 'TransitionUsage') {
       const effect = strAttr(el, 'effect');
-      if (effect !== undefined && /[^=!<>]=(?!=)/.test(effect) && !inlineAssign(effect, store, scope)) {
-        return `the effect \`${effect}\` of ${name(el.id)} is an assignment this interpreter cannot evaluate (SysML v2 §7.18.3)`;
+      if (effect !== undefined) {
+        try {
+          applyTransitionEffect(model, el, store, scope);
+        } catch (e) {
+          if (e instanceof EffectNotApplied) return e.message;
+          throw e;
+        }
       }
       continue;
     }
@@ -1205,14 +1227,63 @@ export function stateEffectRefusal(model: Model, machineId: ElementId): string |
   return undefined;
 }
 
-/** Apply a transition's effect (an `attrs.effect` assignment) to the store. */
+/** Does an effect text read as one assignment (a lone `=`)? */
+export const isAssignmentText = (t: string): boolean => /[^=!<>:]=(?!=)|[^=!<>]:=/.test(t);
+const NAME_EFFECT = /^(?:[A-Za-z_][A-Za-z0-9_]*|'[^']*')(?:::(?:[A-Za-z_][A-Za-z0-9_]*|'[^']*'))*$/;
+
+/** The actions a bare name denotes from `from`'s scope: the nearest enclosing namespace that has one, else a qualified name. */
+export function actionsNamed(model: Model, from: ElementRecord, text: string): ElementRecord[] {
+  const isAct = (e: ElementRecord): boolean => e.eClass === 'ActionUsage' || e.eClass === 'ActionDefinition';
+  const simple = text.replace(/'/g, '');
+  for (let o = from.ownerId != null ? model.get(from.ownerId) : undefined; o; o = o.ownerId != null ? model.get(o.ownerId) : undefined) {
+    const hit = model.children(o.id).filter((c) => isAct(c) && c.declaredName === simple);
+    if (hit.length > 0) return hit;
+  }
+  const q = model.resolveQualifiedName(simple);
+  return q && isAct(q) ? [q] : [];
+}
+
+/** The single action a transition's effect text names, or undefined when the text is not a bare name. Throws when it names none/several. */
+function namedEffectAction(model: Model, tr: ElementRecord, effect: string): ElementRecord | undefined {
+  const text = effect.trim();
+  if (!NAME_EFFECT.test(text)) return undefined;
+  const hits = actionsNamed(model, tr, text);
+  if (hits.length !== 1) {
+    throw new EffectNotApplied(
+      `the effect \`${text}\` of \`${model.qualifiedName(tr.id) || tr.id}\` names ${hits.length === 0 ? 'no action' : 'more than one action'} ` +
+        'this interpreter can resolve (SysML v2 §7.18.3) — so no run or walk goes on past it with the store as if it had not run.',
+    );
+  }
+  return hits[0];
+}
+
+/** Apply a transition's effect to the store: an assignment, or the single action it names. One that cannot be applied throws. */
 export function applyTransitionEffect(
+  model: Model,
   tr: ElementRecord,
   store: Map<string, unknown>,
   scope: Scope,
 ): void {
   const effect = strAttr(tr, 'effect');
-  if (effect !== undefined) inlineAssign(effect, store, scope);
+  if (effect === undefined) return;
+  const x = namedEffectAction(model, tr, effect);
+  if (x) {
+    const refuse = (y: ElementRecord | undefined, why: string): never => {
+      throw new EffectNotApplied(
+        `the effect of \`${model.qualifiedName(tr.id) || tr.id}\` performs \`${model.qualifiedName((y ?? x).id)}\`, which this interpreter cannot evaluate: ${why} ` +
+          '(SysML v2 §7.18.3) — so no run or walk goes on past it with the store as if it had not run.',
+      );
+    };
+    applyActionBody(model, x, store, scope, refuse);
+    return;
+  }
+  if (inlineAssign(effect, store, scope)) return;
+  if (isAssignmentText(effect)) {
+    throw new EffectNotApplied(
+      `the effect \`${effect}\` of \`${model.qualifiedName(tr.id) || tr.id}\` is an assignment this interpreter cannot evaluate when the transition fires ` +
+        '(SysML v2 §7.18.3) — so no run or walk goes on past it with the store as if it had not been written.',
+    );
+  }
 }
 
 /** Record and apply every behavior of a given phase (entry/do/exit). */
@@ -1777,7 +1848,7 @@ export function stepConfig(
     while (keep < shared && cfg.stack[keep] === path[keep]) keep++;
   }
   exitTo(model, d, scope, keep);
-  applyTransitionEffect(choice.transition, d.store, scope);
+  applyTransitionEffect(model, choice.transition, d.store, scope);
   d.fired.push({ transitionId: choice.transition.id, from, to, trigger: choice.label });
   if (path !== null) for (let i = keep; i < path.length - 1; i++) enterOne(model, d, scope, path[i]);
   enterCascade(model, d, scope, to);

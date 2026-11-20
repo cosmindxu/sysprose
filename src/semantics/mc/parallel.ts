@@ -36,6 +36,7 @@ import {
   type StepResult,
   type UndeterminedGuard,
   type StepCandidates,
+  actionsNamed,
   afterDuration,
   entryControlEdges,
   entryStartUnreadOf,
@@ -106,13 +107,36 @@ function regionNames(model: Model, regionId: ElementId, ids: ReadonlySet<Element
       }
     }
   };
+  const addAction = (x: ElementRecord | undefined): void => {
+    if (!x) return;
+    for (const asg of model.children(x.id).filter((c) => c.eClass === 'AssignmentActionUsage')) {
+      const t = strAttr(asg, 'target') ?? strAttr(asg, 'referent') ?? strAttr(asg, 'feature') ?? asg.declaredName;
+      if (t) {
+        writes.add(t.replace(/^'|'$/g, ''));
+        all.add(t.replace(/^'|'$/g, ''));
+      }
+      tokens(asg.attrs.value, all);
+      tokens(strAttr(asg, 'expression'), all);
+    }
+    addEffect(strAttr(x, 'effect'));
+  };
+  const addRef = (ref: ElementRecord): void => {
+    if (ref.attrs.stateSubactionRef !== true) return;
+    for (const sub of model.children(ref.id).filter((c) => c.eClass === 'Subsetting')) {
+      for (const t of sub.target ?? []) addAction(model.get(t));
+    }
+  };
   const view = machineRegion(model, regionId);
   for (const el of view.descendants) {
     if (el.id === regionId || !ids.has(el.id)) continue;
     if (el.eClass === 'TransitionUsage') {
       tokens(el.attrs.guard, all);
-      addEffect(strAttr(el, 'effect'));
+      const eff = strAttr(el, 'effect');
+      addEffect(eff);
+      if (eff !== undefined && /^[A-Za-z_'][^=]*$/.test(eff.trim())) for (const x of actionsNamed(model, el, eff.trim())) addAction(x);
     }
+    if (el.attrs.stateSubaction !== undefined) addRef(el);
+    for (const c of model.children(el.id)) if (c.attrs.stateSubaction !== undefined) addRef(c);
     if (el.attrs.stateSubaction !== undefined) {
       for (const asg of model.children(el.id).filter((c) => c.eClass === 'AssignmentActionUsage')) {
         const t = strAttr(asg, 'target') ?? strAttr(asg, 'referent') ?? strAttr(asg, 'feature') ?? asg.declaredName;
@@ -135,6 +159,7 @@ function regionNames(model: Model, regionId: ElementId, ids: ReadonlySet<Element
   }
   for (const a of model.children(regionId)) {
     if (a.attrs.stateSubaction === undefined) continue;
+    addRef(a);
     for (const asg of model.children(a.id).filter((c) => c.eClass === 'AssignmentActionUsage')) {
       const t = strAttr(asg, 'target') ?? strAttr(asg, 'referent') ?? strAttr(asg, 'feature') ?? asg.declaredName;
       if (t) {
