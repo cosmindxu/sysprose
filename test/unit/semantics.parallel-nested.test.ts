@@ -93,8 +93,10 @@ describe('nested parallel shapes that stay refused, with a reason', () => {
     expect(x.r.unopened).toMatch(/§7\.18\.2/);
     expect(x.act).toEqual([]);
   };
-  it('a region that is itself a parallel state', () =>
-    refused(base('state r1 parallel { state s1; state s2; } state r2;'), /is itself a parallel state/));
+  it('a region that is itself a parallel state is performed (pinned in semantics.parallel-region-parallel.test.ts)', async () => {
+    const x = await run(base('state r1 parallel { state s1; state s2; } state r2;'), []);
+    expect(x.r.unopened).toBeUndefined();
+  });
   it('a history composite inside a region', async () => {
     const l: any = await loadModelText(base('state r1 { state a; state b; } state r2;'), { fileName: 'h.sysml' });
     find(l.model, 'P::M::p::r1').attrs.history = true;

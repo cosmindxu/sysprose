@@ -21,12 +21,11 @@ describe('nested parallel fence', () => {
     expect(r.unopened).toBeUndefined();
     expect(r.activeStates.map((s: string) => m.qualifiedName(s))).toEqual(['P::M::p::r1', 'P::M::p::r2']);
   });
-  it('a region that is itself a parallel state: no run, reason cites 7.18.2', async () => {
+  it('a region that is itself a parallel state is performed (every substate of it a region)', async () => {
     const src = `package P { item def e; state def M { entry; then p; state p parallel { state r1 parallel { state s1; state s2; } state r2; } state q; transition go first p accept e then q; } }\n`;
     const { model: m } = await load(src) as any;
     const r = runStateMachine(m, find(m, 'P::M').id, ['e']);
-    expect(r.unopened).toMatch(/region.*is itself a parallel state.*§7\.18\.2/);
-    expect(r.activeStates).toEqual([]);
-    expect(r.finalState).toBeNull();
+    expect(r.unopened).toBeUndefined();
+    expect(r.activeStates.map((s: string) => m.qualifiedName(s))).toEqual(['P::M::q']);
   });
 });

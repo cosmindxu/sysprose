@@ -326,7 +326,7 @@ describe('what the walk refuses to explore', () => {
   it('explores a machine with a parallel state nested in it, and refuses the nested shapes it does not perform', () => {
     // The parallel usage is not the machine root here: the outer definition owns a transition of its own, so the
     // usage is a REGION of it. Since stage 2 (SysML v2 §7.18.2) it is explored — it is simply never entered here
-    // (the machine opens in `s1`), which is the true answer — while a parallel state inside a parallel state is refused.
+    // (the machine opens in `s1`), which is the true answer — while a transition between two regions is refused.
     const nested = (inner: string): ReturnType<typeof parseModel> => parseModel(`package P {
       part def Ctl {
         state def Top {
@@ -350,7 +350,7 @@ describe('what the walk refuses to explore', () => {
     expect(r.machines[0].unsupported).toEqual([]);
     expect(r.machines[0].exhaustive).toBe(true);
 
-    const bad = nested(`state r1 parallel { state a1; state a2; } state r2;`);
+    const bad = nested(`state r1 { state a1; state a2; } state r2 { entry; then b1; state b1; } transition r1::a1 accept z then r2::b1;`);
     const top2 = bad.model.all().find((el) => el.eClass === 'StateDefinition' && el.declaredName === 'Top')!;
     const sub2 = bad.model.all().find((el) => el.eClass === 'StateUsage' && el.declaredName === 'sub')!;
     const r2 = reachReport(bad.model, { scopeId: top2.id });

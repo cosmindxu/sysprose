@@ -22,8 +22,11 @@
  * nested regions follow it. A completion chases the nested regions first, then the region. The nested parallel state
  * completes when all its regions are final; leaving it exits its regions (inner first) before the state itself.
  *
+ * A REGION THAT IS ITSELF A PARALLEL STATE has no stack of its own (`ParRegion.stack` is empty): its substates are regions of it,
+ * entered at once, offered events in the same flattened order, final when they all are, exited inner first.
+ *
  * WHAT IS REFUSED (`parallelRefusal`), with the interpreter's own reasons where it refuses too: a region that is
- * itself a parallel state, an entry action naming a start, a history state inside, a
+ * an entry action naming a start, a history state inside, a
  * transition between regions or out of one, a step into a region, a region with an unread start, a COUPLED parallel
  * state of more than {@link MAX_ORDERED_REGIONS} regions — and two reasons the explorer adds:
  *   - an event a region takes AND a transition leaving `p` (or a state holding it) takes: the interpreter stops there
@@ -246,11 +249,8 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
   // A parallel machine root is checked as the parallel state it is: its regions are its child states.
   for (const p of root ? [model.get(machineId)!] : pars) {
     const inside = new Set(machineRegion(model, p.id).descendants.map((e) => e.id));
-    // A parallel state inside a region is performed (a tree of regions); a REGION that is itself a parallel state
-    // (`state p parallel { state r parallel { … } }`) is not: its children would be a second level of regions beside r's own start.
-    if (parallelRegions(model, p.id).some((r) => isParallelState(model, r.id))) {
-      return out(p.id, `a region of its parallel state ${name(p.id)} is itself a parallel state, and a region that is a parallel state is not performed concurrently here`);
-    }
+    // A parallel state inside a region is performed (a tree of regions), and so is a REGION that is itself a parallel state
+    // (`state p parallel { state r parallel { … } }`): its own substates are regions of it, entered at once.
     if (entryControlEdges(model, p.id).length > 0) {
       return out(p.id, `its parallel state ${name(p.id)} has an entry action naming a start, but a parallel state enters all its regions, each at its own start`);
     }
@@ -333,6 +333,16 @@ export function enterRegions(model: Model, cfg: MachineConfig): StepResult {
     visited.push(r.id);
     runStatePhase(model, r.id, 'entry', w, scope, performed);
     runStatePhase(model, r.id, 'do', w, scope, performed);
+    if (isParallelState(model, r.id)) {
+      // A region that is itself a parallel state: no stack of its own, its substates are regions entered at once.
+      const n = enterRegions(model, { regionId: top, stack: [r.id], store: w, clock: cfg.clock, entryTime: new Map(), history: cfg.history });
+      visited.push(...n.effects.visited);
+      performed.push(...n.effects.performed);
+      w.clear();
+      for (const [k, v] of n.config.store) w.set(k, v);
+      regs.push({ id: r.id, stack: [], entryTime: new Map(), ...(n.config.par === undefined ? {} : { par: n.config.par }) });
+      continue;
+    }
     const o = initialConfig(model, r.id, { store: w, clock: cfg.clock });
     visited.push(...o.effects.visited);
     performed.push(...o.effects.performed);
