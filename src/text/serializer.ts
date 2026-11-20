@@ -1431,7 +1431,9 @@ function transitionLine(model: Model, el: ElementRecord, pad: string): string {
   parts.push(...specializationFragments(model, el));
   parts.push('first', endpoint(model, el, 'source'));
   if (typeof el.attrs.trigger === 'string' && el.attrs.trigger) {
-    parts.push('accept', el.attrs.trigger);
+    // `accept sig : Signal` (§7.17.8): the trigger is the payload type, `sig` the payload name.
+    if (typeof el.attrs.payloadName === 'string' && el.attrs.payloadName) parts.push('accept', `${quoteName(el.attrs.payloadName)} : ${el.attrs.trigger}`);
+    else parts.push('accept', el.attrs.trigger);
     if (typeof el.attrs.via === 'string' && el.attrs.via) parts.push('via', el.attrs.via);
   }
   if (typeof el.attrs.timeTrigger === 'string' && el.attrs.timeTrigger) parts.push('accept after', el.attrs.timeTrigger);
@@ -1440,7 +1442,9 @@ function transitionLine(model: Model, el: ElementRecord, pad: string): string {
     const typed = typeof el.attrs.effectType === 'string' && el.attrs.effectType ? ` : ${el.attrs.effectType}` : '';
     parts.push('do', typed ? `action ${el.attrs.effect}${typed}` : effectClauseText(el.attrs.effect));
   }
-  parts.push('then', endpoint(model, el, 'target'));
+  // A nameless `done` control node is what `then done;` binds to (SysML v2 §7.18.3).
+  const tgt = model.get((el.target ?? [])[0] ?? '');
+  parts.push('then', tgt?.eClass === 'DoneNode' && tgt.declaredName === undefined ? 'done' : endpoint(model, el, 'target'));
   return `${pad}${parts.join(' ')};`;
 }
 

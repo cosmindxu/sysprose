@@ -445,10 +445,9 @@ describe('§7.18.3 transition usages', () => {
     expect(constructs(r.walk)).toContain('edge-not-walked');
   });
 
-  it('OnOff6: accept/then shorthands read; `then stop` targets the terminate action `action stop terminate;`; `then done` stays unresolved with a warning; run and walk refuse', async () => {
+  it('OnOff6: accept/then shorthands read; `then stop` targets the terminate action `action stop terminate;`; `then done` binds to the containing state\'s final (done) node; run and walk still refuse the time trigger', async () => {
     const r = await run(EX.OnOff6, 'Spec::OnOff6');
-    expect(stray(r.l.report).map((d: any) => d.code)).toEqual(['ref/unresolved-transition-end']);
-    expect(stray(r.l.report)[0].message).toMatch(/'done'/);
+    expect(stray(r.l.report)).toEqual([]);
     const m = r.l.model;
     const stop = find(m, 'Spec::OnOff6::stop');
     expect([stop.eClass, stop.attrs.actionKind]).toEqual(['ActionUsage', 'terminate']);
@@ -456,12 +455,12 @@ describe('§7.18.3 transition usages', () => {
     expect(all.map((t) => [t.attrs.trigger ?? t.attrs.timeTrigger, t.attrs.via, ends(m, t)[0][0], ends(m, t)[1][0]])).toEqual([
       ['TurnOn', 'commPort', 'Spec::OnOff6::off', 'Spec::OnOff6::on'],
       ['Abort', 'commPort', 'Spec::OnOff6::off', 'Spec::OnOff6::stop'],
-      ['5[min]', undefined, 'Spec::OnOff6::on', undefined],
+      ['5[min]', undefined, 'Spec::OnOff6::on', 'Spec::OnOff6::«DoneNode»'],
     ]);
-    expect(all[2].attrs.targetRef).toBe('done');
+    expect(all[2].attrs.targetRef).toBeUndefined();
     expect(r.run.unopened).toMatch(/time trigger/);
     expect(r.walk.exhaustive).toBe(false);
-    expect(constructs(r.walk)).toContain('transition-without-endpoints');
+    expect(constructs(r.walk)).not.toContain('transition-without-endpoints');
   });
 });
 

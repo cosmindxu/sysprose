@@ -927,7 +927,8 @@ export function isHistoryComposite(model: Model, stateId: ElementId): boolean {
 export function isFinalState(model: Model, stateId: ElementId): boolean {
   const s = model.get(stateId);
   if (!s) return false;
-  return s.attrs.kind === 'final' || s.attrs.isFinal === true || s.declaredName === 'final';
+  // A `done` node is the final state of its container (SysML v2 §7.18.3: `then done` ends the containing state).
+  return s.attrs.kind === 'final' || s.attrs.isFinal === true || s.declaredName === 'final' || s.eClass === 'DoneNode';
 }
 
 /**

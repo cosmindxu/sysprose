@@ -1324,11 +1324,30 @@ class Mapper {
     // extend it — a bound connector end adds no general — so one sweep is a
     // fixpoint.
     this.bindEndpointRefs();
+    this.bindDoneTargets();
 
     // Whatever is still unbound falls back to its textual form.
     this.recordUnresolvedSpecs();
     this.restoreSpecializationOrder();
     this.bindBareStateRefs();
+  }
+
+  /**
+   * `then done;` (SysML v2 §7.18.3): a transition to `done` says its source state is the final state of the
+   * containing state. When no element named `done` is visible, the target binds to the containing state's own
+   * nameless `done` control node (the one `done;` writes, made when the state has none), which is what the walk
+   * and the interpreter already read as an ending.
+   */
+  private bindDoneTargets(): void {
+    for (const el of this.model.all()) {
+      if (el.eClass !== 'TransitionUsage' || el.attrs.targetRef !== 'done' || (el.target?.length ?? 0) > 0) continue;
+      if (el.ownerId == null || !this.isStateOwner(el.ownerId)) continue;
+      const owner = el.ownerId;
+      let done = this.model.children(owner).find((c) => c.eClass === 'DoneNode' && c.declaredName === undefined);
+      if (!done) done = this.create('DoneNode', { ownerId: owner });
+      this.model.update(el.id, { target: [done.id] });
+      this.model.setAttrs(el.id, { targetRef: undefined });
+    }
   }
 
   /**
@@ -2303,7 +2322,10 @@ class Mapper {
       const what = `the target-transition shorthand \`accept ${node.name ?? ''}…\``;
       const src = this.targetTransitionSource(node);
       const then = this.followingThen(node);
-      const extras = node.specializations.length > 0 || node.multiplicity.length > 0 || node.valueOp !== undefined ||
+      // `accept s : T then on;` (§7.17.8): one plain typing `: T` is the payload type, read as the trigger T with payload name s.
+      const sp = node.specializations[0];
+      const payloadType = node.specializations.length === 1 && sp.op === ':' && sp.types.length === 1 && !sp.conjugated ? sp.types[0] : undefined;
+      const extras = (node.specializations.length > 0 && payloadType === undefined) || node.multiplicity.length > 0 || node.valueOp !== undefined ||
         node.body !== undefined || node.target !== undefined || node.shortName !== undefined || node.chain.length > 0 || node.isAbstract;
       const timed = node.name === 'after' && node.delay !== undefined && !node.via;
       if (node.isSend) {
@@ -2319,6 +2341,7 @@ class Mapper {
       }
       const attrs: Record<string, AttrValue> = {};
       if (timed) attrs.timeTrigger = exprText(node.delay!);
+      else if (payloadType !== undefined) { attrs.trigger = payloadType; attrs.payloadName = unquoteName(node.name) ?? node.name; }
       else attrs.trigger = unquoteName(node.name) ?? node.name;
       if (node.guard) attrs.guard = exprText(node.guard);
       const eff = effectTextOf(node);
@@ -2515,6 +2538,7 @@ class Mapper {
     let timeTrigger: string | undefined;
     let effectType: string | undefined;
     let acceptVia: string | undefined;
+    let payloadName: string | undefined;
     let sendEffect = false;
     for (const c of node.clauses) {
       if (c.$type === 'AcceptClause') {
@@ -2536,7 +2560,9 @@ class Mapper {
             });
           }
         } else {
-          trigger = c.payload;
+          // `accept sig : Signal` (§7.17.8): triggered by a transfer whose payload is a Signal; `sig` names that payload.
+          if (c.payloadType) { trigger = c.payloadType; payloadName = c.payload; }
+          else trigger = c.payload;
           if (c.via) acceptVia = c.via;
         }
       }
@@ -2557,6 +2583,7 @@ class Mapper {
     const tgtRef = node.target;
     const attrs: Record<string, AttrValue> = {};
     if (trigger) attrs.trigger = trigger;
+    if (trigger && payloadName) attrs.payloadName = payloadName;
     if (timeTrigger) attrs.timeTrigger = timeTrigger;
     if (guard) attrs.guard = guard;
     if (effect) attrs.effect = effect;
