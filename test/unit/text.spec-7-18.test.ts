@@ -478,14 +478,14 @@ describe('§7.18.4 exhibit state usages', () => {
     expect(m.children(mon.id).filter((c: any) => c.eClass === 'ReferenceSubsetting')).toEqual([]);
   });
 
-  it('`exhibit VehicleStates::monitoring :> Vehicle::monitoringState;` is refused (state-form-unread, names the exhibit); the rest of the model loads', async () => {
+  it('`exhibit VehicleStates::monitoring :> Vehicle::monitoringState;` is read: a nameless exhibit state usage, exhibited state by reference subsetting, plus the subsetting; no diagnostic', async () => {
     const l = await load(EX.VehicleEx);
-    expect(codes(l.report)).toEqual(['mapper/state-form-unread']);
-    expect(l.report.diagnostics[0].message).toMatch(/`exhibit VehicleStates::monitoring`/);
-    expect(find(l.model, 'Spec::vehicle')).toBeDefined();
-    // nothing is kept of the refused exhibit: no exhibit state in the part usage
-    expect(l.model.children(find(l.model, 'Spec::vehicle').id).filter((c: any) => c.eClass === 'ExhibitStateUsage')).toEqual([]);
-    const w = exploreMachine(l.model, find(l.model, 'Spec::VehicleStates').id);
-    expect(w.exhaustive === true || w.unsupported.length > 0).toBe(true);
+    expect(l.report.diagnostics).toEqual([]);
+    const ex = l.model.children(find(l.model, 'Spec::vehicle').id).filter((c: any) => c.eClass === 'ExhibitStateUsage');
+    expect(ex).toHaveLength(1);
+    expect(ex[0].declaredName).toBeUndefined();
+    const rel = (k: string) => l.model.children(ex[0].id).filter((c: any) => c.eClass === k).flatMap((c: any) => c.target.map((t: string) => l.model.qualifiedName(t)));
+    expect(rel('ReferenceSubsetting')).toEqual(['Spec::VehicleStates::monitoring']);
+    expect(rel('Subsetting')).toEqual(['Spec::Vehicle::monitoringState']);
   });
 });

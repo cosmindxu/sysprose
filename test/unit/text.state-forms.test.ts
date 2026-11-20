@@ -95,9 +95,9 @@ describe('`entry assign x := 1;` and `do send X to Y;`', () => {
 });
 
 describe('exhibit forms', () => {
-  it('refuses `exhibit A::B :> C;`', async () => {
+  it('reads `exhibit A::B :> C;` (now read, see text.forms-7-18-rest); an unresolved A::B is reported (unresolved ref), not refused', async () => {
     const { report } = await load('package P { part def A; part def C; part q { exhibit A::B :> C; } }');
-    expect(codes(report)).toContain('mapper/state-form-unread');
+    expect(codes(report)).not.toContain('mapper/state-form-unread');
   });
   it('keeps `exhibit state s :> C;` and `exhibit x;`', async () => {
     const { model, report } = await load('package P { part def C; part q { exhibit state s :> C; exhibit y; } }');
