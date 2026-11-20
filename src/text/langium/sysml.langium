@@ -272,7 +272,19 @@ BehaviorStmt infers BehaviorStmt:
     (visibility=Visibility)?
     // `abstract exhibit state x;` (SysML v2 §7.18.2: an exhibit state usage takes the usage prefix).
     (isAbstract?='abstract')?
-    ( kind=('accept' | 'send' | 'assign' | 'perform' | 'include' | 'terminate')
+    // `accept E if c do action eff then s;` / `accept after 5[min] then s;` (SysML v2 §7.18.3, the target transition):
+    // an accept written in a state body. The delay is a DelayExpr (never a general Expression, which would swallow the
+    // `if` guard), the guard is the `if` form only (a `[…]` is a multiplicity here) and the effect names an action.
+    ( kind='accept'
+      ('action' | 'state' | 'use' 'case')?
+      ('<' shortName=Name '>')?
+      (name=Name)?
+      BehaviorStmtRest
+      (delay=DelayExpr)?
+      ('if' guard=Expression)?
+      ('do' ('action')? effect=QualifiedName)?
+      (body=Body | ';')?
+    | kind=('send' | 'assign' | 'perform' | 'include' | 'terminate')
       ('action' | 'state' | 'use' 'case')?
       ('<' shortName=Name '>')?
       (name=Name)?

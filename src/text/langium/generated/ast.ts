@@ -439,7 +439,10 @@ export interface BehaviorStmt extends langium.AstNode {
     readonly $type: 'BehaviorStmt';
     body?: Body;
     chain: Array<RefName>;
+    delay?: Expression;
+    effect?: QualifiedName;
     exhibitState: boolean;
+    guard?: Expression;
     isAbstract: boolean;
     isParallel: boolean;
     kind: 'accept' | 'assign' | 'exhibit' | 'include' | 'perform' | 'send' | 'terminate';
@@ -1401,7 +1404,10 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     properties: [
                         { name: 'body' },
                         { name: 'chain', defaultValue: [] },
+                        { name: 'delay' },
+                        { name: 'effect' },
                         { name: 'exhibitState', defaultValue: false },
+                        { name: 'guard' },
                         { name: 'isAbstract', defaultValue: false },
                         { name: 'isParallel', defaultValue: false },
                         { name: 'kind' },

@@ -3535,12 +3535,179 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                     "feature": "kind",
                     "operator": "=",
                     "terminal": {
+                      "$type": "Keyword",
+                      "value": "accept"
+                    }
+                  },
+                  {
+                    "$type": "Alternatives",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "action"
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": "state"
+                      },
+                      {
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Keyword",
+                            "value": "use"
+                          },
+                          {
+                            "$type": "Keyword",
+                            "value": "case"
+                          }
+                        ]
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "<"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "shortName",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@80"
+                          },
+                          "arguments": []
+                        }
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": ">"
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Assignment",
+                    "feature": "name",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@80"
+                      },
+                      "arguments": []
+                    },
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "RuleCall",
+                    "rule": {
+                      "$ref": "#/rules@32"
+                    },
+                    "arguments": []
+                  },
+                  {
+                    "$type": "Assignment",
+                    "feature": "delay",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@26"
+                      },
+                      "arguments": []
+                    },
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "if"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "guard",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@57"
+                          },
+                          "arguments": []
+                        }
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "do"
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": "action",
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "effect",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@75"
+                          },
+                          "arguments": []
+                        }
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Alternatives",
+                    "elements": [
+                      {
+                        "$type": "Assignment",
+                        "feature": "body",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@47"
+                          },
+                          "arguments": []
+                        }
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": ";"
+                      }
+                    ],
+                    "cardinality": "?"
+                  }
+                ]
+              },
+              {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Assignment",
+                    "feature": "kind",
+                    "operator": "=",
+                    "terminal": {
                       "$type": "Alternatives",
                       "elements": [
-                        {
-                          "$type": "Keyword",
-                          "value": "accept"
-                        },
                         {
                           "$type": "Keyword",
                           "value": "send"
