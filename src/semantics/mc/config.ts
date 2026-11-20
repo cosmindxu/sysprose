@@ -1266,6 +1266,21 @@ export function applyTransitionEffect(
 ): void {
   const effect = strAttr(tr, 'effect');
   if (effect === undefined) return;
+  const effectType = strAttr(tr, 'effectType');
+  if (effectType !== undefined) {
+    // `do action powerUp : PowerUp;` (SysML v2 §7.18.3, OnOff4/5): the effect is a NEW action usage typed by PowerUp,
+    // so what it does is what PowerUp's body does. Read only when PowerUp is one definition with nothing in it (it
+    // changes no value, as a typed entry action's empty definition is read); anything else is refused.
+    const defs = actionsNamed(model, tr, effectType).filter((d) => d.eClass === 'ActionDefinition');
+    if (defs.length !== 1 || model.children(defs[0].id).length > 0 || strAttr(defs[0], 'effect') !== undefined) {
+      throw new EffectNotApplied(
+        `the effect \`${effect} : ${effectType}\` of \`${model.qualifiedName(tr.id) || tr.id}\` is typed by ` +
+          `${defs.length === 1 ? `\`${model.qualifiedName(defs[0].id)}\`, whose body is not read` : 'a definition this interpreter cannot resolve to one action definition'} ` +
+          '(SysML v2 §7.18.3) — so no run or walk goes on past it with the store as if it had not run.',
+      );
+    }
+    return;
+  }
   const x = namedEffectAction(model, tr, effect);
   if (x) {
     const refuse = (y: ElementRecord | undefined, why: string): never => {

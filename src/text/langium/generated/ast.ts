@@ -270,6 +270,12 @@ export function isImportName(item: unknown): item is ImportName {
     return typeof item === 'string';
 }
 
+export type InitialRef = 'initial';
+
+export function isInitialRef(item: unknown): item is InitialRef {
+    return item === 'initial';
+}
+
 export type KeywordName = 'accept' | 'action' | 'association' | 'behavior' | 'classifier' | 'connector' | 'do' | 'done' | 'end' | 'entry' | 'event' | 'exit' | 'feature' | 'flow' | 'frame' | 'function' | 'individual' | 'interaction' | 'item' | 'member' | 'metaclass' | 'metadata' | 'multiplicity' | 'occurrence' | 'parallel' | 'part' | 'port' | 'predicate' | 'send' | 'snapshot' | 'state' | 'step' | 'succession' | 'transition' | 'type';
 
 export function isKeywordName(item: unknown): item is KeywordName {
@@ -443,13 +449,18 @@ export interface BehaviorStmt extends langium.AstNode {
     chain: Array<RefName>;
     delay?: Expression;
     effect?: QualifiedName;
+    effectType?: QualifiedName;
     exhibitState: boolean;
     guard?: Expression;
     isAbstract: boolean;
     isParallel: boolean;
+    isSend: boolean;
     kind: 'accept' | 'assign' | 'exhibit' | 'include' | 'perform' | 'send' | 'terminate';
     multiplicity: Array<Multiplicity>;
     name?: Name;
+    sendPayload?: Expression;
+    sendTo?: QualifiedName;
+    sendVia?: QualifiedName;
     shortName?: Name;
     specializations: Array<Specialization>;
     succession?: 'first' | 'then';
@@ -734,6 +745,11 @@ export interface EffectClause extends langium.AstNode {
     assignTarget?: QualifiedName;
     assignValue?: Expression;
     effect?: QualifiedName;
+    effectType?: QualifiedName;
+    isSend: boolean;
+    sendPayload?: Expression;
+    sendTo?: QualifiedName;
+    sendVia?: QualifiedName;
 }
 
 export const EffectClause = 'EffectClause';
@@ -946,7 +962,7 @@ export function isPrefixMetadata(item: unknown): item is PrefixMetadata {
 export interface RefExpr extends langium.AstNode {
     readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'RefExpr';
-    ref: QualifiedName;
+    ref: InitialRef | QualifiedName;
 }
 
 export const RefExpr = 'RefExpr';
@@ -1413,13 +1429,18 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'chain', defaultValue: [] },
                         { name: 'delay' },
                         { name: 'effect' },
+                        { name: 'effectType' },
                         { name: 'exhibitState', defaultValue: false },
                         { name: 'guard' },
                         { name: 'isAbstract', defaultValue: false },
                         { name: 'isParallel', defaultValue: false },
+                        { name: 'isSend', defaultValue: false },
                         { name: 'kind' },
                         { name: 'multiplicity', defaultValue: [] },
                         { name: 'name' },
+                        { name: 'sendPayload' },
+                        { name: 'sendTo' },
+                        { name: 'sendVia' },
                         { name: 'shortName' },
                         { name: 'specializations', defaultValue: [] },
                         { name: 'succession' },
@@ -1635,7 +1656,12 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     properties: [
                         { name: 'assignTarget' },
                         { name: 'assignValue' },
-                        { name: 'effect' }
+                        { name: 'effect' },
+                        { name: 'effectType' },
+                        { name: 'isSend', defaultValue: false },
+                        { name: 'sendPayload' },
+                        { name: 'sendTo' },
+                        { name: 'sendVia' }
                     ]
                 };
             }

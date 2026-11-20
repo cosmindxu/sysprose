@@ -246,7 +246,17 @@ GuardClause infers GuardClause:
 EffectClause infers EffectClause:
     // `do assign x := 2` (SysML v2 §7.18.3): the effect written as an inline assignment, read as the effect text `x = 2`.
     // The value follows `:=`, never a bare name, so a following `then` / `if` / `accept` is not swallowed.
-    'do' ( 'assign' assignTarget=QualifiedName ':=' assignValue=Expression | ('action')? effect=QualifiedName );
+    // `do action powerUp : PowerUp;` (OnOff4/5): the effect action declared with a type (`effectType`). `do send new T()
+    // via p` (OnOff4/5) is a send action as the effect: read (`isSend`) so the mapper can refuse it, never dropped.
+    'do' ( 'assign' assignTarget=QualifiedName ':=' assignValue=Expression
+         | isSend?='send' sendPayload=NewPayload ('via' sendVia=QualifiedName)? ('to' sendTo=QualifiedName)?
+         | ('action')? effect=QualifiedName (':' effectType=QualifiedName)? )
+    // The spec ends an effect action with its own `;` before `then on;` (OnOff4: `do action powerUp : PowerUp; then on;`).
+    (';')?;
+
+// The payload of a send action: `new ReadySignal()` (SysML v2 §7.17.7). Never a general Expression right after a word.
+NewPayload infers Expression:
+    {infer ConstructorExpr} 'new' type=QualifiedName '(' (args+=Argument (',' args+=Argument)*)? ')';
 
 // ─────────────────── state behaviours & control nodes ────────────────
 
@@ -285,14 +295,19 @@ BehaviorStmt infers BehaviorStmt:
       BehaviorStmtRest
       (delay=DelayExpr)?
       ('if' guard=Expression)?
-      ('do' ( 'assign' assignTarget=QualifiedName ':=' assignValue=Expression | ('action')? effect=QualifiedName ))?
+      ('do' ( 'assign' assignTarget=QualifiedName ':=' assignValue=Expression
+            | isSend?='send' sendPayload=NewPayload ('via' sendVia=QualifiedName)? ('to' sendTo=QualifiedName)?
+            | ('action')? effect=QualifiedName (':' effectType=QualifiedName)? ))?
       (body=Body | ';')?
     | kind=('send' | 'assign' | 'perform' | 'include' | 'terminate')
       ('action' | 'state' | 'use' 'case')?
       ('<' shortName=Name '>')?
       (name=Name)?
+      (sendPayload=NewPayload)?
       BehaviorStmtRest
       (body=Body | ';')?
+    // `action stop terminate;` (OnOff6, SysML v2 §7.17.10): a terminate action usage named `stop`.
+    | 'action' name=Name kind='terminate' (body=Body | ';')
     // `exhibit state es parallel { … }`: BNF `ExhibitStateUsage` ends in the same
     // `StateUsageBody` as a state usage (SysML v2 §8.2.2.18.2), so `parallel` may
     // stand just before the body. As on `state` (see StateDeclarationTail), the
@@ -686,7 +701,11 @@ PrimaryExpr infers Expression:
     | {infer BoolLiteral} value=('true' | 'false')
     | {infer NullLiteral} 'null'
     | {infer MetadataAccessExpr} '#' ref=QualifiedName
-    | {infer RefExpr} ('$' '::')? ref=QualifiedName;
+    | {infer RefExpr} ('$' '::')? ref=QualifiedName
+    // `initial.isStarting` (SysML v2 §7.18.2): the entry action named `initial`, which is a control-node keyword.
+    | {infer RefExpr} ref=InitialRef;
+
+InitialRef returns string: 'initial';
 
 // ─────────────────────────── names & terminals ───────────────────────
 

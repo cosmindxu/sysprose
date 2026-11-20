@@ -1430,10 +1430,16 @@ function transitionLine(model: Model, el: ElementRecord, pad: string): string {
   // `transition t2 :>> t1 first …`: a transition that redefines an inherited one (the Redefinition child).
   parts.push(...specializationFragments(model, el));
   parts.push('first', endpoint(model, el, 'source'));
-  if (typeof el.attrs.trigger === 'string' && el.attrs.trigger) parts.push('accept', el.attrs.trigger);
+  if (typeof el.attrs.trigger === 'string' && el.attrs.trigger) {
+    parts.push('accept', el.attrs.trigger);
+    if (typeof el.attrs.via === 'string' && el.attrs.via) parts.push('via', el.attrs.via);
+  }
   if (typeof el.attrs.timeTrigger === 'string' && el.attrs.timeTrigger) parts.push('accept after', el.attrs.timeTrigger);
   if (typeof el.attrs.guard === 'string' && el.attrs.guard) parts.push(`if ${el.attrs.guard}`);
-  if (typeof el.attrs.effect === 'string' && el.attrs.effect) parts.push('do', effectClauseText(el.attrs.effect));
+  if (typeof el.attrs.effect === 'string' && el.attrs.effect) {
+    const typed = typeof el.attrs.effectType === 'string' && el.attrs.effectType ? ` : ${el.attrs.effectType}` : '';
+    parts.push('do', typed ? `action ${el.attrs.effect}${typed}` : effectClauseText(el.attrs.effect));
+  }
   parts.push('then', endpoint(model, el, 'target'));
   return `${pad}${parts.join(' ')};`;
 }

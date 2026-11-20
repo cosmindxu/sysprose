@@ -2289,7 +2289,7 @@ class Mapper {
 
   /** accept / send / assign / perform / exhibit / include / terminate action. */
   private mapBehaviorStmt(node: BehaviorStmt, ownerId: ElementId | null): void {
-    if (node.kind === 'accept' && (node.delay || node.guard || node.effect || node.assignTarget) && !(node.succession === undefined && this.isStateOwner(ownerId))) {
+    if (node.kind === 'accept' && (node.delay || node.guard || node.effect || node.assignTarget || node.isSend) && !(node.succession === undefined && this.isStateOwner(ownerId))) {
       this.refuseStateForm(node, `\`accept ${node.name ?? ''}\` with a delay, a guard or an effect outside a state body`);
       return;
     }
@@ -2306,6 +2306,11 @@ class Mapper {
       const extras = node.specializations.length > 0 || node.multiplicity.length > 0 || node.valueOp !== undefined ||
         node.body !== undefined || node.target !== undefined || node.shortName !== undefined || node.chain.length > 0 || node.isAbstract;
       const timed = node.name === 'after' && node.delay !== undefined && !node.via;
+      if (node.isSend) {
+        this.refuseStateForm(node, `${what} with an effect \`do send …\`, a send action as an effect`);
+        this.refusedTargetThen.add(ownerId);
+        return;
+      }
       if (src === undefined || then === undefined || extras || node.name === undefined || (node.delay !== undefined && !timed)) {
         const why = src === undefined ? 'with no state before it to leave' : then === undefined ? 'with no `then` target' : 'with a part this tool does not read';
         this.refuseStateForm(node, `${what} ${why}`);
@@ -2318,8 +2323,14 @@ class Mapper {
       if (node.guard) attrs.guard = exprText(node.guard);
       const eff = effectTextOf(node);
       if (eff) attrs.effect = eff;
+      if (node.effectType) attrs.effectType = node.effectType;
+      if (node.via && !timed) attrs.via = node.via;
       this.consumedThen.add(then);
       this.createTargetTransition(node, ownerId, src, then.target!, attrs);
+      return;
+    }
+    if (node.kind === 'send' && node.sendPayload !== undefined) {
+      this.refuseStateForm(node, `\`send ${exprText(node.sendPayload)}…\`, a send action with a payload expression`);
       return;
     }
     if (node.kind === 'exhibit' && node.chain && node.chain.length > 0) {
@@ -2502,6 +2513,9 @@ class Mapper {
     let guard: string | undefined;
     let effect: string | undefined;
     let timeTrigger: string | undefined;
+    let effectType: string | undefined;
+    let acceptVia: string | undefined;
+    let sendEffect = false;
     for (const c of node.clauses) {
       if (c.$type === 'AcceptClause') {
         // `accept after 5[min]` (SysML v2 §7.18.3): a TIME trigger, not an event named `after`. Only the exact shape
@@ -2521,10 +2535,23 @@ class Mapper {
               ...(rangeOf(c) ? { range: rangeOf(c) } : {}),
             });
           }
-        } else trigger = c.payload;
+        } else {
+          trigger = c.payload;
+          if (c.via) acceptVia = c.via;
+        }
       }
       else if (c.$type === 'GuardClause') guard = exprText(c.expr);
-      else if (c.$type === 'EffectClause') effect = effectTextOf(c);
+      else if (c.$type === 'EffectClause') {
+        if (c.isSend) sendEffect = true;
+        effect = effectTextOf(c);
+        if (c.effectType) effectType = c.effectType;
+      }
+    }
+    if (sendEffect) {
+      // `do send new T() via p` as an effect (OnOff4): a send action is not interpreted, so the transition is refused
+      // whole rather than kept without its effect.
+      this.refuseStateForm(node, `the transition's effect \`do send …\`, a send action as an effect`);
+      return;
     }
     const srcRef = node.source;
     const tgtRef = node.target;
@@ -2533,6 +2560,8 @@ class Mapper {
     if (timeTrigger) attrs.timeTrigger = timeTrigger;
     if (guard) attrs.guard = guard;
     if (effect) attrs.effect = effect;
+    if (effectType) attrs.effectType = effectType;
+    if (acceptVia) attrs.via = acceptVia;
     const el = this.create('TransitionUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
