@@ -249,13 +249,15 @@ describe('runStateMachine — orthogonal regions complete when every region is f
     expect(res.activeStates).toEqual([ids.a1f, ids.b2f]);
   });
 
-  it('a join transition out of the parallel machine is refused with a reason, not performed (SysML v2 §7.18.2)', () => {
-    // The join used to fire once both regions were final; its target is a child of the parallel machine, which is a
-    // region of it, and a completion transition out of a parallel state is not performed (as for a nested one).
-    const { model, parId } = build(true);
+  it('a join transition out of the parallel machine fires once every region is final (SysML v2 §7.18.2)', () => {
+    const { model, parId, ids } = build(true);
+    const before = runStateMachine(model, parId, ['t1']);
+    expect(before.unopened).toBeUndefined();
+    expect(before.activeStates).toEqual([ids.a1f, ids.b1]); // one region final: the join waits
     const res = runStateMachine(model, parId, ['t1', 't2']);
-    expect(res.unopened).toMatch(/completion transition/);
-    expect(res.activeStates).toEqual([]);
+    expect(res.unopened).toBeUndefined();
+    expect(res.fired[res.fired.length - 1].trigger).toBe('');
+    expect(res.activeStates.map((x: string) => model.get(x)!.declaredName)).toEqual(['AllDone']);
   });
 });
 

@@ -222,7 +222,7 @@ describe('a parallel machine root: what stays refused, with a reason', () => {
   };
   const shapes: Record<string, [string, RegExp]> = {
     'a parallel state below the root': [root('state r1 parallel { state s1; state s2; } state r2;'), /below a parallel machine/],
-    'a transition from the root into one of its regions': [root('state r1; state r2;', 'transition done first M then r1;'), /steps into one of its own regions|completion transition/],
+    'a TRIGGERED transition from the root into one of its regions': [root('state r1; state r2;', 'transition done first M accept e then r1;'), /steps into one of its own regions/],
     'a transition between two regions': [root('state r1 { state a; } state r2 { state b; }', 'transition x first r1::a accept e then r2::b;'), /connects two regions/],
     'an entry action naming a start on the root': [root('entry; then r1; state r1; state r2;'), /entry action naming a start/],
   };

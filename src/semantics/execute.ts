@@ -39,7 +39,7 @@ import { isBindingEdge, propagateValues } from './connectors';
 // of this file so a checker can ask what is enabled without firing it (plan
 // §3.8); the interpreter imports them back and takes the FIRST enabled
 // transition, which is the tie-break it always had.
-import { rootConfig } from './mc/parallel';
+import { rootConfig, regionsAllFinal } from './mc/parallel';
 import {
   SUCCESSION_KINDS,
   advanceClock,
@@ -62,6 +62,7 @@ import {
   isHistoryComposite,
   isHistoryPseudostate,
   isParallelState,
+  parallelRegions,
   entryControlEdges,
   isRegionNode,
   isTruthy,
@@ -1459,7 +1460,7 @@ function nestedParallelRefusal(model: Model, container: ElementRecord): string |
     if (view.transitions.some((t) => t.source?.[0] !== undefined && inside.has(t.source[0]) && afterDuration(t) !== undefined)) {
       return `a region of its parallel state ${name(p.id)} has a timed (\`after\`) transition, which the interpreter never fires inside a region, so no verdict is given over it`;
     }
-    const regions = view.directStates(p.id);
+    const regions = parallelRegions(model, p.id);
     if (regions.some((r) => entryStartUnreadOf(model, machineRegion(model, r.id), view.directStates(r.id)))) {
       return `a region of its parallel state ${name(p.id)} has an entry action naming a start that this interpreter does not read`;
     }
@@ -1476,13 +1477,14 @@ function nestedParallelRefusal(model: Model, container: ElementRecord): string |
       if (from !== undefined && to !== undefined && inside.has(from) && regionOf(from) !== (inside.has(to) ? regionOf(to) : undefined)) {
         return `a transition of its parallel state ${name(p.id)} leaves its region or connects two regions, which a parallel state does not allow and this interpreter does not perform`;
       }
-      if (from === p.id && isCompletion(tr)) {
-        return `its parallel state ${name(p.id)} has a completion transition (taken once every region is final), which is not performed`;
+      if (from === p.id && isCompletion(tr) && regions.length === 0) {
+        return `its parallel state ${name(p.id)} has no region, so it never completes and its completion transition is not performed`;
       }
       if (to !== undefined && inside.has(to) && from !== undefined && !inside.has(from) && from !== p.id) {
         return `a transition steps into a region of its parallel state ${name(p.id)}, which is not performed`;
       }
-      if (to !== undefined && inside.has(to) && from === p.id) {
+      // A completion transition of a parallel machine ROOT may name a state of the machine (the old orthogonal join).
+      if (to !== undefined && inside.has(to) && from === p.id && !(root && isCompletion(tr))) {
         return `a transition from its parallel state ${name(p.id)} steps into one of its own regions, which is not performed`;
       }
     }
@@ -1659,7 +1661,7 @@ function runHierRegion(
     const w = new Map(cfg.store);
     const scope = regionScope(model, cfg.regionId);
     const regs: { id: ElementId; cfg: MachineConfig }[] = [];
-    for (const r of machineRegion(model, top).directStates(top)) {
+    for (const r of parallelRegions(model, top)) {
       visited.push(r.id);
       runStatePhase(model, r.id, 'entry', w, scope, performed);
       runStatePhase(model, r.id, 'do', w, scope, performed);
@@ -1766,17 +1768,26 @@ function runHierRegion(
    * steps has left the machine mid-run, and a report that called the result
    * quiescent would be reporting a bound as a fact (plan §3.8).
    */
+  /**
+   * Completion transitions of the outer stack. A parallel state's own completion transitions are held back until
+   * every one of its regions is at a final state (SysML v2 §7.18.2): it is complete then, not before.
+   */
+  const outerCompletion = (): EnabledTransition[] => {
+    const en = enabledTransitions(model, cfg, COMPLETION);
+    if (par === null || regionsAllFinal(model, par.regs.map((rg) => rg.cfg.stack))) return en;
+    return en.filter((e) => e.level !== cfg.stack.length - 1);
+  };
   const chaseHierCompletion = (): { fires: number; exhausted: boolean } => {
     let fires = 0;
     while (fires < maxCompletion) {
-      const enabled = enabledTransitions(model, cfg, COMPLETION);
+      const enabled = outerCompletion();
       if (enabled.length === 0) return { fires, exhausted: false };
       if (!stepOrStop(take(enabled))) return { fires, exhausted: false };
       fires++;
     }
     // Budget spent. Exhausted only if something was still enabled: a chase that
     // used its last step to reach quiescence did not run out of anything.
-    return { fires, exhausted: enabledTransitions(model, cfg, COMPLETION).length > 0 };
+    return { fires, exhausted: outerCompletion().length > 0 };
   };
 
   const fire = (choice: EnabledTransition): void => {

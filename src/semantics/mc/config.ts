@@ -891,6 +891,19 @@ export function directStates(model: Model, containerId: ElementId): ElementRecor
   return model.children(containerId).filter((c) => c.eClass === 'StateUsage');
 }
 
+/**
+ * The regions of a parallel state: its child states, except a state the parallel state's own completion transition
+ * names as its target — that is where a parallel machine root goes on once every region is final (the old orthogonal
+ * join), not one more region running beside the others.
+ */
+export function parallelRegions(model: Model, pId: ElementId): ElementRecord[] {
+  const view = machineRegion(model, pId);
+  const joined = new Set(
+    view.transitions.filter((t) => t.source?.[0] === pId && isCompletion(t) && t.target?.[0] !== undefined).map((t) => t.target![0]),
+  );
+  return view.directStates(pId).filter((s) => !joined.has(s.id));
+}
+
 /** Is the state a parallel state (the notation's `parallel` keyword, SysML v2 §7.18.2, or the API's `attrs.parallel`)? */
 export function isParallelState(model: Model, stateId: ElementId): boolean {
   const el = model.get(stateId);

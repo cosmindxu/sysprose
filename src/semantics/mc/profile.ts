@@ -95,9 +95,9 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
       'specification admits any interleaving, so the explorer refuses a parallel state whose regions are coupled ' +
       '(one writes an attribute another reads or writes) and does not give an exhaustive verdict over one order ' +
       'alone. A refusal in one region (a step the interpreter does not take) stops the whole run, as the regions are ' +
-      'performed together, and a run is complete when every region stands at a final state. Also refused, with a ' +
+      'performed together, and a run is complete when every region stands at a final state. A parallel state is complete when every one of its regions stands at a final state of its own, and a trigger-less transition out of it (a parallel machine root: out of the machine, to one of its states) is then taken, after every region is exited, with its guard read at that moment; before then it is not taken. Also refused, with a ' +
       'reason: a parallel state in a parallel state or below a parallel machine root, a history state inside, a transition between ' +
-      'regions or a completion transition out of the parallel state, a step into a region, an entry action naming ' +
+      'regions, a step into a region, an entry action naming ' +
       'a start, an event taken both by a region and by a transition leaving the parallel state, and a timed ' +
       'transition in a region — all verification/behaviour-unsupported-construct, never exhaustive.',
     provenance:

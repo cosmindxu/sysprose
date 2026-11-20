@@ -16,7 +16,7 @@
  *
  * WHAT IS REFUSED (`parallelRefusal`), with the interpreter's own reasons where it refuses too: a parallel state
  * below a parallel machine root, a parallel state inside a parallel state, an entry action naming a start, a history state inside, a
- * transition between regions or out of one, a completion transition out of `p`, a step into a region, a region with
+ * transition between regions or out of one, a step into a region, a region with
  * an unread start — and three reasons the explorer adds, because the interpreter applies the regions in ONE fixed
  * order while the specification admits any interleaving, and an exhaustive verdict must not be claimed over an order
  * the specification does not fix:
@@ -42,10 +42,12 @@ import {
   entryStartUnreadOf,
   initialConfig,
   isCompletion,
+  isFinalState,
   isHistoryComposite,
   isHistoryPseudostate,
   isParallelState,
   machineRegion,
+  parallelRegions,
   regionScope,
   runStatePhase,
   stepCandidates,
@@ -53,6 +55,15 @@ import {
   strAttr,
   triggerLabelOf,
 } from './config';
+
+/**
+ * Is a parallel state complete (SysML v2 §7.18.2): it has regions and every one is at a final state it owns — the
+ * region's own top-level final, not a final nested inside a composite of the region. `stacks` is one active stack
+ * per region. The interpreter and the explorer both ask THIS.
+ */
+export function regionsAllFinal(model: Model, stacks: readonly (readonly ElementId[])[]): boolean {
+  return stacks.length > 0 && stacks.every((st) => st.length === 1 && isFinalState(model, st[0]));
+}
 
 /** Is any state in this machine's region (below its root) a parallel state? */
 export function hasNestedParallel(model: Model, machineId: ElementId): boolean {
@@ -219,7 +230,7 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
     if (entryControlEdges(model, p.id).length > 0) {
       return out(p.id, `its parallel state ${name(p.id)} has an entry action naming a start, but a parallel state enters all its regions, each at its own start`);
     }
-    const regions = view.directStates(p.id);
+    const regions = parallelRegions(model, p.id);
     if (regions.some((r) => entryStartUnreadOf(model, machineRegion(model, r.id), view.directStates(r.id)))) {
       return out(p.id, `a region of its parallel state ${name(p.id)} has an entry action naming a start that this interpreter does not read`);
     }
@@ -241,13 +252,14 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
       if (from !== undefined && to !== undefined && inside.has(from) && regionOf(from) !== (inside.has(to) ? regionOf(to) : undefined)) {
         return out(p.id, `a transition of its parallel state ${name(p.id)} leaves its region or connects two regions, which a parallel state does not allow and this interpreter does not perform`);
       }
-      if (from === p.id && isCompletion(tr)) {
-        return out(p.id, `its parallel state ${name(p.id)} has a completion transition (taken once every region is final), which is not performed`);
+      if (from === p.id && isCompletion(tr) && regions.length === 0) {
+        return out(p.id, `its parallel state ${name(p.id)} has no region, so it never completes and its completion transition is not performed`);
       }
       if (to !== undefined && inside.has(to) && from !== undefined && !inside.has(from) && from !== p.id) {
         return out(p.id, `a transition steps into a region of its parallel state ${name(p.id)}, which is not performed`);
       }
-      if (to !== undefined && inside.has(to) && from === p.id) {
+      // A completion transition of a parallel machine ROOT may name a state of the machine (the old orthogonal join).
+      if (to !== undefined && inside.has(to) && from === p.id && !(root && isCompletion(tr))) {
         return out(p.id, `a transition from its parallel state ${name(p.id)} steps into one of its own regions, which is not performed`);
       }
     }
@@ -295,7 +307,7 @@ export function enterRegions(model: Model, cfg: MachineConfig): StepResult {
   const w = new Map(cfg.store);
   const scope = regionScope(model, cfg.regionId);
   const regs: ParRegion[] = [];
-  for (const r of machineRegion(model, top).directStates(top)) {
+  for (const r of parallelRegions(model, top)) {
     visited.push(r.id);
     runStatePhase(model, r.id, 'entry', w, scope, performed);
     runStatePhase(model, r.id, 'do', w, scope, performed);
@@ -369,7 +381,12 @@ export interface ParCandidates extends StepCandidates {
  */
 export function candidatesOf(model: Model, cfg: MachineConfig, input: StepInput, resolveNames = false): ParCandidates {
   if (cfg.par === undefined) return { ...stepCandidates(model, cfg, input, resolveNames), regionChoices: [] };
-  const outer = stepCandidates(model, cfg, input, resolveNames);
+  let outer = stepCandidates(model, cfg, input, resolveNames);
+  // The parallel state's own completion transitions wait until every region is final (the interpreter's `outerCompletion`).
+  if (input.kind === 'completion' && !regionsAllFinal(model, cfg.par.regs.map((rg) => rg.stack))) {
+    const top = cfg.stack.length - 1;
+    outer = { enabled: outer.enabled.filter((e) => e.level !== top), undetermined: outer.undetermined.filter((u) => u.level !== top) };
+  }
   if (input.kind === 'timeout') return { ...outer, regionChoices: [] };
   const undetermined: UndeterminedGuard[] = [...outer.undetermined];
   const regionChoices: { cfg: MachineConfig; enabled: EnabledTransition[] }[] = [];

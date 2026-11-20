@@ -95,8 +95,6 @@ describe('nested parallel shapes that stay refused, with a reason', () => {
   };
   it('a parallel state inside a parallel state', () =>
     refused(base('state r1 parallel { state s1; state s2; } state r2;'), /holds another parallel state/));
-  it('a completion transition out of the parallel state', () =>
-    refused(base('state r1; state r2;', 'transition done first p then q;'), /completion transition/));
   it('a history composite inside a region', async () => {
     const l: any = await loadModelText(base('state r1 { state a; state b; } state r2;'), { fileName: 'h.sysml' });
     find(l.model, 'P::M::p::r1').attrs.history = true;
