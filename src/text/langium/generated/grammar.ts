@@ -3180,8 +3180,13 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                 "$type": "Group",
                 "elements": [
                   {
-                    "$type": "Keyword",
-                    "value": "action"
+                    "$type": "Assignment",
+                    "feature": "isAction",
+                    "operator": "?=",
+                    "terminal": {
+                      "$type": "Keyword",
+                      "value": "action"
+                    }
                   },
                   {
                     "$type": "Alternatives",
@@ -3213,16 +3218,52 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                 ]
               },
               {
-                "$type": "Assignment",
-                "feature": "name",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@80"
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Assignment",
+                    "feature": "name",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@80"
+                      },
+                      "arguments": []
+                    }
                   },
-                  "arguments": []
-                },
+                  {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Alternatives",
+                        "elements": [
+                          {
+                            "$type": "Keyword",
+                            "value": "::"
+                          },
+                          {
+                            "$type": "Keyword",
+                            "value": "."
+                          }
+                        ]
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "chain",
+                        "operator": "+=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@76"
+                          },
+                          "arguments": []
+                        }
+                      }
+                    ],
+                    "cardinality": "*"
+                  }
+                ],
                 "cardinality": "?"
               }
             ]

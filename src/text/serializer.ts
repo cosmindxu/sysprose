@@ -1030,6 +1030,12 @@ function requirementClauseLine(model: Model, el: ElementRecord, indent: number):
  */
 function stateBehaviorLine(model: Model, el: ElementRecord, indent: number): string {
   const parts = [String(el.attrs.stateSubaction)];
+  if (el.attrs.stateSubactionRef === true) {
+    // A reference (`entry X;`): the subsetting it owns names the action, and is not written as a `:>`.
+    const rel = model.children(el.id).find((c) => isSpecialization(c.eClass));
+    const target = rel === undefined ? undefined : (rel.target ?? [])[0];
+    if (target !== undefined) return `${INDENT.repeat(indent)}${parts[0]} ${model.qualifiedName(target)};`;
+  }
   if (el.declaredName !== undefined) parts.push('action', quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el), ...valueClause(el));
   return renderWithBody(model, el, indent, parts.join(' '));
