@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 169
-- **Tests:** 5853 total — 5853 passed, 0 failed, 0 skipped
+- **Files:** 178
+- **Tests:** 5973 total — 5973 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -109,25 +109,28 @@
 | test/unit/requirements-table.test.ts | 20 | 0 | 0 |
 | test/unit/scenarios.test.ts | 3 | 0 | 0 |
 | test/unit/semantics.bind.test.ts | 34 | 0 | 0 |
+| test/unit/semantics.composite-completion.test.ts | 8 | 0 | 0 |
 | test/unit/semantics.conformance.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraint-class.test.ts | 85 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
+| test/unit/semantics.entry-ref-effects.test.ts | 12 | 0 | 0 |
 | test/unit/semantics.evaluate-model.test.ts | 382 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 36 | 0 | 0 |
-| test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
+| test/unit/semantics.execution-full.test.ts | 20 | 0 | 0 |
 | test/unit/semantics.expr.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
-| test/unit/semantics.mc.parallel.test.ts | 21 | 0 | 0 |
+| test/unit/semantics.mc.parallel-orders.test.ts | 8 | 0 | 0 |
+| test/unit/semantics.mc.parallel.test.ts | 20 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 92 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 141 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 142 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.redefinition.test.ts | 5 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
@@ -136,15 +139,19 @@
 | test/unit/semantics.metaclasses.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.metamodel-complete.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.nested-parallel-fence.test.ts | 3 | 0 | 0 |
-| test/unit/semantics.parallel-nested.test.ts | 15 | 0 | 0 |
+| test/unit/semantics.parallel-completion.test.ts | 14 | 0 | 0 |
+| test/unit/semantics.parallel-nested.test.ts | 14 | 0 | 0 |
+| test/unit/semantics.parallel-root.test.ts | 30 | 0 | 0 |
 | test/unit/semantics.play-start.test.ts | 3 | 0 | 0 |
 | test/unit/semantics.relations.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
+| test/unit/semantics.review-fixes.test.ts | 7 | 0 | 0 |
 | test/unit/semantics.smt-encode.test.ts | 127 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 25 | 0 | 0 |
 | test/unit/semantics.solver-units.test.ts | 134 | 0 | 0 |
 | test/unit/semantics.solver.test.ts | 112 | 0 | 0 |
+| test/unit/semantics.state-effects.test.ts | 17 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
@@ -152,7 +159,7 @@
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
 | test/unit/store.reducers.test.ts | 354 | 0 | 0 |
-| test/unit/text.bracket-expr.test.ts | 53 | 0 | 0 |
+| test/unit/text.bracket-expr.test.ts | 52 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 31 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 14 | 0 | 0 |
 | test/unit/text.entry-ref.test.ts | 15 | 0 | 0 |
@@ -162,11 +169,13 @@
 | test/unit/text.literal-form.test.ts | 24 | 0 | 0 |
 | test/unit/text.load.test.ts | 14 | 0 | 0 |
 | test/unit/text.parser.test.ts | 14 | 0 | 0 |
+| test/unit/text.payload-done.test.ts | 6 | 0 | 0 |
 | test/unit/text.recovery-honesty.test.ts | 37 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
 | test/unit/text.roundtrip.test.ts | 243 | 0 | 0 |
-| test/unit/text.state-forms.test.ts | 14 | 0 | 0 |
+| test/unit/text.spec-7-18.test.ts | 18 | 0 | 0 |
+| test/unit/text.state-forms.test.ts | 15 | 0 | 0 |
 | test/unit/text.target-transition.test.ts | 11 | 0 | 0 |
 | test/unit/text.time-trigger.test.ts | 6 | 0 | 0 |
 | test/unit/text.transition-redefinition.test.ts | 5 | 0 | 0 |

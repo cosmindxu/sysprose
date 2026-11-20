@@ -1171,6 +1171,7 @@ true values. What follows is what that branch and the review of it left open; en
       preview servers; entry closed (reversible; a host that sends the isolation headers reopens it).
       [decision 2026-11-05]
       Rulings 2026-11-11: B-redef read only a bare `state :>> b;` of a general machine; stopped at a redefiner with a body, a transition `:>>` and two general machines.
+      (1) FIXED 2026-11-20 (sm-parroot): a refusal in any region of a parallel machine stops the whole run (`stopsRun`, `atRest`), pinned in simulate.test.ts.
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
@@ -1622,19 +1623,60 @@ tagged `[O1 …]` are what its steps and reviews left open.
       another over the whole script, the explorer refuses it); exploring every ordering of coupled regions instead of refusing; a completion transition
       out of a parallel state; witnesses on parallel machines (withheld: `fail`/`covered` rows come out inconclusive); the Play-path abstention (one region
       refuses, the others come to rest: Play runs to the sample cap).
+      ROOT DONE 2026-11-20 (sm-parroot): a parallel machine ROOT runs and is explored as a parallel state (all regions entered at once, every event
+      offered to every region in declaration order); the run is complete when every region is final; a refusal in any region stops the whole run
+      (Play no longer runs to the sample cap). A join/completion transition out of a parallel root is now REFUSED (it used to fire once every region
+      was final) — weaker, not wrong. REVIEW FIXES (sm-fixrev): coupling is now followed through a referenced action and a transition effect naming
+      an action; a region's timed transition is refused by the interpreter as by the explorer. STILL OPEN: exploring every ordering of coupled
+      regions instead of refusing; a completion/join transition out of a parallel state or root; witnesses on parallel machines (withheld);
+      a parallel state inside a parallel state; history inside one.
+      MORE DONE 2026-11-20: (sm-parcomp) a parallel state / root whose every region is final takes its completion transition (interpreter and walk alike;
+      the root join fires again). (sm-orders) COUPLED regions are explored in EVERY order (at most 4 regions; more refused with its reason), so the
+      walk is a superset of the interpreter's fixed-order runs; a state read as a region sees the attributes of the states and machine around it
+      (lexical scope), so a guard there is decided. STILL OPEN: witnesses on parallel machines (withheld), a parallel state inside a parallel
+      state, history inside one.
 
-- [ ] **Transition effects cannot be written inside a nested state.** `entry assign x := 1;` / `do assign …;` / `do send X to Y;` in a state body are refused
+- [x] **A completion transition out of a composite state fired at once (wrong answer, on main before 2026-11-20).** `transition cz first c then z;`
+      out of a composite `c` was taken on entering `c`, so the walk published `c`'s substates unreachable. SysML v2 Part 1 §9.2.11.2.1: a
+      transition without an accepter follows the completion of its source's performance, substates included. CLOSED (sm-compcomp): one rule in the
+      shared step relation (`stateCompleted`, config.ts) — a composite completes when its active leaf ends it (a final state or `done`,
+      `endsContainer`), a parallel state when every region does. Corpus: only DeadlockGuarded::Nested::Modes moved (its `sub2` is now a decided
+      dead end).
+
+- [ ] **v9: three transitions out of `OA::SwarmMemberModes::Nominal` fire on the same event.** Since `accept p : T` reads T as the trigger
+      (2026-11-20, §7.17.8), `accept positioningLostNotice : Common::ConditionNotice` and its siblings are all enabled by any `ConditionNotice`, so `reach`
+      reports a nondeterministic choice there (13 instead of 12). The payload NAME does not filter; the model needs a distinct item def per notice,
+      or a guard on the payload. A model change in mbse-workflow-public, not a tool change.
+
+- [x] **Review 2026-11-20: three wrong answers in the state-machine verification code.** (1) regions coupled through a referenced `entry X;` action
+      were explored as exhaustive over one region order; (2) a transition effect naming an action (`do action bump`) was dropped, so the walk
+      published a reachable state as unreachable (on main since before 2026-11-19); (3) an assignment effect that failed when its transition fired
+      was skipped (also on main). CLOSED (sm-fixrev): each is fixed or refused with its reason and pinned in semantics.review-fixes.test.ts; also
+      a region's timed transition is refused by the interpreter. Left: a transition effect with no `=` that is not a name is still ignored; the
+      effect-name lookup does not follow imports (it refuses instead).
+      CORRECTION 2026-11-20: finding (2) read `do action bump` as a reference; per §7.18.3 (OnOff4) `do action X` DECLARES a new, empty effect action, so
+      main's reading of that form was right. Only `do X` refers to the action X and performs it (attrs.effectRef). The over-reading refused 9 of
+      v9's 17 machines in an ungated tree and was caught by the behaviour differential before any merge.
+
+- [x] **Transition effects cannot be written inside a nested state.** `entry assign x := 1;` / `do assign …;` / `do send X to Y;` in a state body are refused
       (`mapper/state-form-unread`) and the `assign` inside `entry action w { … }` is not applied by the interpreter, so a transition effect on a nested
       (parallel) region can only be set through the API; the region-coupling case of the parallel work is therefore tested through the API only. Done: the
       spec forms read, the interpreter applies them on entry/exit and on a transition, and a text test pins a coupled-region machine. [sm-par2 2026-11-20]
+      CLOSED 2026-11-20 (sm-effects, sm-fixrev): `entry|do|exit assign x := e;` reads as the long form `entry action { assign x := e; }`, a transition's
+      `do assign x := e` as its effect; the interpreter and the walk apply them alike (entry/exit of each region of a parallel state included), and an
+      effect that cannot be evaluated — at the opening dry run or when it fires — refuses the run and the walk with its reason. `do send` stays refused.
+      A text test pins a coupled-region machine (the explorer refuses it, the interpreter gives both declaration orders).
 
-- [ ] **A referenced entry action's effect, and a reference start succession.** With `entry X;` read as a reference ([x] item above): (1) a referenced
+- [x] **A referenced entry action's effect, and a reference start succession.** With `entry X;` read as a reference ([x] item above): (1) a referenced
       action's effect is not applied when the state is entered (`applyBehaviorEffect` reads only the element itself; a declared entry body was not followed
       either); (2) `entry init; … transition first init then s` binds `first init` to the referenced action when `init` exists, and the start-reading code does
       not follow a reference entry's own name; neither was probed in the app. Done: both are decided per the spec or refused with a stated reason, with a
       pin each. [sm-entryref 2026-11-20]
+      CLOSED 2026-11-20 (sm-refeff): `entry|do|exit X;` applies X's own assignments (walk and interpreter alike); an X with anything but assignments, a
+      parameter, a typing that brings a body, or a reference that does not resolve or loops refuses with a reason. The succession written after the
+      reference entry (`entry X; then s;` / `first X then s;`) is the start; a `transition` from the action's name is refused with a specific reason.
 
-- [ ] **The spec's own state-machine example does not parse: `entry; then off;` is an error.** SysML v2
+- [x] **The spec's own state-machine example does not parse: `entry; then off;` is an error.** SysML v2
       Part 1 §7.18.3's `state def OnOff1 { entry; then off; state off; state on; transition off_on
       first off then on; transition on_off first on then off; }`, verbatim, gives
       `error parse/dangling-then` ("'then off' has nothing to follow") plus a `split-declaration`
@@ -1650,6 +1692,9 @@ tagged `[O1 …]` are what its steps and reviews left open.
       simulator does not start (`Not started: …`); an entry/do/exit action's type, multiplicity and
       body are kept; `do`/`entry`/`exit` bodies are kept out of the machine's states.
       PROGRESS 2026-11-20 (sm-forms, sm-shorthand, time-trigger): `accept after 5[min]` parses as a time trigger (the interpreter and the walk refuse it: no clock), the guarded entry succession `entry; if c then off;` and the target-transition shorthand `state off; accept E then on;` read as the spec says, `entry action initial;` and `abstract exhibit state x;` parse. STILL OPEN: no spec text is available locally, so the OnOff examples are written from the notation and memory and are not yet pinned verbatim; fetch the spec text and pin each example.
+      CLOSED 2026-11-20 (sm-specpins): every §7.18.2-7.18.4 example is pinned VERBATIM from the spec (SysML v2 Part 1, local corpus
+      SystemsPerspectiveBib/03 omg-sysml-2.0-part1-2026) in test/unit/text.spec-7-18.test.ts: each loads with no diagnostic or is refused with a stated
+      one, and is run and walked (or refused with its reason). `then done` (OnOff6) now reaches the containing state's final node.
 
 - [x] **Say that the PSSM Clause 9 oracle was not built, or build a scored subset.** `docs/04` cites
       `omg-pssm-1.0-2019` Clause 9 as "a UML/fUML oracle for the conformance scorecard" for
@@ -1698,6 +1743,9 @@ tagged `[O1 …]` are what its steps and reviews left open.
       misread first. Done: every §7.18 example parses with no diagnostic or is refused with a stated
       reason, each pinned verbatim by a test. [spec-par-ps2 2026-11-19; spec conformance mandatory]
       PROGRESS 2026-11-20: parsed — guarded entry succession, `entry action initial;`, `abstract exhibit state x;`, the target-transition shorthand (`accept`/`if` after a state, source = the preceding state), `accept after`. Refused with `mapper/state-form-unread` and a stated reason — `entry assign …;` / `do send …;`, `exhibit A::B :> C;`, a shorthand with nothing to leave. STILL OPEN: reading those three instead of refusing, a `[g]` guard written right after the accept name in the shorthand (read as a multiplicity, refused), and the verbatim pins (no spec text locally).
+      PROGRESS 2026-11-20 (sm-specpins, sm-done): the guard/accepter order is free, a typed and `;`-ended effect parses, `action x terminate;`,
+      `exhibit state x references Y;`, `accept p : T` (T is the trigger, p the payload name — no longer dropped), `then done`. STILL refused with a
+      stated reason: `do send …` (no send semantics), `exhibit A::B :> C;`, a `[g]` guard right after the accept name in the shorthand.
 
 - [x] **`entry X;` / `do X;` / `exit X;` must read as a reference to an existing action, as the spec
       says, not as a declaration of a new one.** Today they declare a new action (the serializer writes a
