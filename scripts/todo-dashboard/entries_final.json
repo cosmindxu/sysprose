@@ -5401,6 +5401,36 @@
  },
  {
   "id": 361,
+  "title": "The long form reads accept E [g] as a guard; SysML v2 reads [g] as the payload's multiplicity",
+  "first_title": "The long form reads accept E [g] as a guard; SysML v2 reads [g] as the payload's multiplicity",
+  "first": "2026-11-20",
+  "first_idx": 122,
+  "closed": "",
+  "closed_idx": null,
+  "tag": "review 2026-11-20",
+  "cls_first": "POLISH",
+  "cls_last": "POLISH",
+  "optional": false,
+  "split_from": null,
+  "provisional": true
+ },
+ {
+  "id": 362,
+  "title": "Unify when a region's completion transitions are chased",
+  "first_title": "Unify when a region's completion transitions are chased",
+  "first": "2026-11-20",
+  "first_idx": 122,
+  "closed": "",
+  "closed_idx": null,
+  "tag": "sm-parpar review",
+  "cls_first": "POLISH",
+  "cls_last": "POLISH",
+  "optional": false,
+  "split_from": null,
+  "provisional": true
+ },
+ {
+  "id": 363,
   "title": "Name the holder in reach's refusal (optional, low)",
   "first_title": "Name the holder in reach's refusal (optional, low)",
   "first": "2026-10-21",
@@ -5415,7 +5445,7 @@
   "provisional": false
  },
  {
-  "id": 362,
+  "id": 364,
   "title": "Read the subsetted feature where an instance redefines a usage that subsets it",
   "first_title": "Read the subsetted feature where an instance redefines a usage that subsets it",
   "first": "2026-10-22",

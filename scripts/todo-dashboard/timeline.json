@@ -3880,9 +3880,9 @@
   "open_raw": 74,
   "open": 74,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 42,
-   "POLISH": 30,
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 27,
    "HELD": 2
   },
   "new": 1,
@@ -3901,6 +3901,38 @@
    "HELD": 0
   },
   "cum_new": 328,
+  "cum_closed": 252
+ },
+ {
+  "idx": 122,
+  "sha": "db82cb7",
+  "when": "2026-11-20T19:45:36+01:00",
+  "day": "2026-11-20",
+  "subject": "merge round sm11: exhibit A::B :> C read; a parallel state inside a region performed and explored; docs re-measured (180 files, 5991 tests; ",
+  "open_raw": 76,
+  "open": 76,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 42,
+   "POLISH": 32,
+   "HELD": 2
+  },
+  "new": 2,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 2,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 330,
   "cum_closed": 252
  }
 ]
