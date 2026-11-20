@@ -1680,8 +1680,8 @@
    }
   },
   {
-   "id": 350,
-   "tier": "polish",
+   "id": null,
+   "tier": "",
    "title": "Read the corpus against model-checking candidates 6\u20138 before building any of them.",
    "section": "Behaviour checks and the palette's checks lane \u2014 review 2026-10-14",
    "subs": [
@@ -1701,7 +1701,7 @@
     },
     {
      "key": "6",
-     "text": "against them and record agreements and conflicts in `docs/05`. Done: `docs/05` carries the reading per candidate. [mc-vs-bib 2026-11-18; D]",
+     "text": "against them and record agreements and conflicts in `docs/05`. Done: `docs/05` carries the reading per candidate. [mc-vs-bib 2026-11-18; D] CLOSED 2026-11-20 (sm-corpus): docs/05 carries a corpus reading under candidates",
      "status": "open",
      "closed_day": "",
      "closed_by": ""
@@ -1969,6 +1969,28 @@
    }
   },
   {
+   "id": 359,
+   "tier": "polish",
+   "title": "A referenced entry action's effect, and a reference start succession.",
+   "section": "Behaviour checks and the palette's checks lane \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "`entry init; \u2026 transition first init then s` binds `first init` to the referenced action when `init` exists, and the start-reading code does not follow a reference entry's own name; neither was probed in the app. Done: b",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 1,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
    "id": 313,
    "tier": "weaker",
    "title": "Abstentions left in the order of listings (rollup; sound, only weaker).",
@@ -2102,11 +2124,11 @@
   }
  ],
  "totals": {
-  "open": 201,
+  "open": 202,
   "closed": 15,
   "narrowed": 4,
   "ruled": 1,
   "held": 4,
-  "subs": 225
+  "subs": 226
  }
 }

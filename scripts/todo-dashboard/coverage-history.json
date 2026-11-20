@@ -1474,6 +1474,21 @@
   },
   {
    "idx": 120,
+   "day": "2026-11-20",
+   "sha": "99ab8b1",
+   "subject": "merge round sm5: docs re-measured (169 files, 5853 tests; 128 codes; guards 238/238; E2E green); TODO.md: the closed state-machine items and",
+   "source": "timeline",
+   "snapshot": "99ab8b1",
+   "rows": 86,
+   "measured": 56,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 7,
+   "construct_coverage": 73.5,
+   "decision_coverage": 28.0
+  },
+  {
+   "idx": 121,
    "day": "2026-11-17",
    "sha": "5b07886",
    "subject": "todo-dashboard: the SysML v2 coverage universe and what is measurably covered",
@@ -1488,7 +1503,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 121,
+   "idx": 122,
    "day": "2026-11-18",
    "sha": "2890ef2",
    "subject": "a5-cu CU1: API groups decided and GRAPH kinds rendered where a test asserts them (17 rows; API:other stays unmeasured, not shipped)",
@@ -1503,7 +1518,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 122,
+   "idx": 123,
    "day": "2026-11-19",
    "sha": "0d08856",
    "subject": "a5-cu CU2: measure the read column for the 14 textual rows from pinned probes (6 read, 8 partial)",
@@ -1518,7 +1533,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 123,
+   "idx": 124,
    "day": "2026-11-19",
    "sha": "a073ae2",
    "subject": "a5-cu CU3: normative clause list",
@@ -1533,7 +1548,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 124,
+   "idx": 125,
    "day": "2026-11-19",
    "sha": "b7cc670",
    "subject": "a5-cu-3: review fixes",
@@ -1548,7 +1563,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 125,
+   "idx": 126,
    "day": "2026-11-19",
    "sha": "7ede80b",
    "subject": "a5-cu CU3: cases get their own unmeasured row; the gaps are listed; the source is validated harder",
@@ -1563,7 +1578,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 126,
+   "idx": 127,
    "day": "2026-11-19",
    "sha": "37471ac",
    "subject": "a5-cu CU6: per-area false counts",
@@ -1578,7 +1593,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 127,
+   "idx": 128,
    "day": "2026-11-19",
    "sha": "ccb21bb",
    "subject": "a5-cu CU8: weighting policy",
@@ -1593,7 +1608,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 128,
+   "idx": 129,
    "day": "2026-11-19",
    "sha": "92c5289",
    "subject": "a5-cu CU9: trends and evidence links",
@@ -1608,7 +1623,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 129,
+   "idx": 130,
    "day": "2026-11-19",
    "sha": "3a740db",
    "subject": "a5-cu-689: review fixes (trend note, README rows, a truncated history is an error, per-area count wording)",
@@ -1623,7 +1638,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 130,
+   "idx": 131,
    "day": "2026-11-19",
    "sha": "4a9d6a3",
    "subject": "a5-cu-689: Fable review fixes (register wrong-statement defects counted, equal-size variants, n/a for an empty denominator, class names only as code or in the tag, ignored files rejected)",
@@ -1638,7 +1653,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 131,
+   "idx": 132,
    "day": "2026-11-19",
    "sha": "7d2dc6a",
    "subject": "coverage: regenerate the trend and page after the merge",
@@ -1653,7 +1668,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 132,
+   "idx": 133,
    "day": "2026-11-19",
    "sha": "7908a33",
    "subject": "todo-dashboard: refresh the datasets and the standalone page against main 7d2dc6a (78 open items)",
@@ -1668,7 +1683,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 133,
+   "idx": 134,
    "day": "2026-11-19",
    "sha": "2840e97",
    "subject": "todo-dashboard: refresh the datasets and the standalone page against main 8344ad0",
@@ -1683,7 +1698,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 134,
+   "idx": 135,
    "day": "2026-11-19",
    "sha": "abf30a6",
    "subject": "todo-dashboard: refresh the datasets and the standalone page against main fe9aa18",
@@ -1698,7 +1713,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 135,
+   "idx": 136,
    "day": "2026-11-19",
    "sha": "240592c",
    "subject": "todo-dashboard: refresh the datasets and the standalone page",
@@ -1713,7 +1728,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 136,
+   "idx": 137,
    "day": "2026-11-19",
    "sha": "88a0507",
    "subject": "todo-dashboard: refresh the datasets against main 240592c",
@@ -1728,7 +1743,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 137,
+   "idx": 138,
    "day": "2026-11-19",
    "sha": "1326425",
    "subject": "todo-dashboard: CU-7 is not a FALSE-tier item (override) and the datasets are refreshed",

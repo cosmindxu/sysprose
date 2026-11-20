@@ -3816,9 +3816,9 @@
   "open_raw": 81,
   "open": 81,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 43,
-   "POLISH": 36,
+   "FALSE": 5,
+   "WEAKER": 41,
+   "POLISH": 33,
    "HELD": 2
   },
   "new": 0,
@@ -3838,5 +3838,37 @@
   },
   "cum_new": 325,
   "cum_closed": 242
+ },
+ {
+  "idx": 120,
+  "sha": "99ab8b1",
+  "when": "2026-11-20T08:10:27+01:00",
+  "day": "2026-11-20",
+  "subject": "merge round sm5: docs re-measured (169 files, 5853 tests; 128 codes; guards 238/238; E2E green); TODO.md: the closed state-machine items and",
+  "open_raw": 76,
+  "open": 76,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 42,
+   "POLISH": 32,
+   "HELD": 2
+  },
+  "new": 2,
+  "closed": 7,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 2,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 1,
+   "POLISH": 6,
+   "HELD": 0
+  },
+  "cum_new": 327,
+  "cum_closed": 249
  }
 ]
