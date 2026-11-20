@@ -1025,7 +1025,12 @@ function runStateMachineChecked(
     const unopened =
       `${model.qualifiedName(container.id) || container.id} does not start: its entry action names where it opens ` +
       '(SysML v2 §7.18.2), and not as the one unguarded succession into one of its own states that this ' +
-      'interpreter reads — so no start is guessed.';
+      'interpreter reads — so no start is guessed' +
+      (model.children(container.id).some((c) => c.attrs.stateSubaction === 'entry' && c.attrs.stateSubactionRef === true)
+        ? '; the entry is a reference to an existing action, whose start is the succession written after it ' +
+          '(`entry X; then s;` or `first X then s;`), not a `transition` from the action\u2019s name'
+        : '') +
+      '.';
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
   // A composite state entered mid-run opens through the same reading of its own entry action; if that start is
