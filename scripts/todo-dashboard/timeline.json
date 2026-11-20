@@ -3912,9 +3912,9 @@
   "open_raw": 76,
   "open": 76,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 42,
-   "POLISH": 32,
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 29,
    "HELD": 2
   },
   "new": 2,
@@ -3934,5 +3934,37 @@
   },
   "cum_new": 330,
   "cum_closed": 252
+ },
+ {
+  "idx": 123,
+  "sha": "996143a",
+  "when": "2026-11-20T22:49:05+01:00",
+  "day": "2026-11-20",
+  "subject": "merge round sm12: witnesses on parallel machines replayed and published; one completion timing for regions; T-115 merges a redefinition over",
+  "open_raw": 75,
+  "open": 75,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 42,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 330,
+  "cum_closed": 253
  }
 ]
