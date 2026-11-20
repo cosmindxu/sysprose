@@ -1543,6 +1543,10 @@ tagged `[O1 …]` are what its steps and reviews left open.
       STILL machine-boundary, with a stated reason: a redefinition over a state that holds something of its own (the spec merges the two; this view does
       not), an unnamed redefinition with a body, a nested redefinition, an attribute `:>>`, a state redefined twice with a body, a step naming a replaced
       state, generals that collide, a cycle, a chain over eight, two start nodes. A redefinition that targets a non-transition is not diagnosed.
+      MORE 2026-11-20 (sm-t115b): a body redefinition `state r :>> s {…}` over an `s` that holds only substates and steps between them MERGES the two
+      (SysML v2 Part 1 §7.3: a redefining usage replaces the redefined one and inherits its features; inherited and owned names must be distinct),
+      equal to its hand-flattened twin on 40 random cases. STILL refused with a reason: an `s` holding entry/do/exit, attributes, a start or
+      history; a name held by both; a nested `:>>`; a redefinition of a redefinition.
 - [ ] **Revisit `validation/constraint-by-instance` after one workflow run on a model with instance
       groups.** The rule (`src/validation/rules.ts:1118`, the 27th) is non-blocking, with a
       `CODE_NOTES` entry in the workflow repo (`src/spec/codes.ts:96`); that was judged without a
@@ -1638,16 +1642,21 @@ tagged `[O1 …]` are what its steps and reviews left open.
       MORE 2026-11-20 (sm-parpar): a parallel state inside a region (of a parallel state or a parallel root) is performed and explored — regions form a
       tree, an event is offered depth-first in declaration order, nested completion and exit inner-first (semantics.parallel-deep). STILL OPEN:
       a region that is itself a parallel state, history inside a parallel state, witnesses on parallel machines.
+      MORE 2026-11-20: (sm-witness) witnesses on parallel machines are replayed through the interpreter and published when they replay step for step;
+      a path that needs a non-declaration region order stays withheld with its reason. (sm-chase) one completion timing. STILL OPEN: a region that
+      is itself a parallel state, history inside a parallel state.
 
 - [ ] **The long form reads `accept E [g]` as a guard; SysML v2 reads `[g]` as the payload's multiplicity.** `transition t first a accept E [g]
       then b;` is read today with the guard `g` (UML-style). SysML v2 §7.18.3 writes a guard `if g`, and §7.17.8 makes `[g]` after the payload
       name a multiplicity. Conforming would turn every such guard into a multiplicity (a dropped guard), so the decision is the user's: fence it
       (refuse with a hint to write `if g`) or keep it as a documented departure. [review 2026-11-20]
 
-- [ ] **Unify when a region's completion transitions are chased.** The interpreter chases a region's completions right after that region
+- [x] **Unify when a region's completion transitions are chased.** The interpreter chases a region's completions right after that region
       steps, before the next region sees the event; the explorer chases after the whole event. With coupled regions a path differs (the
       walk reaches the interpreter's states by other paths, probed 2026-11-20) and no missing state was found, but agreement is not proved. Done:
       one timing in both, or a proof that the reachable sets agree, with a differential pin. [sm-parpar review]
+      CLOSED 2026-11-20 (sm-chase): one timing in both — an event is offered to every region, THEN completions are chased (regions in declaration
+      order, nested first); the walk's reachable set equals the interpreter's union over region orders (semantics.parallel-chase).
 
 - [x] **A completion transition out of a composite state fired at once (wrong answer, on main before 2026-11-20).** `transition cz first c then z;`
       out of a composite `c` was taken on entering `c`, so the walk published `c`'s substates unreachable. SysML v2 Part 1 §9.2.11.2.1: a

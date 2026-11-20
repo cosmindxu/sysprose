@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 180
-- **Tests:** 5991 total — 5991 passed, 0 failed, 0 skipped
+- **Files:** 183
+- **Tests:** 6004 total — 6004 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -127,11 +127,13 @@
 | test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.parallel-orders.test.ts | 8 | 0 | 0 |
+| test/unit/semantics.mc.parallel-witness.test.ts | 4 | 0 | 0 |
 | test/unit/semantics.mc.parallel.test.ts | 20 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 92 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.reach.test.ts | 142 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
+| test/unit/semantics.mc.redefinition-merge.test.ts | 2 | 0 | 0 |
 | test/unit/semantics.mc.redefinition.test.ts | 5 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 40 | 0 | 0 |
@@ -139,6 +141,7 @@
 | test/unit/semantics.metaclasses.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.metamodel-complete.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.nested-parallel-fence.test.ts | 3 | 0 | 0 |
+| test/unit/semantics.parallel-chase.test.ts | 7 | 0 | 0 |
 | test/unit/semantics.parallel-completion.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.parallel-deep.test.ts | 12 | 0 | 0 |
 | test/unit/semantics.parallel-nested.test.ts | 14 | 0 | 0 |
