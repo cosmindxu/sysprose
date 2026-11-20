@@ -3191,6 +3191,8 @@ describe('a completion livelock: a cycle the interpreter’s chase goes round wi
         transition gs first good accept e then s0;
       }
     } }`);
+    // `i1` is final: `comp` completes only at a final substate (sm-compcomp, SysML v2 Part 1 §9.2.11.2.1).
+    model.get(id('i1'))!.attrs.kind = 'final';
     for (const events of [['go'], ['go', 'e', 'go']]) {
       const run = runStateMachine(model, machineId, events);
       expect(run.finalState, events.join(',')).toBe(id('good'));

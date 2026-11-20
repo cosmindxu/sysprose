@@ -668,7 +668,10 @@ describe('clause (d), store: a guard nobody bound', () => {
     const ctrl = r.machines.find((m) => m.machine.qualifiedName === 'DeadlockGuarded::Ctrl::Modes')!;
     expect(ctrl.deadlocks.map((d) => d.leaf.name)).toEqual(['done']);
     expect(ctrl.deadlocksWithheld.map((d) => d.leaf.name)).toEqual(['holding']);
-    for (const m of r.machines) expectRefused(m, 'store');
+    expectRefused(ctrl, 'store');
+    // `Nested`'s guard sits on a completion exit of a composite that is not complete at `sub2`, so the walk never
+    // consults it (sm-compcomp): nothing undecided, nothing refused.
+    expect(r.machines.find((m) => m.machine.qualifiedName === 'DeadlockGuarded::Nested::Modes')!.trapCensus.refusedByGate).toBeNull();
     expect(trapCodes(r)).toEqual([]);
   }, 60_000);
 });

@@ -547,6 +547,8 @@ function twoIdleMachine(): { model: Model; machineId: ElementId; idles: ElementI
   const idleA = f.state('idle', alpha.id);
   const beta = f.state('beta', sm.id);
   const idleB = f.state('idle', beta.id);
+  // `idle` in `alpha` is final: a completion transition out of a composite waits for its final substate (sm-compcomp).
+  m.get(idleA.id)!.attrs.kind = 'final';
   f.transition(boot.id, alpha.id, { ownerId: sm.id });
   f.transition(alpha.id, beta.id, { ownerId: sm.id });
   return { model: m, machineId: sm.id, idles: [idleA.id, idleB.id] };
@@ -562,6 +564,7 @@ function reenteredMachine(): { model: Model; machineId: ElementId } {
   const outer = f.state('outer', sm.id);
   const x = f.state('x', outer.id);
   const y = f.state('y', outer.id);
+  m.get(y.id)!.attrs.kind = 'final'; // `outer` completes at its final substate (sm-compcomp)
   const p2 = f.state('p2', sm.id);
   f.attribute('n', sm.id, { type: 'Integer', value: 0 });
   f.transition(x.id, y.id, { ownerId: outer.id });

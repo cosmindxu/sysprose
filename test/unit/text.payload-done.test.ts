@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { loadModelText } from '@text/load';
 import { serializeElement } from '@text/serializer';
 import { runStateMachine } from '../../src/semantics/execute';
-import { isFinalState } from '../../src/semantics/mc/config';
+import { endsContainer } from '../../src/semantics/mc/config';
 import { exploreMachine } from '../../src/semantics/mc/explore';
 
 const load = async (text: string): Promise<any> => loadModelText(text, { fileName: 'pd.sysml' });
@@ -54,7 +54,7 @@ describe('then done', () => {
     expect(report.diagnostics.filter((d: any) => d.code === 'ref/unresolved-transition-end')).toEqual([]);
     const id = find(model, 'P::M').id;
     const res = runStateMachine(model, id, ['e']);
-    expect(isFinalState(model, res.finalState!)).toBe(true); // the flat run leaves `complete` untracked; its leaf is final
+    expect(endsContainer(model, res.finalState!)).toBe(true); // the flat run leaves `complete` untracked; its leaf is final
     const hier = await load('package P { state def H { entry; then a; state a { entry; then x; state x; } transition first a accept e then done; } }');
     expect(runStateMachine(hier.model, find(hier.model, 'P::H').id, ['e']).complete).toBe(true);
     const w: any = exploreMachine(model, id);
@@ -64,13 +64,13 @@ describe('then done', () => {
   });
   it('run without the event is not complete; the shorthand reads too; round-trips', async () => {
     const { model } = await load(`package P { ${M} }`);
-    expect(isFinalState(model, runStateMachine(model, find(model, 'P::M').id, []).finalState!)).toBe(false);
+    expect(endsContainer(model, runStateMachine(model, find(model, 'P::M').id, []).finalState!)).toBe(false);
     const sh = await load('package P { state def N { entry; then a; state a; accept e then done; } }');
-    expect(isFinalState(sh.model, runStateMachine(sh.model, find(sh.model, 'P::N').id, ['e']).finalState!)).toBe(true);
+    expect(endsContainer(sh.model, runStateMachine(sh.model, find(sh.model, 'P::N').id, ['e']).finalState!)).toBe(true);
     const out = serializeElement(model!, find(model, 'P').id);
     expect(out).toContain('then done');
     const again = await load(out);
-    expect(isFinalState(again.model, runStateMachine(again.model, find(again.model, 'P::M').id, ['e']).finalState!)).toBe(true);
+    expect(endsContainer(again.model, runStateMachine(again.model, find(again.model, 'P::M').id, ['e']).finalState!)).toBe(true);
     expect(trs(again.model)).toHaveLength(1);
   });
 });

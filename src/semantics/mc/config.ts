@@ -927,8 +927,43 @@ export function isHistoryComposite(model: Model, stateId: ElementId): boolean {
 export function isFinalState(model: Model, stateId: ElementId): boolean {
   const s = model.get(stateId);
   if (!s) return false;
-  // A `done` node is the final state of its container (SysML v2 §7.18.3: `then done` ends the containing state).
-  return s.attrs.kind === 'final' || s.attrs.isFinal === true || s.declaredName === 'final' || s.eClass === 'DoneNode';
+  return s.attrs.kind === 'final' || s.attrs.isFinal === true || s.declaredName === 'final';
+}
+
+/**
+ * Does the active leaf END its container: a final state, or a `done` node (SysML v2 §7.18.3: `then done` ends the
+ * containing state). Read by the completion rules ({@link stateCompleted}, {@link regionsAllFinal}) — NOT by
+ * {@link isFinalState}, which stays the interpreter's `complete` / `finalState` predicate (a `DoneNode` is a
+ * terminal node, not a final STATE; `explore.ts` `isTerminalNode` says why).
+ */
+export function endsContainer(model: Model, id: ElementId): boolean {
+  return isFinalState(model, id) || model.get(id)?.eClass === 'DoneNode';
+}
+
+/**
+ * Is a parallel state complete (SysML v2 §7.18.2): it has regions and every one is at a final state it owns — the
+ * region's own top-level final, not a final nested inside a composite of the region. `stacks` is one active stack
+ * per region. The interpreter and the explorer both ask THIS.
+ */
+export function regionsAllFinal(model: Model, stacks: readonly (readonly ElementId[])[]): boolean {
+  return stacks.length > 0 && stacks.every((st) => st.length === 1 && endsContainer(model, st[0]));
+}
+
+/**
+ * Has the state at `level` of the active stack COMPLETED, for a trigger-less transition out of it (SysML v2 Part 1
+ * §9.2.11.2.1: a transition without an accepter follows the completion of its source's performance, after its
+ * middle — the do action AND the substates)? A simple state (the leaf) completes after its entry/do. A composite
+ * (a state with an active substate below it on the stack) completes only when its active leaf is a final state
+ * (`then done`), recursively; a parallel leaf only through the parallel state's own rule, and a composite holding an
+ * active parallel state has no final leaf, so it does not complete until the parallel state exits. The parallel state
+ * itself (the leaf with `cfg.par`) completes when every region is final.
+ */
+export function stateCompleted(model: Model, cfg: MachineConfig, level: number): boolean {
+  const top = cfg.stack.length - 1;
+  // Only a SUBSTATE holds a composite open: a node under the state that is not a state (an action `then s::work`
+  // enters) is a subaction of its middle that this reading does not wait on — the state completes as it always did.
+  if (level < top) return model.get(cfg.stack[level + 1])?.eClass !== 'StateUsage' || endsContainer(model, cfg.stack[top]);
+  return cfg.par === undefined || regionsAllFinal(model, cfg.par.regs.map((rg) => rg.stack));
 }
 
 /**
@@ -1642,6 +1677,7 @@ export function stepCandidates(
     const sid = cfg.stack[level];
     for (const tr of all) {
       if (tr.source![0] !== sid) continue;
+      if (input.kind === 'completion' && !stateCompleted(model, cfg, level)) continue;
       const verdict = matches(model, cfg, tr, sid, input, scope);
       if (verdict === 'enabled') {
         enabled.push({ transition: tr, level, label: labelFor(tr, input) });

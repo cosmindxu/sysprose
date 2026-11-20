@@ -43,6 +43,7 @@ import {
   initialConfig,
   isCompletion,
   isFinalState,
+  regionsAllFinal,
   isHistoryComposite,
   isHistoryPseudostate,
   isParallelState,
@@ -56,14 +57,7 @@ import {
   triggerLabelOf,
 } from './config';
 
-/**
- * Is a parallel state complete (SysML v2 §7.18.2): it has regions and every one is at a final state it owns — the
- * region's own top-level final, not a final nested inside a composite of the region. `stacks` is one active stack
- * per region. The interpreter and the explorer both ask THIS.
- */
-export function regionsAllFinal(model: Model, stacks: readonly (readonly ElementId[])[]): boolean {
-  return stacks.length > 0 && stacks.every((st) => st.length === 1 && isFinalState(model, st[0]));
-}
+export { regionsAllFinal };
 
 /** Is any state in this machine's region (below its root) a parallel state? */
 export function hasNestedParallel(model: Model, machineId: ElementId): boolean {
@@ -381,12 +375,7 @@ export interface ParCandidates extends StepCandidates {
  */
 export function candidatesOf(model: Model, cfg: MachineConfig, input: StepInput, resolveNames = false): ParCandidates {
   if (cfg.par === undefined) return { ...stepCandidates(model, cfg, input, resolveNames), regionChoices: [] };
-  let outer = stepCandidates(model, cfg, input, resolveNames);
-  // The parallel state's own completion transitions wait until every region is final (the interpreter's `outerCompletion`).
-  if (input.kind === 'completion' && !regionsAllFinal(model, cfg.par.regs.map((rg) => rg.stack))) {
-    const top = cfg.stack.length - 1;
-    outer = { enabled: outer.enabled.filter((e) => e.level !== top), undetermined: outer.undetermined.filter((u) => u.level !== top) };
-  }
+  const outer = stepCandidates(model, cfg, input, resolveNames);
   if (input.kind === 'timeout') return { ...outer, regionChoices: [] };
   const undetermined: UndeterminedGuard[] = [...outer.undetermined];
   const regionChoices: { cfg: MachineConfig; enabled: EnabledTransition[] }[] = [];

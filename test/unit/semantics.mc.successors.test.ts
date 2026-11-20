@@ -1333,12 +1333,11 @@ describe('every machine in the tree, walked', () => {
     }
   });
 
-  it('leaves a guard undecided on exactly six of them, and `undeterminedGuards` is the shipped field that says so', () => {
+  it('leaves a guard undecided on exactly five of them (the composite exit in the Nested machine of deadlock-guarded is no longer consulted, sm-compcomp), and `undeterminedGuards` is the shipped field that says so', () => {
     const undecided = walked
       .filter((w) => w.walk.undeterminedGuards.length > 0)
       .map((w) => `${w.file} :: ${w.name}`);
     expect(undecided.sort()).toEqual([
-      'test/fixtures/verification/models/deadlock-guarded.sysml :: Modes',
       'test/fixtures/verification/models/deadlock-guarded.sysml :: Modes',
       'test/fixtures/verification/models/guard-undetermined.sysml :: Modes',
       'test/fixtures/verification/models/trapguard-typed.sysml :: Modes',
@@ -1346,7 +1345,7 @@ describe('every machine in the tree, walked', () => {
       'test/fixtures/verification/models/trapguard.sysml :: Modes',
     ]);
     expect(walked.length - undecided.length, 'a guard that used to decide stopped deciding').toBe(
-      walked.length - 6,
+      walked.length - 5,
     );
   });
 });

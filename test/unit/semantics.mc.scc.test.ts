@@ -555,7 +555,9 @@ describe('the deadlock row survives an undecided guard somewhere else in the mac
       report.diagnostics
         .filter((d) => d.code === 'verification/deadlock')
         .map((d) => d.elementName),
-    ).toEqual(['DeadlockGuarded::Ctrl::Modes::done']);
+    ).toEqual(['DeadlockGuarded::Ctrl::Modes::done', 'DeadlockGuarded::Nested::Modes::degraded::sub2']);
+    // (sub2 is a published deadlock since sm-compcomp: `degraded -> nominal` is a completion transition, and a
+    // composite completes only at a final substate, so its undecided guard is never consulted at `sub2`.)
   });
 
   it('is described the same way by `check-behaviour`, which speaks about `reach` on the same machine', async () => {
@@ -601,24 +603,18 @@ describe('the deadlock row survives an undecided guard somewhere else in the mac
     expect(succ.deadlocks.map((d) => d.leaf.name)).toEqual(['done']);
   }, 120_000);
 
-  it('asks the question of the whole active STACK, so a guard on a composite still withholds', async () => {
-    // The leaf-only reading of this rule is the one that looks right and is
-    // not: `sub2` has no outgoing transition of its own, so a check scoped to
-    // the leaf finds nothing undecided and publishes the row — about a
-    // configuration whose way out is `degraded -> nominal`, an edge the model
-    // states, the step relation consults at every configuration inside
-    // `degraded`, and this walk could not decide.
+  it('a guard on a composite\u2019s completion exit is not consulted while the composite is not complete (sm-compcomp)', async () => {
+    // Before SysML v2 Part 1 \u00a79.2.11.2.1 was read (a completion transition out of a composite waits for its final
+    // substate), `degraded -> nominal` was offered at `sub2` and its undecided guard withheld the deadlock row. Now
+    // the edge is not enabled there: `sub2` is a decided dead end, no guard is undecided, and the row is published.
     const nested = 'DeadlockGuarded::Nested::Modes';
     const w = (await walkFile(FILE)).get(nested)!;
     expect(w.walk.deadlocks.map((d) => d.leaf.name)).toEqual(['sub2']);
-    const row = w.walk.deadlocks[0];
-    expect(row.stack.map((s) => s.name)).toEqual(['degraded', 'sub2']);
-    expect(w.walk.undeterminedGuards[0].transition.from!.name).toBe('degraded');
-
+    expect(w.walk.deadlocks[0].stack.map((s) => s.name)).toEqual(['degraded', 'sub2']);
+    expect(w.walk.undeterminedGuards).toEqual([]);
     const published = await reachRow(FILE, nested);
-    expect(published.deadlocks).toEqual([]);
-    expect(published.deadlocksWithheld.map((d) => d.leaf.name)).toEqual(['sub2']);
-    expect(published.suppressed).toBe(true);
+    expect(published.deadlocks.map((d) => d.leaf.name)).toEqual(['sub2']);
+    expect(published.deadlocksWithheld).toEqual([]);
   }, 120_000);
 
   it('still withholds every row on a machine whose only leaf is undecided', async () => {

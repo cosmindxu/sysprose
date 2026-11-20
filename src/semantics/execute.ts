@@ -82,6 +82,7 @@ import {
   type MachineConfig,
   type StepEffects,
   type StepInput,
+  endsContainer,
 } from './mc/config';
 import { machineHolding } from './mc/explore';
 
@@ -1847,11 +1848,12 @@ function runHierRegion(
     const leaves = par.regs.map((rg) => leafOf(rg.cfg) ?? rg.id);
     // A nested parallel state is a leaf of the outer machine, which is not final; a parallel machine ROOT is complete
     // when every region has reached a final state (each region's own completion).
-    const done = rootParallel && par.regs.every((rg) => { return isFinalState(model, leafOf(rg.cfg) ?? rg.id); });
+    const done = rootParallel && par.regs.every((rg) => { return endsContainer(model, leafOf(rg.cfg) ?? rg.id); });
     return { leaf: leaves[0] ?? null, leaves, complete: done, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };
   }
   const leaf = leafOf(cfg);
-  const complete = leaf !== null && isFinalState(model, leaf);
+  // A final state, or `done` (SysML v2 §7.18.3: `then done` ends the containing state performance).
+  const complete = leaf !== null && endsContainer(model, leaf);
   return { leaf, complete, completionBudgetHit, ...(refused === undefined ? {} : { refused }) };
 }
 

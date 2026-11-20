@@ -642,17 +642,17 @@ function hierarchical(pkg: string, composites: number, children: number, withPro
     L.push(`      state C${c} {`, '        initial go;', `        transition go -> C${c}_0;`);
     for (let k = 0; k < children; k++) L.push(`        state C${c}_${k};`);
     for (let k = 0; k + 1 < children; k++) {
-      L.push(`        transition c${c}_${k} first C${c}_${k} accept step${c}_${k} : Cmd then C${c}_${k + 1};`);
+      L.push(`        transition c${c}_${k} first C${c}_${k} accept step${c}_${k} then C${c}_${k + 1};`);
     }
     if (sequence) {
-      for (let k = 0; k < children; k++) L.push(`        transition lv${c}_${k} first C${c}_${k} accept back${c}_${k} : Cmd then Idle;`);
-      if (c + 1 < composites) L.push(`        transition nx${c} first C${c}_${children - 1} accept next${c} : Cmd then C${c + 1}::C${c + 1}_0;`);
+      for (let k = 0; k < children; k++) L.push(`        transition lv${c}_${k} first C${c}_${k} accept back${c}_${k} then Idle;`);
+      if (c + 1 < composites) L.push(`        transition nx${c} first C${c}_${children - 1} accept next${c} then C${c + 1}::C${c + 1}_0;`);
     }
     L.push('      }');
   }
   for (let c = 0; c < composites; c++) {
-    if (!sequence || c === 0) L.push(`      transition in${c} first Idle accept enter${c} : Cmd then C${c};`);
-    L.push(`      transition out${c} first C${c} accept leave${c} : Cmd then Idle;`);
+    if (!sequence || c === 0) L.push(`      transition in${c} first Idle accept enter${c} then C${c};`);
+    L.push(`      transition out${c} first C${c} accept leave${c} then Idle;`);
   }
   L.push('    }', '  }', '}');
   return `${L.join('\n')}\n`;
@@ -2302,7 +2302,7 @@ describe('the reach verdict table', () => {
     const model = await load(`${FIX}/deadlock-guarded.sysml`);
     const result = reachOf(model, healthy);
     expect(result.verdict).toBe('issues');
-    expect(result.summary).toMatch(/withheld on 2 of 2/);
+    expect(result.summary).toMatch(/withheld on 1 of 2/); // sm-compcomp: Nested's composite exit is no longer consulted at sub2
   });
 
   it('reports a typed undetermined guard as a finding (trapguard-typed)', async () => {

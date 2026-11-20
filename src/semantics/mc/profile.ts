@@ -48,7 +48,9 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
     reading:
       `a fired transition is followed by trigger-less (completion) transitions until none is ` +
       `enabled, bounded at ${MAX_COMPLETION} chase steps per driving step. The bound is a BUDGET, ` +
-      `not a fixpoint: a chase that spends it stops mid-run and says so.`,
+      `not a fixpoint: a chase that spends it stops mid-run and says so. A trigger-less transition out of a ` +
+      `composite state is enabled only once its active substate is a final state (SysML v2 Part 1 §9.2.11.2.1: ` +
+      `completion follows the substates); a simple state completes after its entry/do.`,
     provenance: 'src/semantics/execute.ts — chaseHierCompletion, RunStateOptions.maxCompletion',
   },
   {

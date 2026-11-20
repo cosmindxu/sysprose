@@ -3164,3 +3164,16 @@ reopening the entry named.
   taken paired and cold, stands as the last one. A cost of about 50 ms on a
   machine of that size, for the finding of §8.8, is accepted. If it grows with
   the machines, the pass is the place to optimise.
+
+### 8.17 A completion transition out of a composite waits for its final substate — `sm-compcomp`, 2026-11-20
+
+A trigger-less transition out of a composite state used to fire at once on entering it, so a machine such as
+`c { then x; state x; state y; transition first x accept e then y; }` with `transition first c then z` ended in
+`z` immediately and `c::y` was reported unreachable. SysML v2 Part 1 §9.2.11.2.1 says a transition with no accepter
+follows the COMPLETION of its source's performance, after its middle — the do action and the substates. Now
+`stateCompleted` (`src/semantics/mc/config.ts`), asked by `stepCandidates` for every completion input, so by the
+interpreter and by the walk alike, enables such a transition only when the composite's active leaf is a final
+state (`then done`), recursively; a simple state still completes after its entry/do; a parallel state completes
+when every region is final (the earlier special case, now the same rule). A composite holding an active parallel
+state does not complete until it exits. A machine's own completion transitions are unaffected. Not read: a
+composite whose do action is still running and history re-entry are not distinguished (actions are instantaneous).
