@@ -1766,7 +1766,12 @@ function runHierRegion(
   /** Does any region of `node`, at any depth, take `input`? */
   const anyEnabled = (node: ParNode, input: StepInput): boolean =>
     node.regs.some((rg) => enabledTransitions(model, regCfg(rg), input).length > 0 || (rg.par !== null && anyEnabled(rg.par, input)));
-  /** Offer `input` to the regions of `node` in flattened declaration order. */
+  /**
+   * Offer `input` to the regions of `node` in flattened declaration order. Only the event transitions run here: the
+   * completions (trigger-less transitions) follow once EVERY region, at every depth, has taken its event transition
+   * (`chaseAll`), the explorer's timing — the regions perform one step together, so a region's completion never
+   * shows in the view another region has of the same event.
+   */
   const offer = (node: ParNode, input: StepInput, prefix: readonly ElementId[]): void => {
     for (const rg of node.regs) {
       if (refused !== undefined) return;
@@ -1778,11 +1783,9 @@ function runHierRegion(
           refused = { transitionId: c.transition.id, from: c.transition.source![0], to: c.transition.target![0], trigger: c.label };
           return;
         }
-        if (stepRegion(rg, take(en), prefix)) chaseRegion(rg, prefix);
+        stepRegion(rg, take(en), prefix);
       } else if (rg.par !== null) {
         offer(rg.par, input, [...prefix, rg.id, ...rg.cfg.stack]);
-        // A nested region may have completed the parallel state this region ends in: the region's own completion follows.
-        if (refused === undefined) chaseRegion(rg, prefix);
       }
     }
   };
@@ -1898,6 +1901,7 @@ function runHierRegion(
         }
       } else {
         offer(par, input, cfg.stack);
+        if (refused === undefined) for (const rg of par.regs) chaseRegion(rg, cfg.stack);
         if (refused === undefined && chaseHierCompletion().exhausted) completionBudgetHit = true;
       }
     }
