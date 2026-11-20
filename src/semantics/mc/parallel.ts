@@ -14,8 +14,16 @@
  * the machine as `p`: it opens in `[M]` with every child state entered as a region ({@link rootConfig}), nothing
  * leaves it, and the walk is the one below.
  *
- * WHAT IS REFUSED (`parallelRefusal`), with the interpreter's own reasons where it refuses too: a parallel state
- * below a parallel machine root, a parallel state inside a parallel state, an entry action naming a start, a history state inside, a
+ * NESTED PARALLEL STATES. A region whose active stack ends in a parallel state enters that state's regions too
+ * (depth first; `ParRegion.par`), so the active regions form a tree. Declaration order is FLATTENED depth first: an
+ * event is offered to the first region, then to the regions of the parallel state that region ends in, then to the
+ * next region, and so on. A region's own transitions (those that leave the nested state or a state that holds it)
+ * and the nested regions are never both enabled on one event (refused statically, below), so within a region the
+ * nested regions follow it. A completion chases the nested regions first, then the region. The nested parallel state
+ * completes when all its regions are final; leaving it exits its regions (inner first) before the state itself.
+ *
+ * WHAT IS REFUSED (`parallelRefusal`), with the interpreter's own reasons where it refuses too: a region that is
+ * itself a parallel state, an entry action naming a start, a history state inside, a
  * transition between regions or out of one, a step into a region, a region with an unread start, a COUPLED parallel
  * state of more than {@link MAX_ORDERED_REGIONS} regions — and two reasons the explorer adds:
  *   - an event a region takes AND a transition leaving `p` (or a state holding it) takes: the interpreter stops there
@@ -26,6 +34,7 @@ import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import {
   type EnabledTransition,
   type MachineConfig,
+  type ParConfig,
   type ParRegion,
   type StepEffects,
   type StepInput,
@@ -234,14 +243,13 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
     elementId,
     reason: `${reason} (SysML v2 §7.18.2)`,
   });
-  if (root && pars.length > 0) {
-    return out(pars[0].id, `its state ${name(pars[0].id)} is a parallel state below a parallel machine, and nested parallel states are not performed concurrently here`);
-  }
   // A parallel machine root is checked as the parallel state it is: its regions are its child states.
   for (const p of root ? [model.get(machineId)!] : pars) {
     const inside = new Set(machineRegion(model, p.id).descendants.map((e) => e.id));
-    if (pars.some((q) => q.id !== p.id && inside.has(q.id))) {
-      return out(p.id, `its parallel state ${name(p.id)} holds another parallel state, and nested parallel states are not performed concurrently here`);
+    // A parallel state inside a region is performed (a tree of regions); a REGION that is itself a parallel state
+    // (`state p parallel { state r parallel { … } }`) is not: its children would be a second level of regions beside r's own start.
+    if (parallelRegions(model, p.id).some((r) => isParallelState(model, r.id))) {
+      return out(p.id, `a region of its parallel state ${name(p.id)} is itself a parallel state, and a region that is a parallel state is not performed concurrently here`);
     }
     if (entryControlEdges(model, p.id).length > 0) {
       return out(p.id, `its parallel state ${name(p.id)} has an entry action naming a start, but a parallel state enters all its regions, each at its own start`);
@@ -307,7 +315,11 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
   return undefined;
 }
 
-/** Enter every region of the parallel state that ends `cfg.stack`, in declaration order, each at its own start — the interpreter's `enterRegionsIfParallel`. */
+/**
+ * Enter every region of the parallel state that ends `cfg.stack`, in declaration order, each at its own start — the
+ * interpreter's `enterPar`. A region whose start leaves it in a parallel state of its own enters that state's regions
+ * at once (depth first), so the regions form a tree ({@link ParRegion.par}).
+ */
 export function enterRegions(model: Model, cfg: MachineConfig): StepResult {
   const top = cfg.stack[cfg.stack.length - 1];
   const noEffects: StepEffects = { visited: [], fired: [], performed: [] };
@@ -324,9 +336,12 @@ export function enterRegions(model: Model, cfg: MachineConfig): StepResult {
     const o = initialConfig(model, r.id, { store: w, clock: cfg.clock });
     visited.push(...o.effects.visited);
     performed.push(...o.effects.performed);
+    const n = enterRegions(model, o.config);
+    visited.push(...n.effects.visited);
+    performed.push(...n.effects.performed);
     w.clear();
-    for (const [k, v] of o.config.store) w.set(k, v);
-    regs.push({ id: r.id, stack: o.config.stack, entryTime: o.config.entryTime });
+    for (const [k, v] of n.config.store) w.set(k, v);
+    regs.push({ id: r.id, stack: n.config.stack, entryTime: n.config.entryTime, ...(n.config.par === undefined ? {} : { par: n.config.par }) });
   }
   return {
     config: { ...cfg, store: w, par: { id: top, regs } },
@@ -352,25 +367,43 @@ function merge(a: StepEffects, b: StepEffects): StepEffects {
 /** The configuration of one region, on the run's store. */
 function regionView(cfg: MachineConfig, i: number): MachineConfig {
   const rg = cfg.par!.regs[i];
-  return { regionId: rg.id, stack: rg.stack, store: cfg.store, clock: cfg.clock, entryTime: rg.entryTime, history: cfg.history };
+  return {
+    regionId: rg.id,
+    stack: rg.stack,
+    store: cfg.store,
+    clock: cfg.clock,
+    entryTime: rg.entryTime,
+    history: cfg.history,
+    ...(rg.par === undefined ? {} : { par: rg.par }),
+  };
 }
 
-/** Take one transition inside region `i`. */
+/** Take one choice inside region `i` — a transition of the region, or a macro of the regions of a parallel state it ends in. */
 function stepInRegion(model: Model, cfg: MachineConfig, i: number, choice: EnabledTransition): StepResult {
-  const r = stepConfig(model, regionView(cfg, i), choice);
-  const regs = cfg.par!.regs.map((rg, k) => (k === i ? { id: rg.id, stack: r.config.stack, entryTime: r.config.entryTime } : rg));
+  const r = advanceConfig(model, regionView(cfg, i), choice);
+  const regs = cfg.par!.regs.map((rg, k) =>
+    k === i ? { id: rg.id, stack: r.config.stack, entryTime: r.config.entryTime, ...(r.config.par === undefined ? {} : { par: r.config.par }) } : rg,
+  );
   return { config: { ...cfg, store: r.config.store, par: { id: cfg.par!.id, regs } }, effects: r.effects };
 }
 
-/** Leave every region (inner to outer, regions in declaration order) — the interpreter's `exitRegions`. */
-function exitRegions(model: Model, cfg: MachineConfig): StepResult {
-  const performed: StepEffects['performed'][number][] = [];
-  const w = new Map(cfg.store);
-  const scope = regionScope(model, cfg.regionId);
-  for (const rg of cfg.par!.regs) {
+/**
+ * Leave every region (inner to outer, regions in declaration order; a region's own nested regions before the state
+ * that holds them) — the interpreter's `exitPar`. `scopeId` is the region the parallel state sits in.
+ */
+function exitPar(model: Model, p: ParConfig, scopeId: ElementId, w: Map<string, unknown>, performed: StepEffects['performed'][number][]): void {
+  const scope = regionScope(model, scopeId);
+  for (const rg of p.regs) {
+    if (rg.par !== undefined) exitPar(model, rg.par, rg.id, w, performed);
     for (let i = rg.stack.length - 1; i >= 0; i--) runStatePhase(model, rg.stack[i], 'exit', w, scope, performed);
     runStatePhase(model, rg.id, 'exit', w, scope, performed);
   }
+}
+
+function exitRegions(model: Model, cfg: MachineConfig): StepResult {
+  const performed: StepEffects['performed'][number][] = [];
+  const w = new Map(cfg.store);
+  exitPar(model, cfg.par!, cfg.regionId, w, performed);
   const { par: _par, ...rest } = cfg;
   void _par;
   return { config: { ...rest, store: w }, effects: { visited: [], fired: [], performed } };
@@ -410,7 +443,7 @@ export function candidatesOf(model: Model, cfg: MachineConfig, input: StepInput,
       const next: typeof branches = [];
       let first = true;
       for (const b of branches) {
-        const found = stepCandidates(model, regionView(b.at, i), input, resolveNames);
+        const found = candidatesOf(model, regionView(b.at, i), input, resolveNames);
         if (first) {
           for (const u of found.undetermined) {
             if (oi === 0 || !undetermined.some((x) => x.transition?.id === u.transition?.id && x.level === cfg.stack.length)) {
@@ -423,9 +456,12 @@ export function candidatesOf(model: Model, cfg: MachineConfig, input: StepInput,
           next.push(b);
           continue;
         }
+        // A region that ends in a parallel state of its own answers with that state's macros (its choices came with them).
+        const nestedMacros = found.enabled[0].macro !== undefined;
         const innermost = found.enabled[0].level;
-        const alts = found.enabled.filter((e) => e.level === innermost);
-        if (alts.length > 1 && oi === 0) regionChoices.push({ cfg: regionView(b.at, i), enabled: alts });
+        const alts = nestedMacros ? found.enabled : found.enabled.filter((e) => e.level === innermost);
+        if (oi === 0) regionChoices.push(...found.regionChoices);
+        if (!nestedMacros && alts.length > 1 && oi === 0) regionChoices.push({ cfg: regionView(b.at, i), enabled: alts });
         for (const a of alts) {
           const picks = b.picks.slice();
           picks[i] = a;
@@ -485,5 +521,5 @@ export function advanceConfig(model: Model, cfg: MachineConfig, choice: EnabledT
 
 /** Every transition a choice takes: itself, or each region's pick of a macro. */
 export function transitionsOf(choice: EnabledTransition): readonly EnabledTransition[] {
-  return choice.macro === undefined ? [choice] : choice.macro.picks.filter((p): p is EnabledTransition => p !== null);
+  return choice.macro === undefined ? [choice] : choice.macro.picks.filter((p): p is EnabledTransition => p !== null).flatMap(transitionsOf);
 }

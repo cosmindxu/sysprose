@@ -1415,6 +1415,12 @@ export interface ParRegion {
   readonly id: ElementId;
   readonly stack: readonly ElementId[];
   readonly entryTime: ReadonlyMap<ElementId, number>;
+  /**
+   * The regions of a parallel state this region's stack ends in (a parallel state inside a parallel state), or absent.
+   * The regions form a TREE: declaration order is depth first — a region, then the regions of the parallel state it
+   * ends in, then its next sibling.
+   */
+  readonly par?: ParConfig;
 }
 
 /** The regions of an active parallel state. */
@@ -1972,7 +1978,9 @@ export function hashConfig(cfg: MachineConfig, history = true): string {
   // over-fine, and the walk non-terminating, for the first caller that advances
   // it, which is what a timed `check-behaviour` is.
   const dwell = cfg.stack.map((s) => `${s}@${cfg.clock - (cfg.entryTime.get(s) ?? 0)}`).join('/');
-  const par = cfg.par === undefined ? '' : `|P:${cfg.par.regs.map((r) => `${r.id}=${r.stack.join('/')}`).join(';')}`;
+  const parKey = (p: ParConfig): string =>
+    p.regs.map((r) => `${r.id}=${r.stack.join('/')}${r.par === undefined ? '' : `{${parKey(r.par)}}`}`).join(';');
+  const par = cfg.par === undefined ? '' : `|P:${parKey(cfg.par)}`;
   return `${cfg.regionId}|${cfg.stack.join('/')}|${dwell}|${store}|${resumed}${par}`;
 }
 
@@ -1997,8 +2005,9 @@ export function leafOf(cfg: MachineConfig): ElementId | null {
 
 /** Every state a configuration is in: its stack, and for each region of an active parallel state the region and its stack. */
 export function activeStatesOf(cfg: MachineConfig): readonly ElementId[] {
+  const under = (p: ParConfig): ElementId[] => p.regs.flatMap((r) => [r.id, ...r.stack, ...(r.par === undefined ? [] : under(r.par))]);
   if (cfg.par === undefined) return cfg.stack;
-  return [...cfg.stack, ...cfg.par.regs.flatMap((r) => [r.id, ...r.stack])];
+  return [...cfg.stack, ...under(cfg.par)];
 }
 
 /** The leaves a configuration is in: its own, or for an active parallel state each region's (the region itself if it holds no state). */
@@ -2007,5 +2016,8 @@ export function activeLeavesOf(cfg: MachineConfig): readonly ElementId[] {
     const l = leafOf(cfg);
     return l === null ? [] : [l];
   }
-  return cfg.par.regs.map((r) => (r.stack.length > 0 ? r.stack[r.stack.length - 1] : r.id));
+  // A region that ends in a parallel state of its own contributes that state's leaves, not the parallel state.
+  const leaves = (p: ParConfig): ElementId[] =>
+    p.regs.flatMap((r) => (r.par !== undefined ? leaves(r.par) : [r.stack.length > 0 ? r.stack[r.stack.length - 1] : r.id]));
+  return leaves(cfg.par);
 }

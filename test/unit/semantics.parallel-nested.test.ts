@@ -93,8 +93,8 @@ describe('nested parallel shapes that stay refused, with a reason', () => {
     expect(x.r.unopened).toMatch(/§7\.18\.2/);
     expect(x.act).toEqual([]);
   };
-  it('a parallel state inside a parallel state', () =>
-    refused(base('state r1 parallel { state s1; state s2; } state r2;'), /holds another parallel state/));
+  it('a region that is itself a parallel state', () =>
+    refused(base('state r1 parallel { state s1; state s2; } state r2;'), /is itself a parallel state/));
   it('a history composite inside a region', async () => {
     const l: any = await loadModelText(base('state r1 { state a; state b; } state r2;'), { fileName: 'h.sysml' });
     find(l.model, 'P::M::p::r1').attrs.history = true;
@@ -104,10 +104,11 @@ describe('nested parallel shapes that stay refused, with a reason', () => {
   });
   it('a step into a region', () =>
     refused(base('state r1 { state a1; state a2; } state r2;', 'transition into first q accept e then p::r1::a2;'), /steps into a region/));
-  it('a parallel state below a top-level parallel machine', async () => {
-    const src = `package P { state def M parallel { state x { entry; then x1; state x1; state y parallel { state s1; state s2; } } state z; } }`;
+  it('a parallel state below a top-level parallel machine is performed (nested regions)', async () => {
+    const src = `package P { state def M parallel { state x { entry; then y; state y parallel { state s1; state s2; } } state z; } }`;
     const x = await run(src, []);
-    expect(x.r.unopened).toMatch(/below a parallel machine/);
+    expect(x.r.unopened).toBeUndefined();
+    expect(x.act).toEqual(['x::y::s1', 'x::y::s2', 'z']);
   });
   it('an entry action naming a start on the parallel state', () =>
     refused(base('entry; then r1; state r1; state r2;'), /entry action naming a start/));

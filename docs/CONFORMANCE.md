@@ -1178,7 +1178,7 @@ and a bad-prefix search finds no bad prefix for either on any graph; both report
 fairness assumption is named. A `pass` is emitted only when the walk saw the
 graph **whole**: the four conditions §3.8 states, computed from
 `exploreMachine`'s walk, **and** the fifth this tool added afterwards — every
-guard the walk consulted decided something. A bound hit, a parallel machine or a parallel state of a shape not performed (more than 4 coupled regions, nested parallel) or a history
+guard the walk consulted decided something. A bound hit, a parallel machine or a parallel state of a shape not performed (more than 4 coupled regions, a region that is itself a parallel state) or a history
 machine, a guard the walk could not evaluate, an unreadable property, an atom
 that names nothing, a witness the interpreter does not take
 (`verification/witness-not-replayed`) or a `recovery` withheld because the
