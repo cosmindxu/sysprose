@@ -954,7 +954,7 @@ describe('a nested state def: the machine that holds it, and a transition across
   it('refuses a specialisation this walk does not read, with the reason, and keeps what it cannot read unexplored', async () => {
     const model = await modelOf(`package Rf {
       state def Base { state a; state b; transition ab first a accept go then b; }
-      state def Other { state o; transition oo first o accept x then o; }
+      state def Other { state a; transition oo first a accept x then a; }
       state def Two :> Base, Other { state t; transition bt first b accept y then t; }
       state def Redef :> Base { state :>> b { entry action e0; } transition ba first b accept back then a; }
     }`);
@@ -965,6 +965,7 @@ describe('a nested state def: the machine that holds it, and a transition across
       expect(row(qn).exhaustive, qn).toBe(false);
     }
     expect(row('Rf::Two').unsupported[0].detail).toContain('has two general machines');
+    expect(row('Rf::Two').unsupported[0].detail).toContain('both declare `a`');
     expect(row('Rf::Redef').unsupported[0].detail).toContain('redefines a member of a general machine');
     // The general of a refused specialisation is refused too: its step `bt` is written where no view takes it.
     expect(row('Rf::Base').unsupported.map((u) => u.construct)).toContain('machine-boundary');

@@ -1409,7 +1409,7 @@ describe('a machine read through its general equals the machine written out whol
     expect(compared).toBeGreaterThan(60);
   }, 600_000);
 
-  it('reads a plain `state :>> s` of a general machine as that state, and refuses every other redefinition (gen-115 with redefinitions)', async () => {
+  it('reads a plain `state :>> s` of a general machine as that state (a step that names it too), and refuses an unnamed body redefinition and an attribute one (gen-115 with redefinitions; T-115 lifted the named-step refusal, see semantics.mc.redefinition.test.ts)', async () => {
     let compared = 0;
     let refused = 0;
     for (let i = 0; i < 120; i++) {
@@ -1419,6 +1419,7 @@ describe('a machine read through its general equals the machine written out whol
       const lists = Array.from({ length: 20 }, () => Array.from({ length: rnd(5) }, () => pick(['a', 'b'])));
       // 1-2 plain redefinitions of Base states, unnamed or named; every 6th is a body one, a named one a step reaches, or an attribute one.
       const bad = i % 6 === 5 ? pick(['body', 'named', 'attr']) : null;
+      const named = bad === 'named';
       const redefs = Array.from({ length: 1 + rnd(2) }, (_, j) => {
         const s = pick(x.baseStates);
         return rnd(2) === 0 ? `state :>> ${s};` : `state r${j} :>> ${s};`;
@@ -1440,7 +1441,7 @@ describe('a machine read through its general equals the machine written out whol
       if (!hasOwn) continue; // no step of its own: the specialiser is no machine (B-walk)
       const m = reachReport(model).machines.find((r) => r.machine.id === spec.id);
       expect(m, where).toBeDefined();
-      if (bad !== null) {
+      if (bad !== null && !named) {
         // Not read: refused as a machine-boundary, with no walk claimed about it.
         expect(m!.unsupported.map((u) => u.construct), where).toContain('machine-boundary');
         expect(m!.exhaustive, where).toBe(false);
@@ -1448,7 +1449,9 @@ describe('a machine read through its general equals the machine written out whol
         continue;
       }
       expect(m!.unsupported, where).toEqual([]);
-      const twin = await load(`package G {\nstate def Flat {\n${baseBody(x)}\n${ownBody(x)}\n}\n}`, [...x.baseSteps, ...x.ownSteps]);
+      // A step that names the redefining state resolves to the state it redefines.
+      const namedStep = named ? `transition tr first ${x.baseStates[0]} then ${x.baseStates[1]};` : '';
+      const twin = await load(`package G {\nstate def Flat {\n${baseBody(x)}\n${namedStep}\n${ownBody(x)}\n}\n}`, [...x.baseSteps, ...x.ownSteps]);
       const twinId = twin.all().find((e) => twin.qualifiedName(e.id) === 'G::Flat')!.id;
       expect(digest(model, spec.id), where).toEqual(digest(twin, twinId));
       expect(runs(model, spec.id, lists), `${where}\nruns`).toEqual(runs(twin, twinId, lists));

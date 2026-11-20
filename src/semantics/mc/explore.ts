@@ -1347,7 +1347,7 @@ function boundaryCrossings(model: Model, machineId: ElementId): BoundaryCrossing
   for (const id of own) {
     if (id === machineId) continue;
     for (const edge of model.edgesOf(id)) {
-      if (foreign.has(edge.id) || regionIds.has(edge.id)) continue;
+      if (foreign.has(edge.id) || regionIds.has(edge.id) || region.superseded?.has(edge.id)) continue;
       if (!CONTROL_EDGE_KINDS.has(edge.eClass) || edge.attrs.isLibrary === true) continue;
       if (edge.source?.[0] === undefined || edge.target?.[0] === undefined) continue;
       foreign.add(edge.id);
@@ -1370,7 +1370,7 @@ function coveredBySpecialiser(model: Model, machineId: ElementId, edge: ElementR
     if (p === machineId) return false;
     const view = machineRegion(model, p);
     if (view.refused !== undefined || view.bases.length === 0) continue;
-    if (view.transitions.includes(edge) && view.nodes.has(edge.source![0]) && view.nodes.has(edge.target![0])) return true;
+    if (view.transitions.some((t) => t.id === edge.id) && view.nodes.has(edge.source![0]) && view.nodes.has(edge.target![0])) return true;
   }
   return false;
 }

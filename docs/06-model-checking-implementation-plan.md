@@ -2988,9 +2988,13 @@ refuses it too, unless this plan and UML make a reading clear.
   no machine and is reported through its definition. The properties a base
   carries are checked on the base, and the specialisation's report says how many
   it does not check. A bare `state :>> b;` redefining a direct state of the
-  general is read as that state. Still `machine-boundary`: a redefined state
-  with a body, a redefined transition or any other redefinition,
-  two general machines, two starts, a cycle or a chain over eight
+  general is read as that state (a step naming it resolves to `b`); a named
+  `state r :>> b { … }` over an empty `b` is `r` in its place; a transition
+  redefinition (API only) replaces the inherited step when it states both ends
+  and every attribute of it; two general machines are read in declaration order
+  when they share no name. Still `machine-boundary`: a redefinition over a state
+  with content, an unnamed or nested one, any other redefinition, two generals
+  that share a name, two starts, a cycle or a chain over eight
   (`MachineRegion.refused`); the general is refused with it.
 - **The simulator refuses a step across the machine's boundary.** The walk's
   `machine-boundary` (§8.6) is a step edge with an end outside the nodes of the

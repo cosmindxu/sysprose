@@ -404,6 +404,8 @@ export interface MachineRegion {
   parentOf(id: ElementId): ElementId | null;
   /** The general machine that `id` was read from, if the region took it from one. */
   inheritedFrom(id: ElementId): ElementId | undefined;
+  /** The steps a general machine writes that this region replaces with a redefining step of its own: not steps of it, and no crossing of its boundary. */
+  readonly superseded?: ReadonlySet<ElementId>;
   /** Set when the region is one this walk does not read, with the sentence that says so. */
   readonly refused?: {
     why: 'redefined' | 'two-generals' | 'two-starts' | 'cycle';
@@ -517,18 +519,23 @@ const MAX_GENERAL_CHAIN = 8;
  * A machine read through its general machine: the general's region (ids kept)
  * followed by the machine's own nodes and steps.
  *
- * The general is the ONE non-library `state def` the machine specialises, or
- * that types a usage which owns a step of its own (a usage with no step is
- * reported through its definition and reads no general). `parentOf` the
+ * The generals are the non-library `state def`s the machine specialises, or
+ * that type a usage which owns a step of its own (a usage with no step is
+ * reported through its definition and reads no general). Two or more are read
+ * in declaration order when they share no id or declared name. `parentOf` a
  * general's root is the machine, `inheritedFrom` names the general for every
- * node it declares, `descendants` and `transitions` list the general's first
+ * node it declares, `descendants` and `transitions` list the generals' first
  * (the first-enabled tie-break takes the inherited step before an own one),
  * `directStates` of the machine lists the inherited states before its own,
- * and the one start is the one `InitialNode` of the merged list. Where the
- * shape is not one this view reads, `refused` says which and the region is the
- * machine's own: two general machines, two starts, a cycle or a chain over
- * {@link MAX_GENERAL_CHAIN}, a redefinition other than a plain `state :>> b;`
- * or an own usage that takes a name the general already holds.
+ * and the one start is the one `InitialNode` of the merged list. A redefinition
+ * is read where it stands for what it redefines whole (T-115): `state :>> s;`
+ * is `s`, a named `state r :>> s { … }` over an `s` with nothing of its own is
+ * `r` in its place (the generals' steps over `s` read `r`), a transition that
+ * redefines an inherited one replaces it. Where the shape is not one this view
+ * reads, `refused` says which and the region is the machine's own: two
+ * generals sharing a name, two starts, a cycle or a chain over
+ * {@link MAX_GENERAL_CHAIN}, any other redefinition, or an own usage that takes
+ * a name the general already holds.
  */
 function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[]): MachineRegion {
   const cache = cacheFor(model);
@@ -551,60 +558,189 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
     cache.inherited.set(id, own);
     return own;
   }
-  if (generals.length > 1) {
-    return refuse('two-generals', id, `${name(id)} has two general machines (${generals.map((g) => name(g.id)).join(' and ')})`);
+  // Every general is read through ITS own general (a cycle, or a chain too long, refuses the machine).
+  const parts: Array<{ g: ElementId; b: MachineRegion; ids: Set<ElementId> }> = [];
+  for (const gr of generals) {
+    const g = gr.id;
+    if (g === id || chain.includes(g)) {
+      return refuse('cycle', id, `${name(id)} specialises a chain of general machines this walk does not read (a cycle, or longer than ${MAX_GENERAL_CHAIN})`);
+    }
+    const b = inheritedRegion(model, g, [...chain, id]);
+    if (b.refused) return refuse(b.refused.why, b.refused.at, b.refused.sentence);
+    // The chain is measured on the general's own view, which a cached answer carries, not on the path this call came down.
+    if (b.bases.length >= MAX_GENERAL_CHAIN) {
+      return refuse('cycle', id, `${name(id)} specialises a chain of general machines this walk does not read (a cycle, or longer than ${MAX_GENERAL_CHAIN})`);
+    }
+    parts.push({ g, b, ids: new Set<ElementId>([g, ...b.descendants.map((e) => e.id)]) });
   }
-  const g = generals[0].id;
-  if (g === id || chain.includes(g)) {
-    return refuse('cycle', id, `${name(id)} specialises a chain of general machines this walk does not read (a cycle, or longer than ${MAX_GENERAL_CHAIN})`);
+  // Two general machines are read one after the other, in declaration order, only when they share nothing and
+  // declare no name twice: a state or step both hold under one name has no single meaning here.
+  if (parts.length > 1) {
+    const seenIds = new Set<ElementId>();
+    const seenNames = new Map<string, ElementId>();
+    for (const p of parts) {
+      for (const x of p.ids) {
+        if (seenIds.has(x)) {
+          return refuse('two-generals', id, `${name(id)} has two general machines (${parts.map((q) => name(q.g)).join(' and ')}) that share ${name(x)}`);
+        }
+        seenIds.add(x);
+      }
+      for (const e of p.b.descendants) {
+        if (!isUsage(e.eClass) || !e.declaredName) continue;
+        const other = seenNames.get(e.declaredName);
+        if (other !== undefined && !p.ids.has(other)) {
+          return refuse('two-generals', id, `${name(id)} has two general machines (${parts.map((q) => name(q.g)).join(' and ')}) that both declare \`${e.declaredName}\``);
+        }
+        seenNames.set(e.declaredName, e.id);
+      }
+    }
   }
-  const base = inheritedRegion(model, g, [...chain, id]);
-  if (base.refused) return refuse(base.refused.why, base.refused.at, base.refused.sentence);
-  // The chain is measured on the general's own view, which a cached answer carries, not on the path this call came down.
-  if (base.bases.length >= MAX_GENERAL_CHAIN) {
-    return refuse('cycle', id, `${name(id)} specialises a chain of general machines this walk does not read (a cycle, or longer than ${MAX_GENERAL_CHAIN})`);
-  }
-  // A `state :>> b;` the machine writes directly, with no body of its own,
-  // redefining a direct state of its general, is the state it redefines: it adds
-  // nothing, so the view leaves it out and a step that names it is refused
-  // (`alias`). Any other redefinition is not read.
-  const alias = new Set<ElementId>();
-  const baseStates = new Set(base.directStates(g).map((s) => s.id));
+  const gids = parts.map((p) => p.g);
+  const baseDesc = parts.flatMap((p) => p.b.descendants);
+  const baseTrans = parts.flatMap((p) => p.b.transitions);
+  const baseTransIds = new Set(baseTrans.map((t) => t.id));
+  const rootStates = parts.flatMap((p) => p.b.directStates(p.g));
+  const baseStates = new Set(rootStates.map((x) => x.id));
+  const rootOwners = new Set<ElementId>(parts.flatMap((p) => [p.g, ...p.b.bases]));
+  // What the machine redefines. SysML v2 gives a redefinition of an inherited member a meaning only where the
+  // redefining one can stand for it whole, so each form is read where that is so and refused (`redefined`) otherwise:
+  //  - `state :>> s;` (no body) is the state it redefines: a step that names it resolves to `s`;
+  //  - `state r :>> s { … }` over an `s` that holds nothing of its own (no substate, entry, do or exit, no attribute)
+  //    is `r` in the place of `s`: nothing of `s` is left to merge, so its replacement and its redefinition agree, and
+  //    the steps the general writes over `s` read `r`. Over an `s` that holds something, the redefinition would inherit
+  //    that and merge it with its own, which this view does not do;
+  //  - a transition `t2 :>> t1` (the API only: the grammar has no redefining transition) replaces `t1` when it has both
+  //    ends and states every attribute `t1` carries (trigger, guard, effect), with no payload or body on either.
+  const alias = new Map<ElementId, ElementId>(); // `state :>> s;` → s
+  const replaced = new Map<ElementId, ElementId>(); // s → the redefining state that holds a body
+  const replacedTr = new Map<ElementId, ElementId>(); // t1 → t2
+  const droppedOwn = new Set<ElementId>();
+  const sentenceAt = (e: ElementRecord, why: string): string => `${name(e.id)} redefines a member of a general machine${why ? `: ${why}` : ''}`;
   for (const e of own.descendants) {
     const rels = model.relationshipsFrom(e.id).filter((r) => r.eClass === 'Redefinition');
     if (rels.length === 0) continue;
     const to = rels[0].target?.[0];
-    const plain =
-      e.eClass === 'StateUsage' && e.ownerId === id && rels.length === 1 && to !== undefined && baseStates.has(to) &&
-      Object.keys(e.attrs).length === 0 && model.children(e.id).every((c) => c.eClass === 'Redefinition');
-    if (!plain) return refuse('redefined', e.id, `${name(e.id)} redefines a member of a general machine`);
-    alias.add(e.id);
+    if (e.ownerId !== id || rels.length !== 1 || to === undefined) return refuse('redefined', e.id, sentenceAt(e, 'not a direct member written in the machine, or redefining two'));
+    const kids = model.children(e.id).filter((c) => c.eClass !== 'Redefinition');
+    if (e.eClass === 'StateUsage' && baseStates.has(to)) {
+      if (Object.keys(e.attrs).length > 0) return refuse('redefined', e.id, sentenceAt(e, 'it carries a modifier'));
+      if (replaced.has(to) || (kids.length > 0 && [...alias.values()].includes(to))) return refuse('redefined', e.id, sentenceAt(e, 'the state is redefined twice'));
+      if (kids.length === 0) {
+        alias.set(e.id, to);
+        droppedOwn.add(e.id);
+      } else {
+        const sEl = model.get(to)!;
+        if (e.declaredName === undefined) return refuse('redefined', e.id, sentenceAt(e, 'a redefining state with a body must be named'));
+        if (model.children(to).some((c) => c.eClass !== 'Redefinition') || Object.keys(sEl.attrs).length > 0) {
+          return refuse('redefined', e.id, sentenceAt(e, `${name(to)} holds something of its own that the redefinition would inherit and merge with its body`));
+        }
+        replaced.set(to, e.id);
+      }
+      for (const c of model.children(e.id)) if (c.eClass === 'Redefinition') droppedOwn.add(c.id);
+      droppedOwn.add(e.id); // re-added below for a replacement
+      continue;
+    }
+    const t1 = model.get(to);
+    if (e.eClass === 'TransitionUsage' && t1 !== undefined && t1.eClass === 'TransitionUsage' && baseTransIds.has(to) && t1.ownerId !== null && rootOwners.has(t1.ownerId)) {
+      const bodied = (x: ElementRecord): boolean => model.children(x.id).some((c) => c.eClass !== 'Redefinition');
+      if (
+        e.source?.[0] === undefined || e.target?.[0] === undefined || payloadOf(e) !== undefined ||
+        bodied(e) || bodied(t1) || replacedTr.has(to) ||
+        Object.keys(t1.attrs).some((k) => !(k in e.attrs))
+      ) {
+        return refuse('redefined', e.id, sentenceAt(e, 'it does not state both ends and every trigger, guard and effect of the step it replaces'));
+      }
+      replacedTr.set(to, e.id);
+      for (const c of model.children(e.id)) if (c.eClass === 'Redefinition') droppedOwn.add(c.id);
+      continue;
+    }
+    return refuse('redefined', e.id, sentenceAt(e, ''));
   }
-  const dropped = new Set<ElementId>(alias);
-  for (const e of own.descendants) if (e.ownerId !== null && alias.has(e.ownerId)) dropped.add(e.id);
-  const ownKept = own.descendants.filter((e) => !dropped.has(e.id));
-  const named = ownKept.find((e) => (e.source ?? []).some((x) => alias.has(x)) || (e.target ?? []).some((x) => alias.has(x)));
-  if (named) return refuse('redefined', named.id, `${name(named.id)} names a state that redefines a state of a general machine`);
+  // `droppedOwn` holds a plain alias and the relationships of a redefinition; a body redefinition stays.
+  for (const r of replaced.values()) droppedOwn.delete(r);
+  const movedIds = new Set<ElementId>();
+  for (const r of replaced.values()) {
+    movedIds.add(r);
+    for (const d of model.descendants(r)) movedIds.add(d.id);
+  }
+  const aliasKids = (e: ElementRecord): boolean => {
+    for (let p: ElementId | null = e.ownerId; p != null; p = model.get(p)?.ownerId ?? null) if (alias.has(p)) return true;
+    return false;
+  };
+  const dropped = new Set<ElementId>(droppedOwn);
+  for (const e of own.descendants) if (aliasKids(e)) dropped.add(e.id);
+  const movedOwn = own.descendants.filter((e) => movedIds.has(e.id) && !dropped.has(e.id));
+  const ownKept = own.descendants.filter((e) => !dropped.has(e.id) && !movedIds.has(e.id));
+  // Own steps name the redefining state; a step that names the state it replaced reads a name this machine no longer holds.
+  const rename = <T extends ElementRecord>(e: T, map: ReadonlyMap<ElementId, ElementId>): T => {
+    if (![...(e.source ?? []), ...(e.target ?? [])].some((x) => map.has(x))) return e;
+    return { ...e, source: e.source?.map((x) => map.get(x) ?? x), target: e.target?.map((x) => map.get(x) ?? x) } as T;
+  };
+  const named = [...ownKept, ...movedOwn].find((e) => [...(e.source ?? []), ...(e.target ?? [])].some((x) => replaced.has(x)));
+  if (named) return refuse('redefined', named.id, `${name(named.id)} names a state that a state of this machine redefines`);
+  const ownOut = ownKept.map((e) => rename(e, alias));
+  const movedOut = movedOwn.map((e) => rename(e, alias));
+  // The general's elements, the replaced state's place taken by its replacement and the replaced steps gone.
+  const goneTr = new Set<ElementId>(replacedTr.keys());
+  const baseOut: ElementRecord[] = [];
+  for (const e of baseDesc) {
+    if (goneTr.has(e.id) || (e.ownerId !== null && goneTr.has(e.ownerId))) continue;
+    if (replaced.has(e.id)) {
+      const r = replaced.get(e.id)!;
+      const inR = new Set<ElementId>([r, ...model.descendants(r).map((d) => d.id)]);
+      baseOut.push(...movedOut.filter((d) => inR.has(d.id)));
+      continue;
+    }
+    if (e.ownerId !== null && replaced.has(e.ownerId)) continue;
+    const touches = [...(e.source ?? []), ...(e.target ?? [])].some((x) => replaced.has(x));
+    if (touches) {
+      const ends = [...(e.source ?? []), ...(e.target ?? [])];
+      if (!baseTransIds.has(e.id) || !ends.every((x) => model.get(x)?.eClass === 'StateUsage')) {
+        return refuse('redefined', e.id, `${name(e.id)} names a state that a state of this machine redefines, other than as a step between states`);
+      }
+      baseOut.push(rename(e, replaced));
+      continue;
+    }
+    baseOut.push(e);
+  }
   const taken = new Set<string>();
-  for (const e of base.descendants) if (isUsage(e.eClass) && e.declaredName) taken.add(e.declaredName);
+  for (const e of baseOut) if (!movedIds.has(e.id) && isUsage(e.eClass) && e.declaredName) taken.add(e.declaredName);
   const clash = ownKept.find((e) => isUsage(e.eClass) && e.declaredName !== undefined && taken.has(e.declaredName));
   if (clash) return refuse('redefined', clash.id, `${name(clash.id)} takes a name its general machine already holds`);
-  const descendants = [...base.descendants, ...ownKept];
+  const descendants = [...baseOut, ...ownOut];
   if (descendants.filter((e) => e.eClass === 'InitialNode').length > 1) {
     return refuse('two-starts', id, `${name(id)} and its general machine each open at a start node of their own`);
   }
-  const bases = [g, ...base.bases];
-  const ownHeld = new Set<ElementId>(ownKept.map((e) => e.id));
+  const bases = parts.flatMap((p) => [p.g, ...p.b.bases]);
+  const ownHeld = new Set<ElementId>([...ownOut, ...movedOut].map((e) => e.id));
+  const transIds = new Set<ElementId>([
+    ...baseTrans.filter((t) => !goneTr.has(t.id)).map((t) => t.id),
+    ...own.transitions.filter((t) => !dropped.has(t.id)).map((t) => t.id),
+  ]);
+  const nodes = new Set<ElementId>();
+  for (const p of parts) for (const n of p.b.nodes) if (!replaced.has(n)) nodes.add(n);
+  for (const n of own.nodes) if (!dropped.has(n)) nodes.add(n);
+  const replacers = new Set(replaced.values());
   const region: MachineRegion = {
     root: id,
     bases,
-    nodes: new Set<ElementId>([...base.nodes, ...[...own.nodes].filter((n) => !dropped.has(n))]),
+    superseded: goneTr,
+    nodes,
     descendants,
-    transitions: [...base.transitions, ...own.transitions.filter((t) => !dropped.has(t.id))],
+    transitions: descendants.filter((e) => transIds.has(e.id)),
     directStates: (containerId) =>
-      containerId === id ? [...base.directStates(g), ...own.directStates(id).filter((d) => !dropped.has(d.id))] : directStates(model, containerId),
-    parentOf: (x) => (x === g ? id : ownHeld.has(x) ? own.parentOf(x) : base.parentOf(x)),
-    inheritedFrom: (x) => (ownHeld.has(x) || x === id ? undefined : (base.inheritedFrom(x) ?? g)),
+      containerId === id
+        ? [
+            ...rootStates.map((x) => (replaced.has(x.id) ? own.descendants.find((d) => d.id === replaced.get(x.id))! : x)),
+            ...own.directStates(id).filter((d) => !dropped.has(d.id) && !replacers.has(d.id)),
+          ]
+        : directStates(model, containerId),
+    parentOf: (x) => (gids.includes(x) ? id : replaced.has(x) ? null : ownHeld.has(x) ? own.parentOf(x) : (parts.map((p) => p.b.parentOf(x)).find((v) => v !== null) ?? null)),
+    inheritedFrom: (x) => {
+      if (ownHeld.has(x) || x === id) return undefined;
+      const p = parts.find((q) => q.ids.has(x));
+      return p ? (p.b.inheritedFrom(x) ?? p.g) : parts.length === 1 ? parts[0].g : undefined;
+    },
   };
   if (chain.length === 0) cache.inherited.set(id, region);
   return region;
