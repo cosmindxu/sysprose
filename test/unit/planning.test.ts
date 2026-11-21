@@ -1,5 +1,5 @@
 /**
- * buildPlan — the DOORS→CodeBeamer-style wave planner: atomic elements →
+ * buildPlan — the requirements-tool-style wave planner: atomic elements →
  * workload → groups → ordered → capacity-packed into time slices (waves).
  */
 import { describe, it, expect } from 'vitest';

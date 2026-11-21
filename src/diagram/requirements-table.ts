@@ -2,7 +2,7 @@
  * buildRequirementsTable — project a {@link Model} into a
  * {@link RequirementsTableModel} for the requirements-table editor view.
  *
- * A DOORS-NG / CodeBeamer-style requirements grid, natively bound to the SysML
+ * A requirements-tool-style requirements grid, natively bound to the SysML
  * v2 model: every non-library `RequirementUsage`/`RequirementDefinition` becomes
  * a row, HIERARCHICAL by containment (nested requirements get outline numbers
  * like `1.2.1` and an indentation `depth`). Scalar columns (id/name/text) map to

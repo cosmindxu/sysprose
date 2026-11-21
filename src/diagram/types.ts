@@ -353,7 +353,7 @@ export type PlanGrouping = 'satisfy' | 'subject' | 'containment' | 'refine' | 'd
 export type PlanOrdering = 'dependency' | 'coupling' | 'capacity' | 'domain-first' | 'milp' | 'annealing';
 
 /**
- * Configuration for the Planning view (DOORS→CodeBeamer-style wave slicing):
+ * Configuration for the Planning view (requirements-tool-style wave slicing):
  * ATOMIC elements (each carrying a workload) roll up into GROUPS by `grouping`,
  * which are then sequenced by `ordering` and bin-packed into time SLICES (waves)
  * each holding up to `capacity` workload units.
@@ -574,7 +574,7 @@ export interface RegroupModel {
 
 /**
  * A requirements-engineering *table* projection (requirements view) — a
- * DOORS-NG / CodeBeamer-style editable grid of requirements, natively bound to
+ * requirements-tool-style editable grid of requirements, natively bound to
  * the SysML v2 model. Each row is a `RequirementUsage`/`RequirementDefinition`,
  * hierarchical by containment (outline `number` + `depth`), with editable scalar
  * columns (id/name/text) and REFERENCE columns that resolve requirement

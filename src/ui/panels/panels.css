@@ -254,7 +254,7 @@
   background: var(--hover);
 }
 
-/* ── Requirements table (DOORS-NG / CodeBeamer-style editor) ── */
+/* ── Requirements table (requirements-tool-style editor) ── */
 
 .req-table-wrap {
   height: 100%;
