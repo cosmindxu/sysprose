@@ -400,6 +400,34 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A transition joins two concurrent substates of a parallel state — a state definition or usage marked `parallel` (SysML v2 §7.18.2). The regions of a parallel state are performed concurrently, and §7.18.2 allows no transition between the concurrent states nested in one.
 - **Hint given:** Keep each transition inside one region (a substate of the parallel state and its own substates), or write the states as exclusive substates by removing `parallel` from the state definition or usage.
 
+### `validation/variation-variant-outside`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A usage declared `variant` is not inside a variation (SysML v2 §7.6.7: "Variant usages may only be declared within a variation").
+- **Hint given:** Move the variant into a `variation` definition or usage, or drop the `variant` keyword to make it an ordinary usage.
+
+### `validation/variation-member-not-variant`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A usage or definition owned by a variation is not a variant (SysML v2 §8.4.2.3: all the ownedMembers of a variation must be variant usages). Comments, documentation, imports and metadata are not counted.
+- **Hint given:** Write the member as a variant (`variant part x;`), or move it out of the variation.
+
+### `validation/variation-specializes-variation`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A variation definition or usage specializes (`:>`) another variation (SysML v2 §8.4.2.3: "it is not valid for a variation to specialize another variation"). Typing a variation usage by a variation definition is allowed.
+- **Hint given:** Specialize a non-variation definition instead, or list all the variants in a single variation.
+
+### `validation/variation-variant-kind`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A variant usage has a kind (part, action, ...) inconsistent with its owning variation (SysML v2 §7.6.7). A variant naming a separately declared usage carries no kind and is not checked.
+- **Hint given:** Use the same kind keyword as the variation, e.g. `variant part` inside a `variation part def`.
+
 ### `validation/requirement-subject`
 
 - **Severity:** warning
@@ -992,4 +1020,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*128 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*132 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

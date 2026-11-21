@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 29 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(29);
+  it('exposes all 33 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(33);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -1547,8 +1547,8 @@ describe('validation — transition-in-parallel-state (the 29th rule)', () => {
 
   it('is registered last, after every rule whose ordinal a document names', () => {
     expect(RULES_BY_ID.has('transition-in-parallel-state')).toBe(true);
-    expect(RULE_IDS[RULE_IDS.length - 1]).toBe('transition-in-parallel-state');
-    expect(RULES.findIndex((r) => r.id === 'constraint-by-instance')).toBeLessThan(RULES.length - 1);
+    expect(RULE_IDS.indexOf('transition-in-parallel-state')).toBe(28);
+    expect(RULES.findIndex((r) => r.id === 'constraint-by-instance')).toBeLessThan(RULES.length - 5);
   });
 
   it('refuses a transition between two concurrent substates, and is silent within one region or without `parallel`', async () => {
