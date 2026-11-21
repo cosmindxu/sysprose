@@ -2866,14 +2866,20 @@ describe('round-trip — a binding to an unnamed redefinition is saved under a n
         expect(ends, stmt).toContain(place(m, target.id));
       }
     });
-    for (const [stmt, word, body] of NON_CHAIN) {
-      it(`${stmt}: a lone unnamed redefinition is not saved, and says so (not a chain statement)`, () => {
-        const { m } = retargeted('attribute :>> load = 50.0;', body, '50');
+    // A lone unnamed `:>> load` is no name's answer for a statement that is not a chain, so Save gives it the name it goes by
+    // (`attribute load :>> load`), which does not change its effective name, and the statement reopens on it
+    // (`text.save-end-names.test.ts` pins every shape; the second of a name keeps the note).
+    for (const [stmt, , body] of NON_CHAIN) {
+      it(`${stmt}: a lone unnamed redefinition is saved under the name it goes by (not a chain statement)`, () => {
+        const { m, target } = retargeted('attribute :>> load = 50.0;', body, '50');
         const text = serializeModel(m);
         expect(text).not.toContain('«');
-        expect(text).not.toMatch(/p\.load/);
-        expect(text).toMatch(new RegExp(`// Not saved: a ${word} whose end no name reaches \\(`));
+        expect(text).not.toContain('Not saved');
+        expect(text).toContain('attribute load :>> load = 50.0;');
         expect(parseModel(text).diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+        const after = parseModel(text).model;
+        const link = after.all().find((e) => /^(Allocation|Succession|Dependency)/.test(e.eClass) && ((e.source?.length ?? 0) + (e.target?.length ?? 0)) > 0)!;
+        expect([...(link.source ?? []), ...(link.target ?? [])].map((id) => place(after, id).replace(/:load=/, ':=')), stmt).toContain(place(m, target.id));
       });
     }
 

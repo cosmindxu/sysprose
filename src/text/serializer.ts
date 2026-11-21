@@ -29,7 +29,8 @@ import {
   type ElementRecord,
 } from '@core/index';
 import { childNamed, endCopyProto, findTypeFeature, leavesOutOverride, redefinitionNameIsOrderDependent, resolveFullName, resolveRedefinedFeature, sharesLineWithSibling } from '@semantics/bind';
-import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
+import { effectiveNameOf, effectiveQualifiedName, redefinedClosure } from '@semantics/inheritance';
+import { astToModel as parseModel } from './langium/map-to-model';
 import { generalizationsWithImplicit } from '@semantics/featuring';
 import { resolveInherited } from '@semantics/resolve-names';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
@@ -84,10 +85,92 @@ export class UnwritableRequirementRefError extends Error {
 
 /** Serialize an entire model to text (roots in declaration order). */
 export function serializeModel(model: Model): string {
-  return model
-    .roots()
-    .map((r) => serializeElement(model, r.id, 0))
-    .join('\n\n');
+  const plain = (m: Model): string =>
+    m
+      .roots()
+      .map((r) => serializeElement(m, r.id, 0))
+      .join('\n\n');
+  const names = unnamedEndsToName(model);
+  if (names.size === 0) return plain(model);
+  // The statement's end is a lone unnamed redefinition (`state :>> s1;`): no name the next load reads as it, as it goes by
+  // none of its own. The text gives it the name it already goes by (`state s1 :>> s1;`), which does not change its
+  // effective name, so every path that reads it by that name reads it still. The text is written from a copy that holds
+  // the names, the page's model is not touched, and the file is kept only if it reopens as the same model; otherwise the
+  // statement is left out, with the note, as before.
+  const named = model.clone();
+  for (const [id, name] of names) named.update(id, { declaredName: name });
+  const text = plain(named);
+  const again = parseModel(text);
+  if (again.diagnostics.some((d) => d.severity === 'error')) return plain(model);
+  return reopenSignature(again.model) === reopenSignature(model) ? text : plain(model);
+}
+
+/** The statements whose ends the next load reads by a name (`resolveFullName`), not as a feature chain: only the unnamed redefinition they end at can be given a declared name. */
+const NAMEABLE_END_STATEMENTS: ReadonlySet<string> = new Set([
+  'Allocation',
+  'Succession',
+  'SuccessionFlow',
+  'TransitionUsage',
+  'TransitionFeature',
+  'Dependency',
+  'Disjoining',
+  'Membership',
+]);
+
+/**
+ * The unnamed redefinitions that an end of a name-read statement ({@link NAMEABLE_END_STATEMENTS}) goes through, and
+ * the name Save gives each: the one it already goes by ({@link effectiveNameOf}). Only one that is the sole member of its
+ * owner going by that name qualifies: with another member of the name beside it, the name reads that one first (the
+ * statement keeps the `// Not saved:` note).
+ */
+function unnamedEndsToName(model: Model): Map<ElementId, string> {
+  const out = new Map<ElementId, string>();
+  const consider = (id: ElementId): void => {
+    for (let cur = model.get(id); cur && cur.ownerId !== null && !out.has(cur.id); cur = model.get(cur.ownerId)) {
+      if (cur.declaredName !== undefined || cur.declaredShortName !== undefined) continue;
+      if (!cur.eClass.endsWith('Usage') || cur.attrs.implicit === true) continue;
+      const name = effectiveNameOf(model, cur);
+      if (name === undefined || name === '' || name.startsWith('«')) continue;
+      const alone = !model.children(cur.ownerId).some(
+        (c) =>
+          c.id !== cur!.id &&
+          !isSpecialization(c.eClass) &&
+          c.attrs.implicit !== true &&
+          (c.declaredName === name || c.declaredShortName === name || (c.declaredName === undefined && c.declaredShortName === undefined && effectiveNameOf(model, c) === name)),
+      );
+      if (alone && cur.attrs.isLibrary !== true) out.set(cur.id, name);
+    }
+  };
+  for (const el of model.all()) {
+    if (!NAMEABLE_END_STATEMENTS.has(el.eClass) || el.attrs.implicit === true) continue;
+    for (const id of [...(el.source ?? []), ...(el.target ?? [])]) consider(id);
+  }
+  return out;
+}
+
+/**
+ * What the text of a model says, by effective names and places: its members (metaclass, effective path, place among the
+ * owner's members) and its statements (metaclass and the members at their ends). Library elements and the
+ * specializations a binder adds are not in it; two models with the same signature are the same model as the file reads it.
+ */
+function reopenSignature(model: Model): string {
+  const keep = (e: ElementRecord): boolean => e.attrs.isLibrary !== true && e.attrs.implicit !== true;
+  const place = (e: ElementRecord): string => {
+    const at = e.ownerId === null ? 0 : model.children(e.ownerId).filter((c) => !isRelationship(c.eClass) && keep(c)).findIndex((c) => c.id === e.id);
+    return `${effectiveQualifiedName(model, e.id)}#${at}`;
+  };
+  const rows: string[] = [];
+  for (const e of model.all()) {
+    if (!keep(e) || isSpecialization(e.eClass)) continue;
+    const ends = [...(e.source ?? []), ...(e.target ?? [])].map((id) => model.get(id));
+    if (ends.some((x) => x === undefined || !keep(x))) continue;
+    if (isRelationship(e.eClass) || ends.length > 0) {
+      rows.push(`${e.eClass}:${(e.source ?? []).map((id) => place(model.require(id))).join('|')}=>${(e.target ?? []).map((id) => place(model.require(id))).join('|')}`);
+    } else {
+      rows.push(`${e.eClass}:${place(e)}`);
+    }
+  }
+  return rows.sort().join('\n');
 }
 
 /**
