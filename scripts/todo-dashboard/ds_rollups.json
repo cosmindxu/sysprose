@@ -606,8 +606,8 @@
    }
   },
   {
-   "id": null,
-   "tier": "",
+   "id": 363,
+   "tier": "weaker",
    "title": "Decisions to confirm (2026-11 rollup, moved from the parallel-machines rollup).",
    "section": "Per-instance soundness \u2014 review 2026-10-14",
    "subs": [
@@ -1080,6 +1080,70 @@
    }
   },
   {
+   "id": 320,
+   "tier": "weaker",
+   "title": "Abstentions left in quoted names in expressions (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "b",
+     "text": "`bareTie` (defining-equation.ts ~6861) and `NAME_TOKEN` (src/api/property.ts ~532) read plain identifiers only, so a quoted tie `'K x' == 'L x'` counts as a taint source (more abstention), and property.ts ~491 drafts a s",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c",
+     "text": "a check-behaviour atom `p=state 'deg A'` is answered INCONCLUSIVE \"not read\" where `state deg A` works (probe rv/bh/s1.sysml);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "d",
+     "text": "on the unit-aware path an info message for a body it cannot read starts with \"a call, an index or a string literal\" and gives the real cause only after a semicolon;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "e",
+     "text": "a `//` comment holding an apostrophe inside an expression now reads \"Unterminated quoted name at N\" where it read \"Unterminated string literal\" (both unknown; probe rv/cm.sysml);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "f",
+     "text": "CLOSED 2026-11-17 by a5-words W2: `bounds --measure` and `--free` take a quoted spelling (`QS::P::'K x'`, `QD::P::'a.b'`) as their unquoted forms do, and `quoteName` is exported for the property draft (probe fix-quoted-s",
+     "status": "closed",
+     "closed_day": "2026-11-17",
+     "closed_by": "a5-words W2"
+    },
+    {
+     "key": "h",
+     "text": "the default `bounds` measure and the instance labels follow name order, so a bare and a quoted-renamed model differ there (7 corpus models); about 407 of the 637 corpus models were not run through the quoted-rename harne",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "c#2",
+     "text": "CLOSED 2026-11-21 (sm-qatom): a check-behaviour atom reads a quoted state, node, transition or trigger name as the name it quotes (`state 'deg A'` = `state deg A` = `state P::M::'deg A'`), pinned in semantics.mc.quoted-a",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 6,
+    "closed": 1,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
    "id": 311,
    "tier": "weaker",
    "title": "Abstentions left in renames and name clashes (rollup; sound, only weaker).",
@@ -1258,7 +1322,7 @@
    }
   },
   {
-   "id": 325,
+   "id": 311,
    "tier": "weaker",
    "title": "Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).",
    "section": "Per-instance soundness \u2014 review 2026-10-14",
@@ -1302,63 +1366,6 @@
    "counts": {
     "open": 5,
     "closed": 0,
-    "narrowed": 0,
-    "ruled": 0,
-    "held": 0
-   }
-  },
-  {
-   "id": 320,
-   "tier": "weaker",
-   "title": "Abstentions left in quoted names in expressions (rollup; sound, only weaker).",
-   "section": "Per-instance soundness \u2014 review 2026-10-14",
-   "subs": [
-    {
-     "key": "b",
-     "text": "`bareTie` (defining-equation.ts ~6861) and `NAME_TOKEN` (src/api/property.ts ~532) read plain identifiers only, so a quoted tie `'K x' == 'L x'` counts as a taint source (more abstention), and property.ts ~491 drafts a s",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "c",
-     "text": "a check-behaviour atom `p=state 'deg A'` is answered INCONCLUSIVE \"not read\" where `state deg A` works (probe rv/bh/s1.sysml);",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "d",
-     "text": "on the unit-aware path an info message for a body it cannot read starts with \"a call, an index or a string literal\" and gives the real cause only after a semicolon;",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "e",
-     "text": "a `//` comment holding an apostrophe inside an expression now reads \"Unterminated quoted name at N\" where it read \"Unterminated string literal\" (both unknown; probe rv/cm.sysml);",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "f",
-     "text": "CLOSED 2026-11-17 by a5-words W2: `bounds --measure` and `--free` take a quoted spelling (`QS::P::'K x'`, `QD::P::'a.b'`) as their unquoted forms do, and `quoteName` is exported for the property draft (probe fix-quoted-s",
-     "status": "closed",
-     "closed_day": "2026-11-17",
-     "closed_by": "a5-words W2"
-    },
-    {
-     "key": "h",
-     "text": "the default `bounds` measure and the instance labels follow name order, so a bare and a quoted-renamed model differ there (7 corpus models); about 407 of the 637 corpus models were not run through the quoted-rename harne",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    }
-   ],
-   "counts": {
-    "open": 5,
-    "closed": 1,
     "narrowed": 0,
     "ruled": 0,
     "held": 0
@@ -2203,11 +2210,11 @@
   }
  ],
  "totals": {
-  "open": 209,
+  "open": 210,
   "closed": 15,
   "narrowed": 4,
   "ruled": 1,
   "held": 4,
-  "subs": 233
+  "subs": 234
  }
 }

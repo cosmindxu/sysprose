@@ -4008,9 +4008,9 @@
   "open_raw": 70,
   "open": 70,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 42,
-   "POLISH": 26,
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 23,
    "HELD": 2
   },
   "new": 0,
@@ -4030,5 +4030,69 @@
   },
   "cum_new": 330,
   "cum_closed": 258
+ },
+ {
+  "idx": 126,
+  "sha": "486825e",
+  "when": "2026-11-21T11:54:51+01:00",
+  "day": "2026-11-21",
+  "subject": "TODO.md: close the parallel-machines/Simulate rollup (its state-machine parts are fixed or decided); its other-area decisions (3)-(6) move v",
+  "open_raw": 70,
+  "open": 70,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 23,
+   "HELD": 2
+  },
+  "new": 1,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 1,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 1,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 331,
+  "cum_closed": 259
+ },
+ {
+  "idx": 127,
+  "sha": "b277bfb",
+  "when": "2026-11-21T14:41:10+01:00",
+  "day": "2026-11-21",
+  "subject": "merge round sm15: check-behaviour atoms read quoted state/node/transition/trigger names; docs re-measured (185 files, 6013 tests; guards 238",
+  "open_raw": 70,
+  "open": 70,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 42,
+   "POLISH": 26,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 331,
+  "cum_closed": 259
  }
 ]

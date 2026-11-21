@@ -4865,8 +4865,8 @@
   "first_title": "Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker)",
   "first": "2026-11-02",
   "first_idx": 71,
-  "closed": "",
-  "closed_idx": null,
+  "closed": "2026-11-21",
+  "closed_idx": 126,
   "tag": "parser-pass",
   "cls_first": "WEAKER",
   "cls_last": "WEAKER",
@@ -5431,6 +5431,21 @@
  },
  {
   "id": 363,
+  "title": "Decisions to confirm (2026-11 rollup, moved from the parallel-machines rollup)",
+  "first_title": "Decisions to confirm (2026-11 rollup, moved from the parallel-machines rollup)",
+  "first": "2026-11-21",
+  "first_idx": 126,
+  "closed": "",
+  "closed_idx": null,
+  "tag": "decision 2026-11-05",
+  "cls_first": "WEAKER",
+  "cls_last": "WEAKER",
+  "optional": false,
+  "split_from": null,
+  "provisional": true
+ },
+ {
+  "id": 364,
   "title": "Name the holder in reach's refusal (optional, low)",
   "first_title": "Name the holder in reach's refusal (optional, low)",
   "first": "2026-10-21",
@@ -5445,7 +5460,7 @@
   "provisional": false
  },
  {
-  "id": 364,
+  "id": 365,
   "title": "Read the subsetted feature where an instance redefines a usage that subsets it",
   "first_title": "Read the subsetted feature where an instance redefines a usage that subsets it",
   "first": "2026-10-22",
