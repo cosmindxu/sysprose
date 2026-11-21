@@ -1,0 +1,856 @@
+/**
+ * Variability — what a family model admits, and whether a configuration of it is valid.
+ *
+ * THE PROFILE (P5: every spelling that counts is stated here, and what is not
+ * read is refused with its reason, never guessed — a wrong verdict is worse
+ * than "not read").
+ *
+ * SUPERSET OWNER. A definition or usage that directly holds a VARIATION POINT
+ * and is not itself inside a variant. A variation point is a usage with
+ * `variation` (SysML v2 §7.6.7), or a usage TYPED by a variation definition
+ * (Annex A.12: `variation part transmission : TransmissionChoices;` takes its
+ * variants from the definition). Its VARIANTS are its owned `variant` usages
+ * (or the definition's); a `variant X;` reference form is read by the
+ * referenced usage's name. A point with both own variants and a variation
+ * definition, a variant with no name, or two variants of one name make the
+ * owner NOT READ.
+ *
+ * OPTIONALITY. No multiplicity or `[1]`: exactly one variant (P1). `[0..1]`:
+ * at most one. Any other multiplicity on a point is not read (it would allow
+ * several variants at once, which this profile does not model).
+ *
+ * NESTING (P3). A point inside a variant (reached through plain members) is
+ * ACTIVE only when that variant is selected; an inactive point has no
+ * selection and a selection written for it is invalid. A point under a
+ * multiplicity above 1 (`cylinder : Cylinder [6]` holding `diameter`) is read
+ * as ONE choice shared by the instances: independent per-instance choices are
+ * not modelled, and the report says so.
+ *
+ * A POINT WITH NO VARIANTS (A.12 `sunroof`) cannot be configured by any
+ * selection: it is left OUT of the formula, reported, and every analysis of
+ * that owner says it ranges over the other points.
+ *
+ * SELECTION CONSTRAINTS. `assert constraint` members of the owner whose body
+ * is built from atoms `p == p::v` or `p == Def::v` (p a point of the owner,
+ * unique by simple name, v one of its variants) combined with `and`, `or`,
+ * `xor`, `implies`, `not ( … )` and parentheses. One binary operator per
+ * parenthesis level (mixed precedence is refused, not guessed), `implies` not
+ * chained, `not` only before parentheses. An atom is false when its point is
+ * inactive. Any other atom, operator or spelling: the constraint is NOT READ,
+ * with the reason. Not-read constraints widen the model: the count is then "at
+ * most", dead variants, core variants and a void model stay sound (more
+ * constraints only remove configurations), a "not dead"/"not core" claim is
+ * not made, and a HOLDS verdict is qualified as over the constraints read.
+ *
+ * SELECTIONS (a CONFIGURATION is a usage that subsets or is typed by the
+ * owner and redefines points in its body):
+ *   - `part :>> p = X::v;`  (bound with `=`; X is the point's name or its
+ *     variation definition's name) — a selection;
+ *   - `part :>> p :> X::v;` (the redefinition subsets the variant) — a selection;
+ *   - everything else is NOT a selection and is refused with its reason:
+ *     `default`/`:=` values (overridable), an unqualified `= v`, typing only
+ *     (`: Engine4Cyl` names a type, not a variant), a subsetting of a
+ *     non-variant, a `bind`. A selection that names a variant of ANOTHER point,
+ *     or a name that is no variant of the point, is INVALID. Selecting a point
+ *     twice is invalid. Any not-read selection withholds the verdict (the
+ *     configuration might select it).
+ *
+ * DECISION. By exhaustive enumeration of the structural configurations (one
+ * choice per active point; nested points follow their variant), each checked
+ * against the constraints: exact, synchronous, with no solver to be absent or to
+ * time out, and the formula is small (a family with 10^6 raw configurations is
+ * refused as not established, with the cap stated). The equivalent
+ * propositional formula (one boolean per point-variant; exactly one per active
+ * point, at most one if optional; a variant's nested points exist only under it;
+ * the constraints) is what the enumeration decides, so counts, backbones
+ * (core/dead), and false-optional are the exact answers of the questions
+ * AO10-AO15 (P4). A solver would be the way past the cap, and is not used.
+ *
+ * FALSE-OPTIONAL (AO15): an optional point that is selected in EVERY valid
+ * configuration where it is active, and active in at least one.
+ */
+import type { ElementRecord, Model } from '@core/index';
+
+/** Diagnostic codes of this module (catalogued by the integrator). */
+export const VARIABILITY_CODES = {
+  invalidSelection: 'verification/variability-invalid-selection',
+  constraintViolated: 'verification/variability-constraint-violated',
+  partial: 'verification/variability-partial-configuration',
+  selectionNotRead: 'verification/variability-selection-not-read',
+  constraintNotRead: 'verification/variability-constraint-not-read',
+  ownerNotRead: 'verification/variability-owner-not-read',
+  noVariants: 'verification/variability-no-variants',
+  void: 'verification/variability-void',
+  deadVariant: 'verification/variability-dead-variant',
+  falseOptional: 'verification/variability-false-optional',
+  notEstablished: 'verification/variability-not-established',
+  family: 'verification/variability-family',
+} as const;
+
+/** The most structural configurations enumerated before the analyses are withheld. */
+export const VARIABILITY_CAP = 1_000_000;
+
+export type VariabilitySeverity = 'error' | 'warning' | 'info';
+
+export interface VariabilityDiagnostic {
+  code: string;
+  severity: VariabilitySeverity;
+  message: string;
+  elementId?: string;
+}
+
+export interface VariabilityVariant {
+  key: string;
+  name: string;
+}
+
+export interface VariabilityPoint {
+  id: string;
+  name: string;
+  qualifiedName: string;
+  optional: boolean;
+  /** Read from the point's variation definition rather than owned variants. */
+  viaDefinition: string | null;
+  variants: VariabilityVariant[];
+  /** The variant (`key`) that activates this point, or null when always active. */
+  activatedBy: string | null;
+  /** Under a feature of multiplicity above 1: read as one shared choice. */
+  sharedAcrossInstances: boolean;
+  /** No variants: left out of the formula. */
+  configurable: boolean;
+}
+
+export interface ConstraintRow {
+  id: string;
+  name: string;
+  text: string;
+  read: boolean;
+  reason?: string;
+}
+
+export interface FamilyAnalysis {
+  established: boolean;
+  /** Why not, when not established. */
+  reason?: string;
+  structural: number;
+  valid: number;
+  /** true when the count is exact; false = "at most" (constraints not read). */
+  exact: boolean;
+  void: boolean;
+  core: string[];
+  dead: string[];
+  falseOptional: string[];
+  /** Points left out of the formula (no variants). */
+  excludedPoints: string[];
+  /** The valid configurations, as `point = variant` lists (only when few). */
+  configurations: string[][];
+}
+
+export type SelectionStatus = 'valid' | 'invalid' | 'not-read';
+
+export interface SelectionRow {
+  point: string | null;
+  text: string;
+  status: SelectionStatus;
+  reason: string;
+}
+
+export type ConfigurationStatus =
+  | 'invalid'
+  | 'not-evaluated'
+  | 'partial'
+  | 'holds'
+  | 'holds-over-read-constraints'
+  | 'violated';
+
+export interface ConfigurationReport {
+  id: string;
+  name: string;
+  selections: SelectionRow[];
+  status: ConfigurationStatus;
+  missing: string[];
+  completes?: boolean;
+  completion?: string[];
+  forced?: string[];
+  violated?: string[];
+  blockedBy?: string[];
+  note?: string;
+}
+
+export interface OwnerReport {
+  id: string;
+  name: string;
+  status: 'read' | 'not-read';
+  reasons: string[];
+  points: VariabilityPoint[];
+  constraints: ConstraintRow[];
+  analysis: FamilyAnalysis | null;
+  configurations: ConfigurationReport[];
+}
+
+export interface VariabilityReport {
+  owners: OwnerReport[];
+  diagnostics: VariabilityDiagnostic[];
+  summary: { errors: number; warnings: number; infos: number };
+  cap: number;
+}
+
+/* ───────────────────────────── model helpers ───────────────────────────── */
+
+const isUsage = (e: ElementRecord): boolean => e.eClass.endsWith('Usage');
+const isDefinition = (e: ElementRecord): boolean => e.eClass.endsWith('Definition');
+
+function members(model: Model, id: string): ElementRecord[] {
+  return model.children(id).filter((c) => isUsage(c) || isDefinition(c));
+}
+function rels(model: Model, id: string, eClass: string): ElementRecord[] {
+  return model.children(id).filter((c) => c.eClass === eClass);
+}
+function targets(model: Model, id: string, eClass: string): ElementRecord[] {
+  const out: ElementRecord[] = [];
+  for (const r of rels(model, id, eClass)) {
+    for (const t of r.target ?? []) {
+      const e = model.get(t);
+      if (e) out.push(e);
+    }
+  }
+  return out;
+}
+const isRedefinition = (model: Model, e: ElementRecord): boolean => rels(model, e.id, 'Redefinition').length > 0;
+const isVariantUsage = (e: ElementRecord): boolean => e.attrs.isVariant === true && isUsage(e);
+const isLibrary = (e: ElementRecord): boolean => e.attrs.isLibrary === true;
+
+function variationDefsOf(model: Model, e: ElementRecord): ElementRecord[] {
+  return targets(model, e.id, 'FeatureTyping').filter((t) => t.attrs.isVariation === true && isDefinition(t));
+}
+function isPointUsage(model: Model, e: ElementRecord): boolean {
+  if (!isUsage(e) || isVariantUsage(e) || isRedefinition(model, e)) return false;
+  return e.attrs.isVariation === true || variationDefsOf(model, e).length > 0;
+}
+function insideVariant(model: Model, e: ElementRecord): boolean {
+  let o = e.ownerId !== null ? model.get(e.ownerId) : undefined;
+  while (o) {
+    if (isVariantUsage(o)) return true;
+    o = o.ownerId !== null ? model.get(o.ownerId) : undefined;
+  }
+  return false;
+}
+function nameOf(model: Model, e: ElementRecord): string | null {
+  if (e.declaredName) return e.declaredName;
+  // `variant X;` and friends: the effective name is the referenced usage's.
+  for (const cls of ['ReferenceSubsetting', 'Subsetting', 'Redefinition']) {
+    const t = targets(model, e.id, cls)[0];
+    if (t?.declaredName) return t.declaredName;
+  }
+  return null;
+}
+function multiplicityOf(e: ElementRecord): string | null {
+  const m = e.attrs.multiplicity;
+  return typeof m === 'string' ? m.replace(/\s+/g, '') : null;
+}
+
+/* ─────────────────────────────── extraction ────────────────────────────── */
+
+interface Owned {
+  points: VariabilityPoint[];
+  reasons: string[];
+}
+
+function extractPoints(model: Model, owner: ElementRecord): Owned {
+  const points: VariabilityPoint[] = [];
+  const reasons: string[] = [];
+
+  const addPoint = (e: ElementRecord, activatedBy: string | null, shared: boolean): void => {
+    const name = nameOf(model, e) ?? '<anonymous>';
+    const defs = variationDefsOf(model, e);
+    const own = members(model, e.id).filter(isVariantUsage);
+    const q = model.qualifiedName(e.id) || name;
+    if (own.length > 0 && defs.length > 0) {
+      reasons.push(`${q}: owns variants AND is typed by a variation definition (${defs.map((d) => d.declaredName).join(', ')}); which variants apply is not defined here`);
+      return;
+    }
+    if (e.attrs.isVariation !== true && own.length > 0) {
+      reasons.push(`${q}: owns variants but is not a variation`);
+      return;
+    }
+    const mult = multiplicityOf(e);
+    let optional = false;
+    if (mult === '0..1') optional = true;
+    else if (mult !== null && mult !== '1') {
+      reasons.push(`${q}: multiplicity [${mult}] on a variation point would allow several variants at once; only none, [1] and [0..1] are read`);
+      return;
+    }
+    const source = own.length > 0 ? own : defs.flatMap((d) => members(model, d.id).filter(isVariantUsage));
+    const variants: VariabilityVariant[] = [];
+    const seen = new Set<string>();
+    const nested: Array<{ el: ElementRecord; key: string }> = [];
+    for (const v of source) {
+      const vn = nameOf(model, v);
+      if (vn === null) {
+        reasons.push(`${q}: a variant has no name and references no named usage`);
+        return;
+      }
+      if (seen.has(vn)) {
+        reasons.push(`${q}: two variants are named \`${vn}\``);
+        return;
+      }
+      seen.add(vn);
+      const key = `${e.id}/${v.id}`;
+      variants.push({ key, name: vn });
+      nested.push({ el: v, key });
+    }
+    points.push({
+      id: e.id,
+      name,
+      qualifiedName: q,
+      optional,
+      viaDefinition: own.length === 0 && defs.length > 0 ? defs.map((d) => d.declaredName).join(', ') : null,
+      variants,
+      activatedBy,
+      sharedAcrossInstances: shared,
+      configurable: variants.length > 0,
+    });
+    for (const n of nested) walk(n.el, n.key, shared);
+  };
+
+  const walk = (el: ElementRecord, activatedBy: string | null, shared: boolean): void => {
+    for (const c of members(model, el.id)) {
+      if (!isUsage(c)) continue;
+      if (isVariantUsage(c)) continue;
+      if (isPointUsage(model, c)) {
+        addPoint(c, activatedBy, shared);
+        continue;
+      }
+      const m = multiplicityOf(c);
+      walk(c, activatedBy, shared || (m !== null && m !== '1' && m !== '0..1'));
+    }
+  };
+
+  // The owner's own members are points directly; plain members that hold points
+  // are owners of their own (not part of this owner's formula) EXCEPT through variants.
+  for (const c of members(model, owner.id)) {
+    if (isPointUsage(model, c)) addPoint(c, null, false);
+  }
+  return { points, reasons };
+}
+
+/* ──────────────────────────── selection constraints ─────────────────────── */
+
+type Ast =
+  | { k: 'atom'; point: string; variant: string }
+  | { k: 'not'; a: Ast }
+  | { k: 'op'; op: 'and' | 'or' | 'xor' | 'implies'; args: Ast[] };
+
+type RawAst =
+  | { k: 'atom'; lhs: string; rhs: string }
+  | { k: 'not'; a: RawAst }
+  | { k: 'op'; op: 'and' | 'or' | 'xor' | 'implies'; args: RawAst[] };
+
+class Refuse extends Error {}
+
+function tokenize(text: string): string[] {
+  const out: string[] = [];
+  const re = /\s+|==|!=|\(|\)|[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*|[\s\S]/y;
+  let m: RegExpExecArray | null;
+  while (re.lastIndex < text.length && (m = re.exec(text)) !== null) {
+    if (/^\s+$/.test(m[0])) continue;
+    out.push(m[0]);
+  }
+  return out;
+}
+
+const NAME = /^[A-Za-z_]\w*(::\w+)*$/;
+
+function parseConstraint(text: string): RawAst {
+  const toks = tokenize(text);
+  let i = 0;
+  const OPS = new Set(['and', 'or', 'xor', 'implies']);
+  const peek = (): string | undefined => toks[i];
+  const expr = (): RawAst => {
+    const first = term();
+    let op: string | undefined;
+    const args = [first];
+    while (peek() !== undefined && OPS.has(peek()!)) {
+      const o = toks[i++];
+      if (op !== undefined && op !== o) {
+        throw new Refuse(`mixes \`${op}\` and \`${o}\` without parentheses; precedence is not guessed`);
+      }
+      op = o;
+      args.push(term());
+    }
+    if (op === undefined) return first;
+    if (op === 'implies' && args.length > 2) throw new Refuse('chains `implies` without parentheses');
+    return { k: 'op', op: op as 'and', args };
+  };
+  const term = (): RawAst => {
+    const t = peek();
+    if (t === undefined) throw new Refuse('ends where an operand was expected');
+    if (t === 'not') {
+      i++;
+      if (peek() !== '(') throw new Refuse('uses `not` before something other than a parenthesis');
+      i++;
+      const a = expr();
+      if (peek() !== ')') throw new Refuse('has an unclosed parenthesis');
+      i++;
+      return { k: 'not', a };
+    }
+    if (t === '(') {
+      i++;
+      const a = expr();
+      if (peek() !== ')') throw new Refuse('has an unclosed parenthesis');
+      i++;
+      return a;
+    }
+    if (NAME.test(t) && !OPS.has(t)) {
+      i++;
+      if (peek() === '==') {
+        i++;
+        const r = toks[i++];
+        if (r === undefined || !NAME.test(r)) throw new Refuse(`has \`${t} ==\` followed by something that is not a name`);
+        return { k: 'atom', lhs: t, rhs: r };
+      }
+      throw new Refuse(`has the operand \`${t}\`, which is not a comparison \`point == point::variant\``);
+    }
+    throw new Refuse(`contains \`${t}\`, which is outside the supported shape (\`==\`, and, or, xor, implies, not ( ), parentheses)`);
+  };
+  const ast = expr();
+  if (i < toks.length) throw new Refuse(`has \`${toks[i]}\` where an operator was expected`);
+  return ast;
+}
+
+const qualifierNames = (p: VariabilityPoint, prefix: string): boolean =>
+  prefix === p.name || (p.viaDefinition !== null && p.viaDefinition.split(', ').some((d) => d === prefix || prefix.endsWith(`::${d}`)));
+
+function resolveAst(raw: RawAst, points: VariabilityPoint[]): Ast {
+  if (raw.k === 'not') return { k: 'not', a: resolveAst(raw.a, points) };
+  if (raw.k === 'op') return { k: 'op', op: raw.op, args: raw.args.map((a) => resolveAst(a, points)) };
+  const { lhs, rhs } = raw;
+  if (lhs.includes('::')) throw new Refuse(`compares the qualified path \`${lhs}\`; only a point's simple name is read`);
+  const cands = points.filter((p) => p.name === lhs);
+  if (cands.length === 0) throw new Refuse(`compares \`${lhs}\`, which is not a variation point of this owner`);
+  if (cands.length > 1) throw new Refuse(`compares \`${lhs}\`, which names ${cands.length} points of this owner`);
+  const p = cands[0];
+  const parts = rhs.split('::');
+  const v = parts[parts.length - 1];
+  const prefix = parts.slice(0, -1).join('::');
+  if (prefix === '') throw new Refuse(`compares \`${lhs}\` to the unqualified \`${rhs}\`; write \`${p.name}::${rhs}\``);
+  if (!qualifierNames(p, prefix)) throw new Refuse(`compares \`${lhs}\` to \`${rhs}\`, whose qualifier \`${prefix}\` is neither the point nor its variation definition`);
+  const variant = p.variants.find((x) => x.name === v);
+  if (!variant) throw new Refuse(`compares \`${lhs}\` to \`${rhs}\`, but \`${v}\` is not a variant of ${p.name} (${p.variants.map((x) => x.name).join(', ') || 'none'})`);
+  return { k: 'atom', point: p.id, variant: variant.key };
+}
+
+type Sel = Map<string, string | null>;
+
+function evalAst(a: Ast, sel: Sel): boolean {
+  if (a.k === 'atom') return sel.get(a.point) === a.variant;
+  if (a.k === 'not') return !evalAst(a.a, sel);
+  const vs = a.args.map((x) => evalAst(x, sel));
+  switch (a.op) {
+    case 'and':
+      return vs.every(Boolean);
+    case 'or':
+      return vs.some(Boolean);
+    case 'xor':
+      return vs.filter(Boolean).length % 2 === 1;
+    case 'implies':
+      return !vs[0] || vs[1];
+  }
+}
+
+/* ─────────────────────────────── enumeration ───────────────────────────── */
+
+class CapExceeded extends Error {}
+
+/** Every structural configuration: one choice per active configurable point. */
+function enumerate(points: VariabilityPoint[], visit: (sel: Sel) => void): number {
+  const ps = points.filter((p) => p.configurable);
+  const sel: Sel = new Map();
+  const chosen = new Set<string>();
+  let leaves = 0;
+  const go = (i: number): void => {
+    if (i === ps.length) {
+      if (++leaves > VARIABILITY_CAP) throw new CapExceeded();
+      visit(sel);
+      return;
+    }
+    const p = ps[i];
+    const active = p.activatedBy === null || chosen.has(p.activatedBy);
+    if (!active) {
+      sel.set(p.id, null);
+      go(i + 1);
+      return;
+    }
+    for (const v of p.variants) {
+      sel.set(p.id, v.key);
+      chosen.add(v.key);
+      go(i + 1);
+      chosen.delete(v.key);
+    }
+    if (p.optional) {
+      sel.set(p.id, null);
+      go(i + 1);
+    }
+  };
+  go(0);
+  return leaves;
+}
+
+/* ─────────────────────────────── the analysis ──────────────────────────── */
+
+const vname = (points: VariabilityPoint[], key: string): string => {
+  for (const p of points) {
+    const v = p.variants.find((x) => x.key === key);
+    if (v) return `${p.name}::${v.name}`;
+  }
+  return key;
+};
+const selText = (points: VariabilityPoint[], sel: Sel): string[] =>
+  points.filter((p) => sel.get(p.id)).map((p) => `${p.name} = ${vname(points, sel.get(p.id)!)}`);
+
+interface Formula {
+  points: VariabilityPoint[];
+  read: Array<{ row: ConstraintRow; ast: Ast }>;
+  unread: number;
+  valid: Sel[] | null; // null = not established
+  structural: number;
+  capReason?: string;
+}
+
+const holdsAll = (read: Formula['read'], sel: Sel): boolean => read.every((c) => evalAst(c.ast, sel));
+const selects = (s: Sel, key: string): boolean => [...s.values()].includes(key);
+
+function buildFormula(points: VariabilityPoint[], read: Formula['read'], unread: number): Formula {
+  const valid: Sel[] = [];
+  const f: Formula = { points, read, unread, valid, structural: 0 };
+  try {
+    f.structural = enumerate(points, (sel) => {
+      if (holdsAll(read, sel)) valid.push(new Map(sel));
+    });
+  } catch (e) {
+    if (!(e instanceof CapExceeded)) throw e;
+    f.valid = null;
+    f.capReason = `more than ${VARIABILITY_CAP} structural configurations: the enumeration is capped there and nothing is claimed`;
+  }
+  return f;
+}
+
+function analyse(f: Formula, excluded: string[]): FamilyAnalysis {
+  if (f.valid === null) {
+    return { established: false, reason: f.capReason, structural: 0, valid: 0, exact: false, void: false, core: [], dead: [], falseOptional: [], excludedPoints: excluded, configurations: [] };
+  }
+  const valid = f.valid;
+  const core: string[] = [];
+  const dead: string[] = [];
+  for (const k of f.points.flatMap((p) => p.variants.map((v) => v.key))) {
+    const n = valid.filter((s) => selects(s, k)).length;
+    if (n === 0) dead.push(vname(f.points, k));
+    else if (n === valid.length) core.push(vname(f.points, k));
+  }
+  const falseOptional: string[] = [];
+  for (const p of f.points) {
+    if (!p.optional || !p.configurable) continue;
+    const act = valid.filter((s) => p.activatedBy === null || selects(s, p.activatedBy));
+    if (act.length > 0 && act.every((s) => s.get(p.id))) falseOptional.push(p.name);
+  }
+  return {
+    established: true,
+    structural: f.structural,
+    valid: valid.length,
+    exact: f.unread === 0,
+    void: valid.length === 0,
+    core,
+    dead,
+    falseOptional,
+    excludedPoints: excluded,
+    configurations: valid.length <= 50 ? valid.map((s) => selText(f.points, s)) : [],
+  };
+}
+
+/* ───────────────────────────── configurations ──────────────────────────── */
+
+const QNAME = /^[A-Za-z_]\w*(::[A-Za-z_]\w*)+$/;
+
+function selectionsOf(model: Model, cfg: ElementRecord, points: VariabilityPoint[]): { rows: SelectionRow[]; chosen: Map<string, string[]> } {
+  const rows: SelectionRow[] = [];
+  const chosen = new Map<string, string[]>();
+  const pointById = new Map(points.map((p) => [p.id, p]));
+
+  const addValid = (p: VariabilityPoint, key: string, text: string, how: string): void => {
+    rows.push({ point: p.name, text, status: 'valid', reason: `${how} names a variant of ${p.name}` });
+    chosen.set(p.id, [...(chosen.get(p.id) ?? []), key]);
+  };
+
+  const visit = (m: ElementRecord): void => {
+    if (!isUsage(m)) return;
+    for (const c of model.children(m.id)) {
+      if (c.eClass === 'BindingConnectorAsUsage' || c.eClass === 'BindingConnector') {
+        rows.push({ point: null, text: 'bind …', status: 'not-read', reason: 'a `bind` connector is not read as a selection; write `part :>> p = p::v;`' });
+      }
+    }
+    const redefined = targets(model, m.id, 'Redefinition')
+      .map((t) => pointById.get(t.id))
+      .filter((p): p is VariabilityPoint => p !== undefined);
+    // A redefinition the binder could not resolve (a nested point written
+    // `:>> diameter` from the configuration's own scope) survives as the written
+    // name in `attrs.redefines`; it is read as the point of that name when exactly
+    // one point of the owner bears it, and ignored otherwise.
+    if (rels(model, m.id, 'Redefinition').length === 0 && Array.isArray(m.attrs.redefines)) {
+      for (const w of m.attrs.redefines as unknown[]) {
+        const last = String(w).split('::').pop();
+        const named = points.filter((p) => p.name === last);
+        if (named.length === 1) redefined.push(named[0]);
+      }
+    }
+    for (const p of redefined) {
+      const label = `:>> ${p.name}`;
+      const value = typeof m.attrs.value === 'string' ? (m.attrs.value as string).trim() : null;
+      if (value !== null) {
+        if (m.attrs.defaultValue === true || m.attrs.initialValue === true) {
+          rows.push({ point: p.name, text: `${label} ${m.attrs.defaultValue === true ? 'default' : ':='} ${value}`, status: 'not-read', reason: 'a default or initial value can be overridden; only `=` selects' });
+        } else if (!QNAME.test(value)) {
+          rows.push({
+            point: p.name,
+            text: `${label} = ${value}`,
+            status: 'not-read',
+            reason: /^[A-Za-z_]\w*$/.test(value) ? `the unqualified \`${value}\` is not read; write \`${p.name}::${value}\`` : 'the value is not a qualified name `p::v`',
+          });
+        } else {
+          const text = `${label} = ${value}`;
+          const parts = value.split('::');
+          const v = parts[parts.length - 1];
+          const prefix = parts.slice(0, -1).join('::');
+          const hit = p.variants.find((x) => x.name === v);
+          if (qualifierNames(p, prefix)) {
+            if (hit) addValid(p, hit.key, text, '`=`');
+            else rows.push({ point: p.name, text, status: 'invalid', reason: `\`${v}\` is not a variant of ${p.name} (variants: ${p.variants.map((x) => x.name).join(', ')})` });
+          } else {
+            const other = points.find((q) => q !== p && qualifierNames(q, prefix));
+            if (other && other.variants.some((x) => x.name === v)) {
+              rows.push({ point: p.name, text, status: 'invalid', reason: `\`${value}\` is a variant of ${other.name}, not of ${p.name}` });
+            } else {
+              rows.push({ point: p.name, text, status: 'not-read', reason: `the qualifier \`${prefix}\` is neither ${p.name} nor its variation definition` });
+            }
+          }
+        }
+      }
+      for (const t of targets(model, m.id, 'Subsetting')) {
+        const text = `${label} :> ${model.qualifiedName(t.id) || t.declaredName || t.id}`;
+        const hit = p.variants.find((x) => x.key === `${p.id}/${t.id}`);
+        if (hit) addValid(p, hit.key, text, '`:>`');
+        else if (points.some((q) => q !== p && q.variants.some((x) => x.key === `${q.id}/${t.id}`))) {
+          rows.push({ point: p.name, text, status: 'invalid', reason: `${t.declaredName} is a variant of another point, not of ${p.name}` });
+        } else {
+          rows.push({ point: p.name, text, status: 'not-read', reason: `${t.declaredName ?? 'the target'} is not a variant of ${p.name}; subsetting a non-variant is not a selection` });
+        }
+      }
+      const typed = targets(model, m.id, 'FeatureTyping');
+      if (typed.length > 0 && value === null) {
+        rows.push({ point: p.name, text: `${label} : ${typed.map((t) => t.declaredName).join(', ')}`, status: 'not-read', reason: 'typing names a type, not a variant; it is not a selection' });
+      }
+    }
+    for (const c of members(model, m.id)) visit(c);
+  };
+  for (const c of members(model, cfg.id)) visit(c);
+  return { rows, chosen };
+}
+
+function configurations(model: Model, owner: ElementRecord, f: Formula, diags: VariabilityDiagnostic[]): ConfigurationReport[] {
+  const out: ConfigurationReport[] = [];
+  const cfgs = model
+    .all()
+    .filter((e) => !isLibrary(e) && isUsage(e) && e.id !== owner.id)
+    .filter((e) => ['Subsetting', 'FeatureTyping'].some((c) => targets(model, e.id, c).some((t) => t.id === owner.id)));
+  const conf = f.points.filter((p) => p.configurable);
+  for (const cfg of cfgs) {
+    const name = model.qualifiedName(cfg.id) || cfg.declaredName || cfg.id;
+    const { rows, chosen } = selectionsOf(model, cfg, f.points);
+    // Points are in preorder, so a parent is settled before its nested points.
+    const sel: Sel = new Map();
+    const active = new Set<string>();
+    for (const p of conf) {
+      const picks = chosen.get(p.id) ?? [];
+      if (picks.length === 0) continue;
+      if (picks.length > 1) {
+        rows.push({ point: p.name, text: picks.map((k) => vname(f.points, k)).join(' and '), status: 'invalid', reason: `${p.name} is selected more than once` });
+        continue;
+      }
+      if (p.activatedBy !== null && !active.has(p.activatedBy)) {
+        rows.push({ point: p.name, text: vname(f.points, picks[0]), status: 'invalid', reason: `${p.name} is inactive: it exists only when ${vname(f.points, p.activatedBy)} is selected (P3)` });
+        continue;
+      }
+      sel.set(p.id, picks[0]);
+      active.add(picks[0]);
+    }
+    const missing: string[] = [];
+    const act2 = new Set<string>();
+    for (const p of conf) {
+      const s = sel.get(p.id);
+      if (s) act2.add(s);
+      else if ((p.activatedBy === null || act2.has(p.activatedBy)) && !p.optional && !(chosen.get(p.id)?.length)) missing.push(p.name);
+    }
+    for (const r of rows) {
+      if (r.status === 'invalid') diags.push({ code: VARIABILITY_CODES.invalidSelection, severity: 'error', message: `${name}: invalid selection \`${r.text}\` — ${r.reason}`, elementId: cfg.id });
+      if (r.status === 'not-read') diags.push({ code: VARIABILITY_CODES.selectionNotRead, severity: 'info', message: `${name}: \`${r.text}\` is not read as a selection — ${r.reason}`, elementId: cfg.id });
+    }
+    const rep: ConfigurationReport = { id: cfg.id, name, selections: rows, status: 'partial', missing };
+    const extending = (valid: Sel[]): Sel[] => valid.filter((s) => [...sel.entries()].every(([k, v]) => s.get(k) === v));
+    if (rows.some((r) => r.status === 'invalid')) {
+      rep.status = 'invalid';
+    } else if (rows.some((r) => r.status === 'not-read')) {
+      rep.status = 'not-evaluated';
+      rep.note = 'a spelling that is not read might select; no verdict is given over this configuration';
+    } else if (f.valid === null) {
+      rep.status = 'not-evaluated';
+      rep.note = f.capReason;
+    } else if (missing.length > 0) {
+      rep.status = 'partial';
+      const ext = extending(f.valid);
+      rep.completes = ext.length > 0;
+      const qual = f.unread > 0 ? ' over the constraints read' : '';
+      if (ext.length > 0) {
+        rep.completion = selText(f.points, ext[0]);
+        rep.forced = conf
+          .filter((p) => !sel.has(p.id) && ext[0].get(p.id) && ext.every((s) => s.get(p.id) === ext[0].get(p.id)))
+          .map((p) => vname(f.points, ext[0].get(p.id)!));
+        diags.push({ code: VARIABILITY_CODES.partial, severity: 'warning', message: `${name}: partial — no selection for ${missing.join(', ')}; completes${qual}; forced: ${rep.forced.join(', ') || 'nothing'}`, elementId: cfg.id });
+      } else {
+        const blockers = f.read
+          .filter((c) => {
+            let n = 0;
+            enumerate(f.points, (s) => {
+              if (evalAst(c.ast, s) && [...sel.entries()].every(([k, v]) => s.get(k) === v)) n++;
+            });
+            return n === 0;
+          })
+          .map((c) => c.row.name);
+        rep.blockedBy = blockers.length > 0 ? blockers : ['the constraints jointly'];
+        diags.push({ code: VARIABILITY_CODES.partial, severity: 'warning', message: `${name}: partial and CANNOT be completed — no valid configuration extends it (blocked by ${rep.blockedBy.join(', ')})`, elementId: cfg.id });
+      }
+    } else {
+      const bad = f.read.filter((c) => !evalAst(c.ast, sel));
+      if (bad.length > 0) {
+        rep.status = 'violated';
+        rep.violated = bad.map((c) => c.row.name);
+        for (const c of bad) diags.push({ code: VARIABILITY_CODES.constraintViolated, severity: 'error', message: `${name}: the selection constraint ${c.row.name} is VIOLATED by ${selText(f.points, sel).join(', ')}`, elementId: cfg.id });
+      } else rep.status = f.unread === 0 ? 'holds' : 'holds-over-read-constraints';
+    }
+    out.push(rep);
+  }
+  return out;
+}
+
+/* ───────────────────────────────── driver ──────────────────────────────── */
+
+function constraintsOf(model: Model, owner: ElementRecord, points: VariabilityPoint[]): { rows: ConstraintRow[]; read: Formula['read'] } {
+  const rows: ConstraintRow[] = [];
+  const read: Formula['read'] = [];
+  for (const c of members(model, owner.id)) {
+    if (c.eClass !== 'ConstraintUsage' || c.attrs.requirementRole !== 'assert') continue;
+    const name = c.declaredName ?? '<anonymous>';
+    const text = typeof c.attrs.expression === 'string' ? (c.attrs.expression as string).replace(/\s+/g, ' ').trim() : '';
+    const row: ConstraintRow = { id: c.id, name, text, read: false };
+    rows.push(row);
+    try {
+      if (c.attrs.negated === true || c.attrs.isNegated === true) throw new Refuse('is a negated assertion');
+      if (text === '') throw new Refuse('has no expression body');
+      if (!points.some((p) => text.includes(p.name))) throw new Refuse('mentions no variation point of this owner (not a selection constraint)');
+      const ast = resolveAst(parseConstraint(text), points);
+      row.read = true;
+      read.push({ row, ast });
+    } catch (e) {
+      if (!(e instanceof Refuse)) throw e;
+      row.reason = e.message;
+    }
+  }
+  return { rows, read };
+}
+
+export function variabilityReport(model: Model): VariabilityReport {
+  const owners: OwnerReport[] = [];
+  const diagnostics: VariabilityDiagnostic[] = [];
+  for (const e of model.all()) {
+    if (isLibrary(e) || !(isUsage(e) || isDefinition(e)) || insideVariant(model, e)) continue;
+    if (!members(model, e.id).some((c) => isPointUsage(model, c))) continue;
+    const name = model.qualifiedName(e.id) || e.declaredName || e.id;
+    const { points, reasons } = extractPoints(model, e);
+    if (reasons.length > 0) {
+      owners.push({ id: e.id, name, status: 'not-read', reasons, points: [], constraints: [], analysis: null, configurations: [] });
+      for (const r of reasons) diagnostics.push({ code: VARIABILITY_CODES.ownerNotRead, severity: 'info', message: `${name} is not read as a variability model — ${r}`, elementId: e.id });
+      continue;
+    }
+    const { rows, read } = constraintsOf(model, e, points);
+    for (const r of rows.filter((x) => !x.read)) {
+      diagnostics.push({ code: VARIABILITY_CODES.constraintNotRead, severity: 'info', message: `${name}: the constraint ${r.name} is not read — it ${r.reason}; the analyses treat it as absent`, elementId: r.id });
+    }
+    const excluded = points.filter((p) => !p.configurable);
+    for (const p of excluded) {
+      diagnostics.push({ code: VARIABILITY_CODES.noVariants, severity: 'warning', message: `${p.qualifiedName} is a variation with no variants: no selection can configure it; it is left out of the formula and the analyses range over the other points`, elementId: p.id });
+    }
+    const f = buildFormula(points, read, rows.filter((x) => !x.read).length);
+    const analysis = analyse(f, excluded.map((p) => p.name));
+    if (!analysis.established) {
+      diagnostics.push({ code: VARIABILITY_CODES.notEstablished, severity: 'warning', message: `${name}: family analyses not established — ${analysis.reason}`, elementId: e.id });
+    } else {
+      if (analysis.void) diagnostics.push({ code: VARIABILITY_CODES.void, severity: 'warning', message: `${name}: VOID — no configuration satisfies the variation structure and the selection constraints (AO10)`, elementId: e.id });
+      for (const d of analysis.dead) diagnostics.push({ code: VARIABILITY_CODES.deadVariant, severity: 'warning', message: `${name}: the variant ${d} is dead — no valid configuration selects it (AO14)`, elementId: e.id });
+      for (const p of analysis.falseOptional) diagnostics.push({ code: VARIABILITY_CODES.falseOptional, severity: 'warning', message: `${name}: the optional point ${p} is selected in every valid configuration (AO15)`, elementId: e.id });
+      diagnostics.push({ code: VARIABILITY_CODES.family, severity: 'info', message: `${name}: ${analysis.exact ? '' : 'at most '}${analysis.valid} valid configuration(s) of ${analysis.structural} structural (AO12)`, elementId: e.id });
+    }
+    owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: configurations(model, e, f, diagnostics) });
+  }
+  const count = (s: VariabilitySeverity): number => diagnostics.filter((d) => d.severity === s).length;
+  return { owners, diagnostics, summary: { errors: count('error'), warnings: count('warning'), infos: count('info') }, cap: VARIABILITY_CAP };
+}
+
+/* ───────────────────────────────── rendering ───────────────────────────── */
+
+const STATUS_WORD: Record<ConfigurationStatus, string> = {
+  invalid: 'INVALID',
+  'not-evaluated': 'NOT EVALUATED',
+  partial: 'PARTIAL',
+  holds: 'HOLDS',
+  'holds-over-read-constraints': 'HOLDS (over the constraints read)',
+  violated: 'VIOLATED',
+};
+
+export function variabilityLines(r: VariabilityReport, name: string): string[] {
+  const out: string[] = [];
+  out.push(`${name}: ${r.owners.length} variability owner(s) — ${r.summary.errors} error(s), ${r.summary.warnings} warning(s), ${r.summary.infos} info`);
+  if (r.owners.length === 0) out.push('  no variation point in this file: nothing to configure');
+  for (const o of r.owners) {
+    out.push('', `${o.name}`);
+    if (o.status === 'not-read') {
+      out.push('  NOT READ:', ...o.reasons.map((x) => `    ${x}`));
+      continue;
+    }
+    for (const p of o.points) {
+      out.push(
+        `  point ${p.name}${p.optional ? ' [0..1]' : ''}${p.viaDefinition ? ` (variants from ${p.viaDefinition})` : ''}: ${p.variants.map((v) => v.name).join(' | ') || 'NO VARIANTS — cannot be configured, left out'}` +
+          (p.activatedBy ? `  active only when ${vname(o.points, p.activatedBy)}` : '') +
+          (p.sharedAcrossInstances ? '  (one shared choice for every instance)' : ''),
+      );
+    }
+    for (const c of o.constraints) out.push(`  constraint ${c.name}: ${c.read ? 'read' : `NOT READ — ${c.reason}`}`);
+    const a = o.analysis!;
+    if (!a.established) out.push(`  family: not established — ${a.reason}`);
+    else {
+      out.push(`  family: ${a.void ? 'VOID (no valid configuration)' : `${a.exact ? '' : 'at most '}${a.valid} valid of ${a.structural} structural`}`);
+      if (a.excludedPoints.length > 0) out.push(`    ranging over the points that can be configured; left out: ${a.excludedPoints.join(', ')}`);
+      out.push(`    core variants: ${a.core.join(', ') || 'none'}`, `    dead variants: ${a.dead.join(', ') || 'none'}`, `    false-optional: ${a.falseOptional.join(', ') || 'none'}`);
+      if (!a.exact) out.push('    (constraints not read: the count is an upper bound; dead, core and void remain sound)');
+      for (const c of a.configurations) out.push(`    - ${c.join(', ')}`);
+    }
+    for (const c of o.configurations) {
+      out.push(`  configuration ${c.name}: ${STATUS_WORD[c.status]}`);
+      for (const s of c.selections) out.push(`    ${s.status}  ${s.text} — ${s.reason}`);
+      if (c.missing.length > 0 && c.status === 'partial') out.push(`    missing: ${c.missing.join(', ')}`);
+      if (c.completes !== undefined) out.push(`    completes: ${c.completes ? `yes, e.g. ${c.completion!.join(', ')}` : `NO (${c.blockedBy!.join(', ')})`}`);
+      if (c.forced) out.push(`    forced: ${c.forced.join(', ') || 'nothing'}`);
+      if (c.violated) out.push(`    violated: ${c.violated.join(', ')}`);
+      if (c.note) out.push(`    ${c.note}`);
+    }
+  }
+  if (r.diagnostics.length > 0) out.push('', ...r.diagnostics.map((d) => `  ${d.severity.padEnd(7)} ${d.code}  ${d.message}`));
+  return out;
+}

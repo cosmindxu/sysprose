@@ -26,7 +26,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
 | Full automated suite | **6027 passed / 0 failed / 0 skipped** across **187 files** + **238 E2E** across **84 spec files** = **6265 green** (measured 2026-11-21) |
-| Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
+| Command-line surface | **23 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -1081,7 +1081,7 @@ is unbounded, and one end-to-end run per exit contract) still spawn — **82
 spawns, down from 240** — and the ones
 about the TEXT call the same `main` in this process, which `scripts/sysprose.ts`
 now exports and runs only when it was run as a script. A bridge case spanning
-all 22 subcommands runs the same argv both ways and requires the same bytes and
+all 23 subcommands runs the same argv both ways and requires the same bytes and
 the same code, so the equality the split rests on is checked rather than
 assumed.
 

@@ -932,6 +932,20 @@ export const COMMANDS: readonly CommandSpec[] = [
       },
     ],
   },
+  // Variability: what a superset owner's variation points admit, and whether a
+  // configuration of it selects validly. A REPORT command: the findings are in
+  // the payload (`verification/variability-*`), and the profile of what counts
+  // as a point, a variant, a selection and a selection constraint is the header
+  // of src/semantics/variability.ts.
+  {
+    name: 'variability',
+    question:
+      'Which configurations does this family admit, and does each configuration select validly?',
+    backedBy: 'variabilityReport (src/semantics/variability.ts)',
+    payloadKey: 'variability',
+    exitContract: 'report',
+    flags: [],
+  },
 ];
 
 export function findCommand(name: string): CommandSpec | undefined {

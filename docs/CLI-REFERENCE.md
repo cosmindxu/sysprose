@@ -26,7 +26,7 @@ npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
 **The exit-code contract is per subcommand, and there are 7 of them.** Most
-subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status`, `reach` — for those,
+subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status`, `reach`, `variability` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
 obligation refuted with every feature at its model value, or one requirement set
@@ -92,6 +92,7 @@ rather than reporting on the first one.
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
 | [`reach`](#reach) | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | `reach` | reports |
 | [`check-behaviour`](#check-behaviour) | Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? | `behaviour` | judges |
+| [`variability`](#variability) | Which configurations does this family admit, and does each configuration select validly? | `variability` | reports |
 
 ### Options every subcommand takes
 
@@ -486,6 +487,20 @@ Computed by `behaviourReport (src/semantics/mc/patterns.ts)`. With `--json` the 
 
 **Exit codes.** 0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every `cover` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits — or a `recovery` assertion some reachable configuration cannot discharge, reported as that set rather than as a run — or, under --cover-required, a cover this walk did not witness on any run it saw whole · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a trigger the machine names that the walk never offered with no bound hit (`verification/trigger-not-offered`), a construct this engine does not explore, a witness the interpreter does not take (`verification/witness-not-replayed`), a `recovery` withheld because the interpreter’s chase budget stops a run somewhere that does not hold `p` (`verification/recovery-budget-withheld`), a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass — or a `cover` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — `--cover-required` spends the 1 for it instead. There is no solver in this lane and no --free: the walk reads the model’s own values.
 
+### `variability`
+
+**Which configurations does this family admit, and does each configuration select validly?**
+
+```bash
+npm run sysprose -- variability <file.sysml|-> [options]
+```
+
+_No flags of its own._
+
+Computed by `variabilityReport (src/semantics/variability.ts)`. With `--json` the answer is published under `variability`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
 ### `trace` relationship presets
 
 A preset names the **relationship** kinds only. The row and column metaclasses
@@ -534,4 +549,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*22 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*23 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

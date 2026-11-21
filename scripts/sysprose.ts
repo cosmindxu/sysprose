@@ -183,6 +183,7 @@ import {
   generalizationsOf,
 } from '../src/semantics/index';
 import { isAsserted } from '../src/semantics/defining-equation';
+import { variabilityLines, variabilityReport } from '../src/semantics/variability';
 // Deep imports rather than `../src/diagram/index`: the diagram barrel pulls the
 // layout engine in with it, and neither of these two builders needs it.
 import { buildGrid, valueCellHasOperator } from '../src/diagram/grid';
@@ -3662,6 +3663,10 @@ async function buildReport(
       return reportReach(model, name, args);
     case 'check-behaviour':
       return reportCheckBehaviour(model, name, args);
+    case 'variability': {
+      const r = variabilityReport(model);
+      return { json: r, text: variabilityLines(r, name).join('\n') };
+    }
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.
