@@ -277,7 +277,10 @@ export function readAtom(model: Model, machineId: ElementId, raw: string): AtomR
   }
   for (const kw of KEYWORDS) {
     if (!text.startsWith(`${kw} `)) continue;
-    const name = text.slice(kw.length + 1).trim();
+    // A quoted name (`state 'deg A'`, `state M::'deg A'`) is the name it quotes, as everywhere else a name is read:
+    // its segments are unquoted and rejoined with `::`, the separator a qualified name prints with.
+    const written = text.slice(kw.length + 1).trim();
+    const name = written.includes("'") ? refSegments(written).join('::') : written;
     if (name === '') {
       return {
         ok: false,
