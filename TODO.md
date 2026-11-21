@@ -1535,7 +1535,7 @@ tagged `[O1 …]` are what its steps and reviews left open.
       demotes. Since a5 HD3 a package head bind written in a package that imports, or is nested in, the package that declares the instance's definition (a plain import, a membership import, a recursive `import Defs::**` or a qualified end) is read: pkgbind-head-nested decides on the numeric and SMT surfaces (ldF/ldM ?/?/F/?, ldT ?/?/T/T), and a head bind in a third package files its violated #bind row; a bind whose other end names a feature that two imports expose is unresolvable and withholds the head's own value (withheldJoins, reading ?/?/?/?); the usage-end `bind top.L = XX` cases still abstain. The proper reading (joining the instance's own context to the definition's binding) stays open for those. Probes: ep-review/v/s3.sysml, s7.sysml, s11.sysml, s12.sysml and
       fence-pkgbind-scratch/gen4/pkgbind-*.sysml. [editor-pass review; fence-pkgbind]
 
-- [ ] **T-115: Walk a redefined state or transition of a general machine, or a machine with two generals.** Since B-walk a `state def Derived :> Base` with one general machine, and a typed `exhibit state m : Modes {…}` with steps of its own, are walked and run over the general's region plus their own steps: one view, `machineRegion`, read by the walk and the interpreter; inherited steps first; Base is walked alone; a typed usage with no steps is reported through its definition. A bare `state :>> b;` or `state r :>> b;` is read as the state it redefines. Still `machine-boundary`: a state redefinition with a body, a transition redefinition, an attribute `:>>`, a step that names a redefining state, two general machines, two start nodes, a cycle of generals. [behaviour-small S1; behaviour-walk B-inherit, B-walk, B-redef]
+- [x] **T-115: Walk a redefined state or transition of a general machine, or a machine with two generals.** Since B-walk a `state def Derived :> Base` with one general machine, and a typed `exhibit state m : Modes {…}` with steps of its own, are walked and run over the general's region plus their own steps: one view, `machineRegion`, read by the walk and the interpreter; inherited steps first; Base is walked alone; a typed usage with no steps is reported through its definition. A bare `state :>> b;` or `state r :>> b;` is read as the state it redefines. Still `machine-boundary`: a state redefinition with a body, a transition redefinition, an attribute `:>>`, a step that names a redefining state, two general machines, two start nodes, a cycle of generals. [behaviour-small S1; behaviour-walk B-inherit, B-walk, B-redef]
       PART DONE 2026-11-20 (sm-t115, sm-tredef): the walk and the interpreter read, through one `machineRegion` view, a plain `state :>> s;` (it is s), a body
       redefinition `state r :>> s {…}` over an EMPTY s (r takes its place), a transition redefinition (t2 replaces t1; it must state both ends and every
       attribute t1 carries), and two generals that share no id and no declared name — each equal to its hand-flattened twin on reach and on 20 random runs.
@@ -1547,6 +1547,10 @@ tagged `[O1 …]` are what its steps and reviews left open.
       (SysML v2 Part 1 §7.3: a redefining usage replaces the redefined one and inherits its features; inherited and owned names must be distinct),
       equal to its hand-flattened twin on 40 random cases. STILL refused with a reason: an `s` holding entry/do/exit, attributes, a start or
       history; a name held by both; a nested `:>>`; a redefinition of a redefinition.
+      CLOSED 2026-11-21 (user ruling "close as ruled"): what SysML v2 Part 1 settles is read (plain and body redefinitions, merge over substates and
+      steps, transition redefinition, two non-colliding generals); the shapes the spec text does not settle stay machine-boundary refusals with
+      their reasons (a redefined state holding entry/do/exit or attributes, a nested `:>>`, a redefinition of a redefinition, colliding generals,
+      cycles, two starts). Reopen by re-adding the item with its original title.
 - [ ] **Revisit `validation/constraint-by-instance` after one workflow run on a model with instance
       groups.** The rule (`src/validation/rules.ts:1118`, the 27th) is non-blocking, with a
       `CODE_NOTES` entry in the workflow repo (`src/spec/codes.ts:96`); that was judged without a
@@ -1575,7 +1579,7 @@ tagged `[O1 …]` are what its steps and reviews left open.
       site. [review 2026-10-14 F-C2] Awaits user decision U16 (do the Google setup when
       convenient).
 
-- [ ] **Parallel states per SysML v2 (§7.18.2, §8.4.14) — MANDATORY: the tool must conform to the spec.**
+- [x] **Parallel states per SysML v2 (§7.18.2, §8.4.14) — MANDATORY: the tool must conform to the spec.**
       Today `sysml.langium` has no `parallel` keyword (spec grammar `isParallel ?= 'parallel'`): in
       `state def Modes parallel { state nav {…} state comms {…} }` the word `parallel` becomes the
       definition's name (`P::Ctl::parallel::nav`), `Modes` is lost, no diagnostic is raised, and
@@ -1648,11 +1652,16 @@ tagged `[O1 …]` are what its steps and reviews left open.
       MORE 2026-11-21 (sm-parhist): a region that is itself a parallel state is performed and explored (its substates are its regions).
       History inside a parallel state stays refused — the explorer refuses history everywhere, and history has no SysML v2 textual
       notation (API only). Nothing in the parallel semantics remains open beyond that ruled refusal.
+      CLOSED 2026-11-21: stage 1 and stage 2 are done (see the notes above); history inside a parallel state is a ruled refusal (user ruling
+      "close as ruled": history has no SysML v2 textual notation, is reachable only through the API, and the explorer refuses it everywhere).
+      Reopen by re-adding the item with its original title.
 
-- [ ] **The long form reads `accept E [g]` as a guard; SysML v2 reads `[g]` as the payload's multiplicity.** `transition t first a accept E [g]
+- [x] **The long form reads `accept E [g]` as a guard; SysML v2 reads `[g]` as the payload's multiplicity.** `transition t first a accept E [g]
       then b;` is read today with the guard `g` (UML-style). SysML v2 §7.18.3 writes a guard `if g`, and §7.17.8 makes `[g]` after the payload
       name a multiplicity. Conforming would turn every such guard into a multiplicity (a dropped guard), so the decision is the user's: fence it
       (refuse with a hint to write `if g`) or keep it as a documented departure. [review 2026-11-20]
+      CLOSED 2026-11-21 (sm-gfence), user ruling "fence it": `accept E [g]` is refused (`mapper/state-form-unread`) with the hint to write
+      `if g`, in the long form and the shorthand; never read as a guard or a multiplicity. No corpus, fixture or example model used it.
 
 - [x] **Unify when a region's completion transitions are chased.** The interpreter chases a region's completions right after that region
       steps, before the next region sees the event; the explorer chases after the whole event. With coupled regions a path differs (the
@@ -1668,10 +1677,12 @@ tagged `[O1 …]` are what its steps and reviews left open.
       `endsContainer`), a parallel state when every region does. Corpus: only DeadlockGuarded::Nested::Modes moved (its `sub2` is now a decided
       dead end).
 
-- [ ] **v9: three transitions out of `OA::SwarmMemberModes::Nominal` fire on the same event.** Since `accept p : T` reads T as the trigger
+- [x] **v9: three transitions out of `OA::SwarmMemberModes::Nominal` fire on the same event.** Since `accept p : T` reads T as the trigger
       (2026-11-20, §7.17.8), `accept positioningLostNotice : Common::ConditionNotice` and its siblings are all enabled by any `ConditionNotice`, so `reach`
       reports a nondeterministic choice there (13 instead of 12). The payload NAME does not filter; the model needs a distinct item def per notice,
       or a guard on the payload. A model change in mbse-workflow-public, not a tool change.
+      CLOSED 2026-11-21 (mbse-workflow-public 499c9e5, private 1791926), user ruling "distinct item defs": nine item defs specialise
+      ConditionNotice and each transition accepts its own; reach is back to main's 12 nondeterminism findings.
 
 - [x] **Review 2026-11-20: three wrong answers in the state-machine verification code.** (1) regions coupled through a referenced `entry X;` action
       were explored as exhaustive over one region order; (2) a transition effect naming an action (`do action bump`) was dropped, so the walk
@@ -1758,7 +1769,7 @@ tagged `[O1 …]` are what its steps and reviews left open.
       [mc-vs-bib 2026-11-18; E]
       CLOSED 2026-11-20 (sm-docs): docs/05 §4 gives docs/04 non-goal 5 (only static contracts are decided) as the reason.
 
-- [ ] **More SysML v2 §7.18 state forms do not parse (spec conformance is mandatory).** After
+- [x] **More SysML v2 §7.18 state forms do not parse (spec conformance is mandatory).** After
       `entry; then X;` these spec forms still fail or are misread: `accept after 5[min]` (a time trigger,
       OnOff2–OnOff6), the target-transition shorthand (`state off; accept … then on;`, OnOff5/6),
       `entry action initial` (`initial` is a keyword here), guarded entry successions (`if c then off;`),
@@ -1774,6 +1785,9 @@ tagged `[O1 …]` are what its steps and reviews left open.
       MORE 2026-11-20 (sm-forms2): `exhibit A::B :> C;` reads per §7.18.4 (a nameless exhibit state usage of A::B subsetting C). STILL refused, by
       decision: `do send …` (a send to the machine's own port can trigger its own accepter, and the walk has no event pool), and the shorthand's
       `accept E [g]` (in SysML v2 `[g]` after the payload is its multiplicity; see the item on the long form's `[g]` guard).
+      CLOSED 2026-11-21: every §7.18 form is read, or refused by a ruled decision with its reason (user ruling "close as ruled"): `do send …`
+      (a send to the machine's own port would need an event pool across machines, docs/04 non-goal 10), UML's `[g]` guard (fenced above).
+      Reopen by re-adding the item with its original title.
 
 - [x] **`entry X;` / `do X;` / `exit X;` must read as a reference to an existing action, as the spec
       says, not as a declaration of a new one.** Today they declare a new action (the serializer writes a
