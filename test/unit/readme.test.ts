@@ -216,6 +216,8 @@ const APP_DOORS: ReadonlyArray<{
     command: 'check-behaviour',
     controls: [{ id: 'palette-check-run', fn: 'behaviourReport', file: 'src/ui/behaviour-checks.ts' }],
   },
+  // Variability shipped to the terminal first: no control computes it yet.
+  { command: 'variability', controls: [] },
 ];
 
 interface Row {

@@ -167,6 +167,7 @@ with the function that control runs.
 | Take every record back off the file, and the verdict facets with them | — no view yet | `npm run sysprose -- evidence-detach model.sysml` | `detachEvidence` — `src/api/evidence.ts` |
 | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | **State**, **Action** or **General** view → palette *Checks* → **Reachability** → **Run** (`palette-check-run` → `reachReport`) | `npm run sysprose -- reach model.sysml` | `reachReport` — `src/semantics/mc/explore.ts` |
 | Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? | **State** or **Action** view → palette *Checks* → **Behaviour properties** → **Run** (`palette-check-run` → `behaviourReport`) | `npm run sysprose -- check-behaviour model.sysml --element FlightModes --pattern 'pattern=absence, scope=globally, p=state failsafe'` | `behaviourReport` — `src/semantics/mc/patterns.ts` |
+| Which configurations does this product family admit, and does each configuration select validly? | — no view yet | `npm run sysprose -- variability model.sysml` | `variabilityReport` — `src/semantics/variability.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -346,7 +347,7 @@ npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # property-check · verify · consistency · refine
                        # bounds · fault-tree · evidence-status
                        # evidence-attach · evidence-detach
-                       # reach · check-behaviour
+                       # reach · check-behaviour · variability
                        # `npm run sysprose -- --help` lists them
 ```
 

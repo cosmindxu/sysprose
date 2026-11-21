@@ -6011,6 +6011,8 @@ package P {
         { argv: ['evidence-detach', UAV] },
         { argv: ['reach', UAV] },
         { argv: ['check-behaviour', UAV, ...BEHAVIOUR] },
+        { argv: ['variability', `${FIXV}/models/variability-family.sysml`] },
+        { argv: ['variability', `${FIXV}/models/variability-family.sysml`, '--json'], idBlind: true },
       ];
 
       // Every subcommand this tool ships, or this case is not the bridge it says
