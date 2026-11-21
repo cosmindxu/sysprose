@@ -971,6 +971,8 @@ true values. What follows is what that branch and the review of it left open; en
       instance labels follow name order, so a bare and a quoted-renamed model differ there (7
       corpus models); about 407 of the 637 corpus models were not run through the quoted-rename
       harness (fix-quoted-scratch/mm). [fix-quoted]
+      (c) CLOSED 2026-11-21 (sm-qatom): a check-behaviour atom reads a quoted state, node, transition or trigger name as the name it
+      quotes (`state 'deg A'` = `state deg A` = `state P::M::'deg A'`), pinned in semantics.mc.quoted-atom.test.ts.
 
 - [ ] **Abstentions left under the genericity audit of 2026-11-02 (rollup; sound, only weaker).**
       Metamorphic audit over the 637-model corpus (rename: 636 transformed; reorder: 634; wrap and

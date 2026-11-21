@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 184
-- **Tests:** 6012 total — 6012 passed, 0 failed, 0 skipped
+- **Files:** 185
+- **Tests:** 6013 total — 6013 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -131,6 +131,7 @@
 | test/unit/semantics.mc.parallel.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 92 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
+| test/unit/semantics.mc.quoted-atom.test.ts | 1 | 0 | 0 |
 | test/unit/semantics.mc.reach.test.ts | 142 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.redefinition-merge.test.ts | 2 | 0 | 0 |
