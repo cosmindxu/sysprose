@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 183
-- **Tests:** 6004 total — 6004 passed, 0 failed, 0 skipped
+- **Files:** 184
+- **Tests:** 6011 total — 6011 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -128,7 +128,7 @@
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.parallel-orders.test.ts | 8 | 0 | 0 |
 | test/unit/semantics.mc.parallel-witness.test.ts | 4 | 0 | 0 |
-| test/unit/semantics.mc.parallel.test.ts | 20 | 0 | 0 |
+| test/unit/semantics.mc.parallel.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 92 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.reach.test.ts | 142 | 0 | 0 |
@@ -145,7 +145,8 @@
 | test/unit/semantics.parallel-completion.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.parallel-deep.test.ts | 12 | 0 | 0 |
 | test/unit/semantics.parallel-nested.test.ts | 14 | 0 | 0 |
-| test/unit/semantics.parallel-root.test.ts | 30 | 0 | 0 |
+| test/unit/semantics.parallel-region-parallel.test.ts | 9 | 0 | 0 |
+| test/unit/semantics.parallel-root.test.ts | 29 | 0 | 0 |
 | test/unit/semantics.play-start.test.ts | 3 | 0 | 0 |
 | test/unit/semantics.relations.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |

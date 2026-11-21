@@ -1645,6 +1645,9 @@ tagged `[O1 …]` are what its steps and reviews left open.
       MORE 2026-11-20: (sm-witness) witnesses on parallel machines are replayed through the interpreter and published when they replay step for step;
       a path that needs a non-declaration region order stays withheld with its reason. (sm-chase) one completion timing. STILL OPEN: a region that
       is itself a parallel state, history inside a parallel state.
+      MORE 2026-11-21 (sm-parhist): a region that is itself a parallel state is performed and explored (its substates are its regions).
+      History inside a parallel state stays refused — the explorer refuses history everywhere, and history has no SysML v2 textual
+      notation (API only). Nothing in the parallel semantics remains open beyond that ruled refusal.
 
 - [ ] **The long form reads `accept E [g]` as a guard; SysML v2 reads `[g]` as the payload's multiplicity.** `transition t first a accept E [g]
       then b;` is read today with the guard `g` (UML-style). SysML v2 §7.18.3 writes a guard `if g`, and §7.17.8 makes `[g]` after the payload
