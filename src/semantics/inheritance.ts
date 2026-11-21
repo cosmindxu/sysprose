@@ -28,12 +28,37 @@ import { type ElementId, type ElementRecord, type Model, isUsage } from '@core/i
  * The starting type itself is NOT included.
  */
 export function generalizationsOf(model: Model, typeId: ElementId): ElementRecord[] {
+  return generalsBfs(model, typeId);
+}
+
+/**
+ * The general a variant has BY RULE, not by a relationship in the model (SysML v2 §8.4.2.3): a variant Usage of a
+ * variation DEFINITION is implicitly typed by (defined by) it, and a variant of a variation USAGE implicitly subsets
+ * it. The model does not materialise the implied relationship (it would be written back as text the author never
+ * wrote); it is a derived fact, read here and by every walk of generals ({@link generalizationsOf}, the
+ * implicit-library closure of `featuring`). `[]` for anything that is not a variant owned by a variation.
+ */
+export function variantGeneral(model: Model, id: ElementId): ElementRecord[] {
+  const el = model.get(id);
+  if (el === undefined || el.attrs.isVariant !== true || !isUsage(el.eClass) || el.ownerId === null) return [];
+  const owner = model.get(el.ownerId);
+  if (owner === undefined || owner.attrs.isVariation !== true || owner.id === id) return [];
+  if (owner.eClass.endsWith('Definition') || isUsage(owner.eClass)) return [owner];
+  return [];
+}
+
+/** Whether `f` is a variant of the variation `owner` (a variant is a variation's member, not a feature it passes on). */
+function isVariantOfVariation(model: Model, f: ElementRecord, owner: ElementRecord): boolean {
+  return f.attrs.isVariant === true && owner.attrs.isVariation === true && f.ownerId === owner.id;
+}
+
+function generalsBfs(model: Model, typeId: ElementId): ElementRecord[] {
   const out: ElementRecord[] = [];
   const seen = new Set<ElementId>([typeId]);
   const queue: ElementId[] = [typeId];
   while (queue.length) {
     const cur = queue.shift()!;
-    for (const general of model.typesOf(cur)) {
+    for (const general of [...model.typesOf(cur), ...variantGeneral(model, cur)]) {
       if (seen.has(general.id)) continue;
       seen.add(general.id);
       out.push(general);
@@ -320,7 +345,11 @@ export function effectiveFeatures(model: Model, typeId: ElementId): ElementRecor
   const claimedNames = new Set<string>();
   const seenIds = new Set<ElementId>();
   const candidates = [...ownFeatures(model, typeId)];
-  for (const general of generalizationsOf(model, typeId)) candidates.push(...ownFeatures(model, general.id));
+  for (const general of generalizationsOf(model, typeId)) {
+    // A variation's variants are its variants, not features its specializations inherit (VariantMembership is no
+    // FeatureMembership, §8.4.2.3): a variant reads the variation's features, not its sibling variants.
+    candidates.push(...ownFeatures(model, general.id).filter((f) => !isVariantOfVariation(model, f, general)));
+  }
   // Every feature ANY candidate redefines, before any is contributed: a
   // feature a more specific one redefines is not inherited, whichever general
   // the walk meets first — `part def C :> P, A` met P's `load` before A's `:>>

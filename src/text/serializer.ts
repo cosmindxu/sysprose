@@ -542,7 +542,9 @@ function header(model: Model, el: ElementRecord): string {
   // Keyword-less ReferenceUsage provenance (F5 residual): an enum literal
   // (`low = 0.25;`) was declared without the `ref` keyword; re-emit it
   // keyword-less so the reparse does not add a spurious isRef flag.
-  if (!(el.eClass === 'ReferenceUsage' && el.attrs.keywordless === true)) {
+  // A variant reference (`variant smallEngine;`, SysML v2 §7.6.7) has no keyword: its name is the subsetting's target.
+  const variantRef = el.attrs.variantRef === true && el.attrs.isVariant === true && el.declaredName === undefined;
+  if (!variantRef && !(el.eClass === 'ReferenceUsage' && el.attrs.keywordless === true)) {
     parts.push(keywordOf(el));
   }
 
@@ -581,7 +583,12 @@ function header(model: Model, el: ElementRecord): string {
   if (el.declaredName !== undefined) parts.push(stateDeclName(el, short));
 
   // Inline specializations.
-  parts.push(...specializationFragments(model, el));
+  const specFrags = specializationFragments(model, el);
+  if (variantRef) {
+    const at = specFrags.findIndex((f) => f.startsWith('::> '));
+    if (at >= 0) parts.push(specFrags.splice(at, 1)[0].slice(4));
+  }
+  parts.push(...specFrags);
 
   // Multiplicity.
   const mult = multiplicityLexeme(el);

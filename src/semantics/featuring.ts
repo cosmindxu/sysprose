@@ -33,7 +33,7 @@
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { findLibraryType } from '@core/index';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- JSDoc @link target
-import { generalizationsOf } from './inheritance';
+import { generalizationsOf, variantGeneral } from './inheritance';
 import { conforms } from './conformance';
 import { isFeatureMetaclass, isTypeMetaclass } from './metaclasses';
 
@@ -215,6 +215,8 @@ export function generalizationsWithImplicit(model: Model, id: ElementId): Elemen
     for (const general of model.typesOf(cur)) enqueue(general);
     // Implicit library base(s) for the current element's metaclass.
     for (const base of implicitBaseTypesOf(model, cur)) enqueue(base);
+    // The general a variant has by rule (a variation it belongs to, §8.4.2.3).
+    for (const g of variantGeneral(model, cur)) enqueue(g);
   }
 
   cache.set(id, out);
@@ -282,7 +284,10 @@ export function effectiveFeaturesWithLibrary(model: Model, id: ElementId): Eleme
 
   for (const f of featureChildren(model, id)) contribute(f);
   for (const general of generalizationsWithImplicit(model, id)) {
-    for (const f of featureChildren(model, general.id)) contribute(f);
+    for (const f of featureChildren(model, general.id)) {
+      if (f.attrs.isVariant === true && general.attrs.isVariation === true) continue; // a variation's variants are not passed on
+      contribute(f);
+    }
   }
 
   cache.set(id, result);

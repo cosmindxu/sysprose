@@ -358,6 +358,12 @@ export function isValueOp(item: unknown): item is ValueOp {
     return typeof item === 'string';
 }
 
+export type VariantRefPath = string;
+
+export function isVariantRefPath(item: unknown): item is VariantRefPath {
+    return typeof item === 'string';
+}
+
 export type Visibility = 'private' | 'protected' | 'public';
 
 export function isVisibility(item: unknown): item is Visibility {
@@ -670,10 +676,10 @@ export interface Definition extends langium.AstNode {
     keyword?: 'state' | BaseKeyword;
     modifiers: Array<FeatureModifier>;
     multiplicity: Array<Multiplicity>;
-    name?: Name | PlainRefName | RefName;
+    name?: Name | PlainRefName | RefName | VariantRefPath;
     ofMult: Array<Multiplicity>;
     ofPayload?: QualifiedName;
-    prefixes: Array<Direction | Prefix>;
+    prefixes: Array<'variant' | Direction | Prefix>;
     prefixMeta: Array<PrefixMetadata>;
     preMult: Array<Multiplicity>;
     sendMult: Array<Multiplicity>;
