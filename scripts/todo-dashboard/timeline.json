@@ -3976,9 +3976,9 @@
   "open_raw": 75,
   "open": 75,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 42,
-   "POLISH": 31,
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 28,
    "HELD": 2
   },
   "new": 0,
@@ -3998,5 +3998,37 @@
   },
   "cum_new": 330,
   "cum_closed": 253
+ },
+ {
+  "idx": 125,
+  "sha": "a852827",
+  "when": "2026-11-21T11:45:02+01:00",
+  "day": "2026-11-21",
+  "subject": "merge round sm14: UML's [g] guard fenced (ruling 2026-11-21); the last state-machine items closed \u2014 v9 notices distinct (mbse-workflow 499c9",
+  "open_raw": 70,
+  "open": 70,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 42,
+   "POLISH": 26,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 5,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 5,
+   "HELD": 0
+  },
+  "cum_new": 330,
+  "cum_closed": 258
  }
 ]

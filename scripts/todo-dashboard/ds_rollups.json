@@ -1860,8 +1860,8 @@
    }
   },
   {
-   "id": 352,
-   "tier": "polish",
+   "id": null,
+   "tier": "",
    "title": "Parallel states per SysML v2 (\u00a77.18.2, \u00a78.4.14) \u2014 MANDATORY: the tool must conform to the spec.",
    "section": "Behaviour checks and the palette's checks lane \u2014 review 2026-10-14",
    "subs": [
