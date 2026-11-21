@@ -1088,7 +1088,7 @@ true values. What follows is what that branch and the review of it left open; en
       direction, not a false verdict. The HDF family is closed: gen-head, gen-f3 and gen-f3b read 0
       WRONG in both text orders (rows a5-gh2, a5-gh2r, a5-gh2-same). [a5-fences3 GH2]
 
-- [ ] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
+- [x] **Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).** (1) On a
       parallel machine where one region refuses and the others simply come to rest without refusing,
       `stopsRun`, `atRest` and `complete` stay false even after more ticks, so Play runs on to the
       sample cap (probe parser-pass-scratch/review/probe4.mts); no verdict is involved. (2) 162,
@@ -1097,6 +1097,14 @@ true values. What follows is what that branch and the review of it left open; en
       pass cost (about 20%, 240 to 290 ms on the 9,641-configuration model) is accepted, and the
       Simulate trace stopping at a composite step's holding machine is the intended behaviour;
       re-add the entry with its original title to reverse one. [parser-pass]
+      Rulings 2026-11-11: B-redef read only a bare `state :>> b;` of a general machine; stopped at a redefiner with a body, a transition `:>>` and two general machines.
+      (1) FIXED 2026-11-20 (sm-parroot): a refusal in any region of a parallel machine stops the whole run (`stopsRun`, `atRest`), pinned in simulate.test.ts.
+      CLOSED 2026-11-21 (state-machine goal): (1) fixed (sm-parroot); (2) closed by its documented decisions; the 2026-11-11 B-redef ruling
+      is superseded by T-115 (closed 2026-11-21). The rest of this rollup — (3) to (6), decisions in other areas awaiting confirmation — moved
+      unchanged to the item "Decisions to confirm (2026-11 rollup, moved from the parallel-machines rollup)".
+
+- [ ] **Decisions to confirm (2026-11 rollup, moved from the parallel-machines rollup).** Moved verbatim on 2026-11-21 from
+      "Abstentions left (parallel machines and Simulate)", whose state-machine parts are closed; none of these is state-machine work.
       (3) 251, 173, 245, 170 and 191 were closed on 2026-11-03 under the standing instruction to
       continue, three by a delegated decision and two by measurement, and can be reversed by
       re-adding the entry with its original title: 251 (a satisfied requirement's require/assume
@@ -1170,8 +1178,6 @@ true values. What follows is what that branch and the review of it left open; en
       hosted site keeps `not here` with the copyable command and in-page z3 stays on the dev and
       preview servers; entry closed (reversible; a host that sends the isolation headers reopens it).
       [decision 2026-11-05]
-      Rulings 2026-11-11: B-redef read only a bare `state :>> b;` of a general machine; stopped at a redefiner with a body, a transition `:>>` and two general machines.
-      (1) FIXED 2026-11-20 (sm-parroot): a refusal in any region of a parallel machine stops the whole run (`stopsRun`, `atRest`), pinned in simulate.test.ts.
 
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same

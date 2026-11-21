@@ -493,18 +493,124 @@
    }
   },
   {
-   "id": 325,
+   "id": 295,
    "tier": "weaker",
-   "title": "Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).",
-   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "title": "Abstentions left in the editor (rollup; sound, only weaker).",
+   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
    "subs": [
     {
      "key": "2",
-     "text": "162, 195 and 280 were closed by a documented decision (docs/06 section 8.16 and the USER-GUIDE), not by code: the completion refusal for a count past the budget is permanent, the livelock pass cost (about 20%, 240 to 290",
+     "text": "A stale copy still resolves as a name on the page, so a constraint naming it (`r0.L` after `Q::L` is renamed away) is read by the numeric lane as imposed",
      "status": "open",
      "closed_day": "",
      "closed_by": ""
     },
+    {
+     "key": "t",
+     "text": "where the file reads the name as unresolved (?); a definition-level `bind p.load = L` after `Q::L` is deleted reads ? on the numeric lane where the file decides (F), a binding with a stale end being set aside (both pinne",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "Two bindings in one usage that reach one copy by different names (`bind Zb = M; bind Zc = N2;` in the D4/D3 diamond) are saved under the first-created name for both: page equals file, the second spelling is not kept.",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "4",
+     "text": "A head the edit made land elsewhere is dropped and the copy goes by its own name; a name cannot be cleared from the Properties Name or Short name box, which put the name back (the clear belongs to an SDK setter in the st",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "5",
+     "text": "A stale copy raises no Problems entry on the page until the file is reopened (the file reports 2 x ref/unresolved-reference and error:connector-endpoints).",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "6",
+     "text": "Latent, not reproduced: a command that calls pushUndo and exits with no change leaves editOpen true; a raw model call made after is queued in editEvents, and the next beginEdit drops it unsettled (src/ui/store.ts watchMo",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "7",
+     "text": "a parsed `part p : A { bind A::x = y; }` is a parted holder, so `--engine literal` no longer decides on the CLI (mark the end where the editor moves it, not by structure; probe rev/m/m5.sysml);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "8",
+     "text": "after a retype or rename the page abstains on every name of the binding's owner where the file decides some (402 cells of the 216-model generator);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "9",
+     "text": "rows over a withheld scope are inconclusive without the check lane's own sentence;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "10",
+     "text": "a requirement pair (satisfy, verify, refine, trace, derive) or a redefinition-family statement with an anonymous end is skipped silently on Save, and Apply of the Text view's text after a `// Not saved:` statement drops ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "11",
+     "text": "the generator had no units. Residual page-F/file-X pairs (seeds 70041, 70338, 70349, 70478, 70555) are identical at the base. [fence-editor2] fence-redefs:",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "12",
+     "text": "the page abstains over an owner of two features under one name, and over an owner of a redefinition edge the file does not keep (not inherited, another kind, a cycle), where the reopened file decides: 12.7% of the steps ",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "13",
+     "text": "on a hand-edited page a row that reads a withheld name still gets the SMT sentence 'unresolved-name ...' where the check lane gives the true cause;",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "14",
+     "text": "`bind.ts` `redefinitionIsKept` re-implements the serializer's spelling (`effectiveNameOf`, `effectiveQualifiedName`): re-run the edge property (scratchpad/rev-redefs/zzedge.test.ts) when the serializer changes; 51 of 522",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 14,
+    "closed": 0,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": null,
+   "tier": "",
+   "title": "Decisions to confirm (2026-11 rollup, moved from the parallel-machines rollup).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
     {
      "key": "3",
      "text": "251, 173, 245, 170 and 191 were closed on 2026-11-03 under the standing instruction to continue, three by a delegated decision and two by measurement, and can be reversed by re-adding the entry with its original title: 2",
@@ -616,132 +722,12 @@
      "status": "open",
      "closed_day": "",
      "closed_by": ""
-    },
-    {
-     "key": "1",
-     "text": "FIXED 2026-11-20 (sm-parroot): a refusal in any region of a parallel machine stops the whole run (`stopsRun`, `atRest`), pinned in simulate.test.ts.",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    }
-   ],
-   "counts": {
-    "open": 16,
-    "closed": 0,
-    "narrowed": 2,
-    "ruled": 0,
-    "held": 0
-   }
-  },
-  {
-   "id": 295,
-   "tier": "weaker",
-   "title": "Abstentions left in the editor (rollup; sound, only weaker).",
-   "section": "Per-instance readings \u2014 follow-ups and known-false rows",
-   "subs": [
-    {
-     "key": "2",
-     "text": "A stale copy still resolves as a name on the page, so a constraint naming it (`r0.L` after `Q::L` is renamed away) is read by the numeric lane as imposed",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "t",
-     "text": "where the file reads the name as unresolved (?); a definition-level `bind p.load = L` after `Q::L` is deleted reads ? on the numeric lane where the file decides (F), a binding with a stale end being set aside (both pinne",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "3",
-     "text": "Two bindings in one usage that reach one copy by different names (`bind Zb = M; bind Zc = N2;` in the D4/D3 diamond) are saved under the first-created name for both: page equals file, the second spelling is not kept.",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "4",
-     "text": "A head the edit made land elsewhere is dropped and the copy goes by its own name; a name cannot be cleared from the Properties Name or Short name box, which put the name back (the clear belongs to an SDK setter in the st",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "5",
-     "text": "A stale copy raises no Problems entry on the page until the file is reopened (the file reports 2 x ref/unresolved-reference and error:connector-endpoints).",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "6",
-     "text": "Latent, not reproduced: a command that calls pushUndo and exits with no change leaves editOpen true; a raw model call made after is queued in editEvents, and the next beginEdit drops it unsettled (src/ui/store.ts watchMo",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "7",
-     "text": "a parsed `part p : A { bind A::x = y; }` is a parted holder, so `--engine literal` no longer decides on the CLI (mark the end where the editor moves it, not by structure; probe rev/m/m5.sysml);",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "8",
-     "text": "after a retype or rename the page abstains on every name of the binding's owner where the file decides some (402 cells of the 216-model generator);",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "9",
-     "text": "rows over a withheld scope are inconclusive without the check lane's own sentence;",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "10",
-     "text": "a requirement pair (satisfy, verify, refine, trace, derive) or a redefinition-family statement with an anonymous end is skipped silently on Save, and Apply of the Text view's text after a `// Not saved:` statement drops ",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "11",
-     "text": "the generator had no units. Residual page-F/file-X pairs (seeds 70041, 70338, 70349, 70478, 70555) are identical at the base. [fence-editor2] fence-redefs:",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "12",
-     "text": "the page abstains over an owner of two features under one name, and over an owner of a redefinition edge the file does not keep (not inherited, another kind, a cycle), where the reopened file decides: 12.7% of the steps ",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "13",
-     "text": "on a hand-edited page a row that reads a withheld name still gets the SMT sentence 'unresolved-name ...' where the check lane gives the true cause;",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
-    },
-    {
-     "key": "14",
-     "text": "`bind.ts` `redefinitionIsKept` re-implements the serializer's spelling (`effectiveNameOf`, `effectiveQualifiedName`): re-run the edge property (scratchpad/rev-redefs/zzedge.test.ts) when the serializer changes; 51 of 522",
-     "status": "open",
-     "closed_day": "",
-     "closed_by": ""
     }
    ],
    "counts": {
     "open": 14,
     "closed": 0,
-    "narrowed": 0,
+    "narrowed": 2,
     "ruled": 0,
     "held": 0
    }
@@ -1266,6 +1252,56 @@
    "counts": {
     "open": 6,
     "closed": 1,
+    "narrowed": 0,
+    "ruled": 0,
+    "held": 0
+   }
+  },
+  {
+   "id": 325,
+   "tier": "weaker",
+   "title": "Abstentions left (parallel machines and Simulate) (rollup; sound, only weaker).",
+   "section": "Per-instance soundness \u2014 review 2026-10-14",
+   "subs": [
+    {
+     "key": "2",
+     "text": "162, 195 and 280 were closed by a documented decision (docs/06 section 8.16 and the USER-GUIDE), not by code: the completion refusal for a count past the budget is permanent, the livelock pass cost (about 20%, 240 to 290",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "1",
+     "text": "FIXED 2026-11-20 (sm-parroot): a refusal in any region of a parallel machine stops the whole run (`stopsRun`, `atRest`), pinned in simulate.test.ts. CLOSED 2026-11-21 (state-machine goal):",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "1#2",
+     "text": "fixed (sm-parroot);",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "2#2",
+     "text": "closed by its documented decisions; the 2026-11-11 B-redef ruling is superseded by T-115 (closed 2026-11-21). The rest of this rollup \u2014",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    },
+    {
+     "key": "3",
+     "text": "to (6), decisions in other areas awaiting confirmation \u2014 moved unchanged to the item \"Decisions to confirm (2026-11 rollup, moved from the parallel-machines rollup)\".",
+     "status": "open",
+     "closed_day": "",
+     "closed_by": ""
+    }
+   ],
+   "counts": {
+    "open": 5,
+    "closed": 0,
     "narrowed": 0,
     "ruled": 0,
     "held": 0
@@ -2167,11 +2203,11 @@
   }
  ],
  "totals": {
-  "open": 206,
+  "open": 209,
   "closed": 15,
   "narrowed": 4,
   "ruled": 1,
   "held": 4,
-  "subs": 230
+  "subs": 233
  }
 }
