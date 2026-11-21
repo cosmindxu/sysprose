@@ -118,12 +118,21 @@ describe('exhibit forms', () => {
 });
 
 describe('guards and delays are not swallowed', () => {
-  it('keeps `accept E if n < 0 then s`, `accept E [g] then s`, `accept after 5[min]`', async () => {
-    for (const acc of ['accept E if 1 < 0', 'accept E [1 > 0]', 'accept after 5[min]']) {
+  it('keeps `accept E if n < 0 then s`, `accept E if g then s`, `accept after 5[min]`', async () => {
+    for (const acc of ['accept E if 1 < 0', 'accept E if 1 > 0', 'accept after 5[min]']) {
       const { model, report } = await load(wrap(`    entry; then s;\n    state s;\n    state t;\n    transition first s ${acc} then t;`, '  item def E;\n'));
       expect(errors(report)).toEqual([]);
       const t = model.all().find((e: any) => e.eClass === 'TransitionUsage');
       expect(t.attrs.guard || t.attrs.timeTrigger).toBeTruthy();
     }
+  });
+});
+
+describe('UML `[g]` guard on a transition (fenced 2026-11-21)', () => {
+  it('is refused with the hint to write `if g`, in the long form, never read as a guard or a multiplicity', async () => {
+    const { report, model } = await load(wrap('    entry; then a;\n    state a;\n    state b;\n    transition t first a accept E [1 > 0] then b;', '  item def E;\n'));
+    expect(codes(report)).toContain('mapper/state-form-unread');
+    expect(report.diagnostics.find((d: any) => d.code === 'mapper/state-form-unread')!.message).toMatch(/if/);
+    expect(model.all().filter((e: any) => e.eClass === 'TransitionUsage' && e.declaredName === 't')).toEqual([]);
   });
 });

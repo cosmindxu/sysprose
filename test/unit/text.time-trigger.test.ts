@@ -37,7 +37,7 @@ describe('accept after <delay> (SysML v2 §7.18.3)', () => {
   });
 
   it('keeps a guard that follows a trigger a guard, for an event and for a time trigger', async () => {
-    for (const [acc, key] of [['accept TurnOn [1 > 0]', 'trigger'], ['accept after 5[min] [1 > 0]', 'timeTrigger']] as const) {
+    for (const [acc, key] of [['accept TurnOn if 1 > 0', 'trigger'], ['accept after 5[min] if 1 > 0', 'timeTrigger']] as const) {
       const { model, report } = await load(machine(acc));
       expect(report.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
       const t = find(model, 'P::M::on_off');

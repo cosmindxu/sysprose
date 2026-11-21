@@ -43,13 +43,15 @@ describe('target-transition shorthand with [g]', () => {
     W('entry; then off;\n state off; ' + short + '\n state on;'),
     W('entry; then a;\n state a; state on;\n transition t first a ' + long),
   ];
-  it('refuses `accept E [g] then on;`: in SysML v2 `[g]` after the payload is a multiplicity, a guard is `if g` (the long form still reads `[g]` as a guard — a departure filed in TODO.md)', async () => {
+  it('refuses `accept E [g] then on;`: in SysML v2 `[g]` after the payload is a multiplicity, a guard is `if g` (the long form is refused the same way)', async () => {
     const [s, l] = pair('accept E [g] then on;', 'accept E [g] then on;');
     const a = await load(s);
     const b = await load(l);
     expect(codes(a.report)).toContain('mapper/state-form-unread');
     expect(ts(a.model)).toEqual([]);
-    expect(ts(b.model).map((t: any) => [t.attrs.trigger, t.attrs.guard])).toEqual([['E', 'g']]);
+    // The long form is refused too (2026-11-21 ruling: fence UML's `[g]`; write `if g`).
+    expect(codes(b.report)).toContain('mapper/state-form-unread');
+    expect(ts(b.model)).toEqual([]);
   });
   it('a numeric, star or range bracket stays a refused multiplicity; a bracket beside an `if` guard is refused', async () => {
     for (const m of ['[2]', '[1..3]', '[*]']) {

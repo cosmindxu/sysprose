@@ -240,7 +240,9 @@ DelayExpr infers Expression:
     {infer NumberLiteral} value=NUMBER ({infer BracketExpr.base=current} '[' arg=Expression ']')?;
 
 GuardClause infers GuardClause:
-      '[' expr=Expression ']'
+      // `[g]` is UML's guard; in SysML v2 a guard is `if g` and `[g]` after the payload is its multiplicity (§7.17.8): parsed so the
+      // mapper can REFUSE it with that hint, never read as a guard.
+      bracket?='[' expr=Expression ']'
     | 'if' expr=Expression;
 
 EffectClause infers EffectClause:

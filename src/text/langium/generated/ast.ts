@@ -789,6 +789,7 @@ export function isFirstThen(item: unknown): item is FirstThen {
 export interface GuardClause extends langium.AstNode {
     readonly $container: Transition;
     readonly $type: 'GuardClause';
+    bracket: boolean;
     expr: Expression;
 }
 
@@ -1691,6 +1692,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                 return {
                     name: GuardClause,
                     properties: [
+                        { name: 'bracket', defaultValue: false },
                         { name: 'expr' }
                     ]
                 };

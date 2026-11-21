@@ -2546,6 +2546,7 @@ class Mapper {
     let timeTrigger: string | undefined;
     let effectType: string | undefined;
     let effectRef = false;
+    let bracketGuard = false;
     let acceptVia: string | undefined;
     let payloadName: string | undefined;
     let sendEffect = false;
@@ -2575,7 +2576,10 @@ class Mapper {
           if (c.via) acceptVia = c.via;
         }
       }
-      else if (c.$type === 'GuardClause') guard = exprText(c.expr);
+      else if (c.$type === 'GuardClause') {
+        if (c.bracket) bracketGuard = true;
+        guard = exprText(c.expr);
+      }
       else if (c.$type === 'EffectClause') {
         if (c.isSend) sendEffect = true;
         effect = effectTextOf(c);
@@ -2583,6 +2587,12 @@ class Mapper {
         // `do X` is a reference to the action X; `do action X` declares a new one (SysML v2 §7.18.3).
         effectRef = !!c.effect && !c.isEffectAction && !c.assignTarget;
       }
+    }
+    if (bracketGuard) {
+      // `accept E [g]` (UML's guard): SysML v2 writes a guard `if g` (§7.18.3) and reads `[g]` after the payload as its
+      // multiplicity (§7.17.8). Reading it as either would change what the transition means, so it is refused with the hint.
+      this.refuseStateForm(node, `the guard written \`[…]\` (in SysML v2 a guard is \`if …\`; \`[…]\` after the payload is its multiplicity)`);
+      return;
     }
     if (sendEffect) {
       // `do send new T() via p` as an effect (OnOff4): a send action is not interpreted, so the transition is refused

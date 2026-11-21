@@ -3084,8 +3084,13 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
             "$type": "Group",
             "elements": [
               {
-                "$type": "Keyword",
-                "value": "["
+                "$type": "Assignment",
+                "feature": "bracket",
+                "operator": "?=",
+                "terminal": {
+                  "$type": "Keyword",
+                  "value": "["
+                }
               },
               {
                 "$type": "Assignment",
