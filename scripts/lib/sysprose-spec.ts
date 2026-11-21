@@ -230,6 +230,28 @@ export const BEHAVIOUR_EXIT_CODES = `Exit codes: 0 every ASSERTION stated on thi
  */
 export const FAULT_TREE_EXIT_CODES = `Exit codes: 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine whose failure modes this command found none of (or found and does not inject), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over`;
 
+/**
+ * `variability`'s exit-code contract — a SEVENTH one. The command answers two
+ * questions a build gate asks (is each configuration valid; is the family
+ * satisfiable), so an agent must be able to act on the exit code alone, and
+ * under {@link EXIT_CODES} a VIOLATED configuration would exit 0.
+ *
+ * ITS 1 is a decided negative about a CONFIGURATION or a FAMILY: an INVALID
+ * selection, a VIOLATED selection constraint, or a VOID family. It outranks the
+ * 2, as the other judging contracts' 1 does: a configuration known to be wrong
+ * is reported as 1 even when another is undecided.
+ *
+ * A DEAD VARIANT AND A FALSE-OPTIONAL POINT DO NOT MOVE THE EXIT. They are
+ * findings about the family's design (warnings in the report), and no
+ * configuration is wrong because of them; a gate that wants them fails on the
+ * `verification/variability-dead-variant` / `…-false-optional` codes in the
+ * payload. Everything the command declines to read — a PARTIAL configuration,
+ * a `not read` selection or constraint, an owner not read, a family past the
+ * enumeration cap (`not established`), a HOLDS that is only over the
+ * constraints read — is 2 and never a pass.
+ */
+export const VARIABILITY_EXIT_CODES = `Exit codes: 0 the model loaded clean, every configuration HOLDS its selection constraints, every family has at least one valid configuration, and nothing was refused ('not read' or 'not established') · 1 at least one decided negative: an INVALID selection, a VIOLATED selection constraint, or a VOID family (no valid configuration), which outranks a 2 · 2 usage/IO error, a degraded model, a model with no variation point this command reads, or ANY undecided result — a PARTIAL configuration, a selection or constraint refused as 'not read', an owner not read, a variation with no variants, a HOLDS only over the constraints read, or a family past the enumeration cap ('not established'). A dead variant or a false-optional point is reported as a warning and does NOT move the exit code. There is no solver and no --free here`;
+
 /** Flags every subcommand accepts. */
 export const COMMON_FLAGS: readonly FlagSpec[] = [
   {
@@ -337,7 +359,8 @@ export type ExitContract =
   | 'bounds'
   | 'write'
   | 'behaviour'
-  | 'fault-tree';
+  | 'fault-tree'
+  | 'variability';
 
 /** One subcommand. */
 export interface CommandSpec {
@@ -360,6 +383,7 @@ export function exitCodesFor(cmd: CommandSpec): string {
   if (cmd.exitContract === 'refine') return REFINE_EXIT_CODES;
   if (cmd.exitContract === 'bounds') return BOUNDS_EXIT_CODES;
   if (cmd.exitContract === 'fault-tree') return FAULT_TREE_EXIT_CODES;
+  if (cmd.exitContract === 'variability') return VARIABILITY_EXIT_CODES;
   if (cmd.exitContract === 'write') return WRITE_EXIT_CODES;
   if (cmd.exitContract === 'behaviour') return BEHAVIOUR_EXIT_CODES;
   return EXIT_CODES;
@@ -933,7 +957,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     ],
   },
   // Variability: what a superset owner's variation points admit, and whether a
-  // configuration of it selects validly. A REPORT command: the findings are in
+  // configuration of it selects validly. A JUDGING command (VARIABILITY_EXIT_CODES): the findings are in
   // the payload (`verification/variability-*`), and the profile of what counts
   // as a point, a variant, a selection and a selection constraint is the header
   // of src/semantics/variability.ts.
@@ -943,7 +967,7 @@ export const COMMANDS: readonly CommandSpec[] = [
       'Which configurations does this family admit, and does each configuration select validly?',
     backedBy: 'variabilityReport (src/semantics/variability.ts)',
     payloadKey: 'variability',
-    exitContract: 'report',
+    exitContract: 'variability',
     flags: [],
   },
 ];

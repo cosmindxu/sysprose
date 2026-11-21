@@ -222,3 +222,21 @@ describe('variability — other shapes', () => {
     expect(cfg(o, 'd').status).toBe('violated');
   });
 });
+
+describe('catalogue agreement', () => {
+  it('every VARIABILITY_CODES value is in the diagnostic catalogue, and nothing else is', async () => {
+    const { isKnownCode, DIAGNOSTIC_CODES } = await import('@text/index');
+    for (const code of Object.values(VARIABILITY_CODES)) expect(isKnownCode(code), code).toBe(true);
+    const catalogued = DIAGNOSTIC_CODES.filter((c) => c.code.startsWith('verification/variability-')).map((c) => c.code).sort();
+    expect(catalogued).toEqual(Object.values(VARIABILITY_CODES).sort());
+  });
+
+  it('every emitted diagnostic carries the severity the catalogue states', async () => {
+    const { DIAGNOSTIC_CODES } = await import('@text/index');
+    const r = variabilityReport(parseModel(BASE(CONFIGS)).model);
+    expect(r.diagnostics.length).toBeGreaterThan(0);
+    for (const d of r.diagnostics) {
+      expect(DIAGNOSTIC_CODES.find((c) => c.code === d.code)?.severity, d.code).toBe(d.severity);
+    }
+  });
+});

@@ -25,8 +25,8 @@ npm run sysprose -- --help                 # the subcommand list
 npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
-**The exit-code contract is per subcommand, and there are 7 of them.** Most
-subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status`, `reach`, `variability` — for those,
+**The exit-code contract is per subcommand, and there are 8 of them.** Most
+subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status`, `reach` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
 obligation refuted with every feature at its model value, or one requirement set
@@ -45,8 +45,11 @@ because there is no solver in that lane and no `--free` for it either:
 `fault-tree` judges an *architecture from the failure side* and carries the last of them,
 because its 1 is a combination of contract failures rather than one refuted
 obligation — a decomposition that refines can still have a single point of
-failure: 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine whose failure modes this command found none of (or found and does not inject), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over. Each section below states its own
-contract in full, and every section states which of the 7 it obeys.
+failure: 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine whose failure modes this command found none of (or found and does not inject), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over.
+`variability` judges a *product-line configuration* and carries the seventh,
+because a violated configuration must not exit 0 under the reporting contract and an
+undecided one must not exit like a verdict: 0 the model loaded clean, every configuration HOLDS its selection constraints, every family has at least one valid configuration, and nothing was refused ('not read' or 'not established') · 1 at least one decided negative: an INVALID selection, a VIOLATED selection constraint, or a VOID family (no valid configuration), which outranks a 2 · 2 usage/IO error, a degraded model, a model with no variation point this command reads, or ANY undecided result — a PARTIAL configuration, a selection or constraint refused as 'not read', an owner not read, a variation with no variants, a HOLDS only over the constraints read, or a family past the enumeration cap ('not established'). A dead variant or a false-optional point is reported as a warning and does NOT move the exit code. There is no solver and no --free here. Each section below states its own
+contract in full, and every section states which of the 8 it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is
@@ -92,7 +95,7 @@ rather than reporting on the first one.
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
 | [`reach`](#reach) | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | `reach` | reports |
 | [`check-behaviour`](#check-behaviour) | Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? | `behaviour` | judges |
-| [`variability`](#variability) | Which configurations does this family admit, and does each configuration select validly? | `variability` | reports |
+| [`variability`](#variability) | Which configurations does this family admit, and does each configuration select validly? | `variability` | judges |
 
 ### Options every subcommand takes
 
@@ -499,7 +502,7 @@ _No flags of its own._
 
 Computed by `variabilityReport (src/semantics/variability.ts)`. With `--json` the answer is published under `variability`, beside `ok` and `file`.
 
-**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+**Exit codes.** 0 the model loaded clean, every configuration HOLDS its selection constraints, every family has at least one valid configuration, and nothing was refused ('not read' or 'not established') · 1 at least one decided negative: an INVALID selection, a VIOLATED selection constraint, or a VOID family (no valid configuration), which outranks a 2 · 2 usage/IO error, a degraded model, a model with no variation point this command reads, or ANY undecided result — a PARTIAL configuration, a selection or constraint refused as 'not read', an owner not read, a variation with no variants, a HOLDS only over the constraints read, or a family past the enumeration cap ('not established'). A dead variant or a false-optional point is reported as a warning and does NOT move the exit code. There is no solver and no --free here.
 
 ### `trace` relationship presets
 

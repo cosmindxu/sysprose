@@ -30,6 +30,7 @@ import {
   EXIT_CODES,
   BOUNDS_EXIT_CODES,
   FAULT_TREE_EXIT_CODES,
+  VARIABILITY_EXIT_CODES,
   REFINE_EXIT_CODES,
   TRACE_PRESETS,
   WRITE_EXIT_CODES,
@@ -136,6 +137,9 @@ export function renderCliReference(): string {
   // still have a single point of failure, which is the whole reason that
   // command exists. See FAULT_TREE_EXIT_CODES.
   const injecting = COMMANDS.filter((c) => c.exitContract === 'fault-tree');
+  // And the variability lane's: a configuration or a family is judged valid or
+  // not, and a dead variant is a finding that does not move the exit.
+  const configuring = COMMANDS.filter((c) => c.exitContract === 'variability');
   // COUNTED, NOT SPELLED. This paragraph said "there are five of them" while
   // the table declared six, because the number was a word somebody typed once
   // and every new contract since has been added without it. It is a fact about
@@ -189,7 +193,10 @@ ${BEHAVIOUR_EXIT_CODES.replace('Exit codes: ', '')}.
 ${listOf(injecting.map((c) => `\`${c.name}\``))} ${injecting.length === 1 ? 'judges an *architecture from the failure side*' : 'judge an *architecture from the failure side*'} and ${injecting.length === 1 ? 'carries' : 'carry'} the last of them,
 because ${injecting.length === 1 ? 'its' : 'their'} 1 is a combination of contract failures rather than one refuted
 obligation — a decomposition that refines can still have a single point of
-failure: ${FAULT_TREE_EXIT_CODES.replace('Exit codes: ', '')}. Each section below states its own
+failure: ${FAULT_TREE_EXIT_CODES.replace('Exit codes: ', '')}.
+${listOf(configuring.map((c) => `\`${c.name}\``))} ${configuring.length === 1 ? 'judges a *product-line configuration*' : 'judge a *product-line configuration*'} and ${configuring.length === 1 ? 'carries' : 'carry'} the seventh,
+because a violated configuration must not exit 0 under the reporting contract and an
+undecided one must not exit like a verdict: ${VARIABILITY_EXIT_CODES.replace('Exit codes: ', '')}. Each section below states its own
 contract in full, and every section states which of the ${contracts} it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
@@ -214,7 +221,7 @@ rather than reporting on the first one.
 
 | Subcommand | Question it answers | \`--json\` key | Exit contract |
 |---|---|---|---|
-${COMMANDS.map((c) => `| [\`${c.name}\`](#${c.name}) | ${cell(c.question)} | \`${c.payloadKey}\` | ${c.exitContract === 'verify' || c.exitContract === 'refine' || c.exitContract === 'behaviour' || c.exitContract === 'fault-tree' ? 'judges' : c.exitContract === 'bounds' ? 'decides' : c.exitContract === 'write' ? 'writes' : 'reports'} |`).join('\n')}
+${COMMANDS.map((c) => `| [\`${c.name}\`](#${c.name}) | ${cell(c.question)} | \`${c.payloadKey}\` | ${c.exitContract === 'verify' || c.exitContract === 'refine' || c.exitContract === 'behaviour' || c.exitContract === 'fault-tree' || c.exitContract === 'variability' ? 'judges' : c.exitContract === 'bounds' ? 'decides' : c.exitContract === 'write' ? 'writes' : 'reports'} |`).join('\n')}
 
 ### Options every subcommand takes
 

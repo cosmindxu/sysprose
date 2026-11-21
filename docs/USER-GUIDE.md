@@ -4904,8 +4904,19 @@ spellings), and `src/semantics/mc/explore.ts` for the walk they both stand on.
 `sysprose variability <file> [--json]` reads the variation points of a model and
 answers two questions: what the family admits, and whether each configuration of
 it selects validly. It is a report command: the findings are in the output and
-the `--json` payload (`verification/variability-*`), the exit code is 0 for a
-file that loaded. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
+the `--json` payload (`verification/variability-*`) and a top-level `verdict`.
+**It judges, and an agent can act on the exit code alone:** **0** the model loaded
+clean, every configuration HOLDS its selection constraints, every family has a
+valid configuration and nothing was refused (`not read`, `not established`);
+**1** a decided negative: an INVALID selection, a VIOLATED selection constraint
+or a VOID family (it outranks a 2); **2** a usage/IO error, a degraded model, a
+model with no variation point it reads, or anything undecided: a PARTIAL
+configuration, a refused selection or constraint, an owner not read, a variation
+with no variants, a HOLDS only over the constraints read, or a family past the
+enumeration cap. A dead variant or a false-optional point is a warning in the
+report and does **not** move the exit code; gate on its
+`verification/variability-dead-variant` / `-false-optional` code if you want it
+to. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
 profile; in short:
 
 - **A variation point** is a usage written `variation` (SysML v2 §7.6.7), or a

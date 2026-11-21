@@ -66,6 +66,11 @@
  * (core/dead), and false-optional are the exact answers of the questions
  * AO10-AO15 (P4). A solver would be the way past the cap, and is not used.
  *
+ * VERDICT AND EXIT CODE. `exitCode` and `verdict` follow VARIABILITY_EXIT_CODES
+ * (scripts/lib/sysprose-spec.ts): 1 for a decided negative (INVALID, VIOLATED,
+ * VOID), 2 for anything undecided or refused, 0 only when nothing is either. A
+ * dead variant or false-optional point is a warning and does not move it.
+ *
  * FALSE-OPTIONAL (AO15): an optional point that is selected in EVERY valid
  * configuration where it is active, and active in at least one.
  */
@@ -188,11 +193,26 @@ export interface OwnerReport {
   configurations: ConfigurationReport[];
 }
 
+export interface VariabilityVerdictCounts {
+  /** Configurations whose selection constraints HOLD (all read). */
+  holds: number;
+  /** Decided negatives: an INVALID selection, a VIOLATED constraint, a VOID family. */
+  invalid: number;
+  violated: number;
+  voidFamilies: number;
+  /** Undecided: PARTIAL, not evaluated, holds only over read constraints, constraints/owners not read, families not established. */
+  undecided: number;
+}
+
 export interface VariabilityReport {
   owners: OwnerReport[];
   diagnostics: VariabilityDiagnostic[];
   summary: { errors: number; warnings: number; infos: number };
   cap: number;
+  /** The figures the exit code is computed from (see VARIABILITY_EXIT_CODES in scripts/lib/sysprose-spec.ts). */
+  verdict: VariabilityVerdictCounts;
+  /** 0 every configuration holds and every family is satisfiable, nothing refused; 1 a decided negative; 2 anything undecided or nothing to read. */
+  exitCode: 0 | 1 | 2;
 }
 
 /* ───────────────────────────── model helpers ───────────────────────────── */
@@ -800,7 +820,42 @@ export function variabilityReport(model: Model): VariabilityReport {
     owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: configurations(model, e, f, diagnostics) });
   }
   const count = (s: VariabilitySeverity): number => diagnostics.filter((d) => d.severity === s).length;
-  return { owners, diagnostics, summary: { errors: count('error'), warnings: count('warning'), infos: count('info') }, cap: VARIABILITY_CAP };
+  const verdict = verdictOf(owners);
+  return { owners, diagnostics, summary: { errors: count('error'), warnings: count('warning'), infos: count('info') }, cap: VARIABILITY_CAP, verdict, exitCode: exitCodeOf(owners, verdict) };
+}
+
+/**
+ * The verdict figures. A dead variant and a false-optional point are findings
+ * (warnings) and are deliberately NOT counted here: they say something about
+ * the family's design, not that a configuration is wrong, so they never move
+ * the exit code.
+ */
+function verdictOf(owners: OwnerReport[]): VariabilityVerdictCounts {
+  const v: VariabilityVerdictCounts = { holds: 0, invalid: 0, violated: 0, voidFamilies: 0, undecided: 0 };
+  for (const o of owners) {
+    if (o.status === 'not-read' || o.analysis === null) {
+      v.undecided++;
+      continue;
+    }
+    if (!o.analysis.established) v.undecided++;
+    else if (o.analysis.void) v.voidFamilies++;
+    if (!o.points.some((p) => p.configurable)) v.undecided++;
+    v.undecided += o.constraints.filter((c) => !c.read).length;
+    for (const c of o.configurations) {
+      if (c.status === 'holds') v.holds++;
+      else if (c.status === 'invalid') v.invalid++;
+      else if (c.status === 'violated') v.violated++;
+      else v.undecided++; // partial, not-evaluated, holds-over-read-constraints
+    }
+  }
+  return v;
+}
+
+/** 1 (a decided negative) outranks 2 (something undecided), as in the other judging contracts. */
+function exitCodeOf(owners: OwnerReport[], v: VariabilityVerdictCounts): 0 | 1 | 2 {
+  if (owners.length === 0) return 2;
+  if (v.invalid + v.violated + v.voidFamilies > 0) return 1;
+  return v.undecided > 0 ? 2 : 0;
 }
 
 /* ───────────────────────────────── rendering ───────────────────────────── */
