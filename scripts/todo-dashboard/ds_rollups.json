@@ -1990,8 +1990,8 @@
    }
   },
   {
-   "id": 297,
-   "tier": "weaker",
+   "id": null,
+   "tier": "",
    "title": "Save the unnamed end by a name, instead of leaving it out (a loud note today; sound, only",
    "section": "Per-instance soundness \u2014 review 2026-10-14",
    "subs": [

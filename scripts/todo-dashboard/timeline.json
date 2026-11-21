@@ -4072,9 +4072,9 @@
   "open_raw": 70,
   "open": 70,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 42,
-   "POLISH": 26,
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 23,
    "HELD": 2
   },
   "new": 0,
@@ -4094,5 +4094,37 @@
   },
   "cum_new": 331,
   "cum_closed": 259
+ },
+ {
+  "idx": 128,
+  "sha": "5fc57d7",
+  "when": "2026-11-21T17:49:37+01:00",
+  "day": "2026-11-21",
+  "subject": "merge round sm16: Save names a lone unnamed redefinition end (transition, succession, allocation, dependency, alias); items 845 and 1394 clo",
+  "open_raw": 68,
+  "open": 68,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 40,
+   "POLISH": 26,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 2,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 2,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 331,
+  "cum_closed": 261
  }
 ]
