@@ -3944,9 +3944,9 @@
   "open_raw": 75,
   "open": 75,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 42,
-   "POLISH": 31,
+   "FALSE": 5,
+   "WEAKER": 40,
+   "POLISH": 28,
    "HELD": 2
   },
   "new": 0,
@@ -3962,6 +3962,38 @@
    "FALSE": 0,
    "WEAKER": 0,
    "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 330,
+  "cum_closed": 253
+ },
+ {
+  "idx": 124,
+  "sha": "8727dbd",
+  "when": "2026-11-21T01:32:33+01:00",
+  "day": "2026-11-21",
+  "subject": "merge round sm13: a region that is itself a parallel state is performed and explored; docs re-measured (184 files, 6011 tests; guards 238/23",
+  "open_raw": 75,
+  "open": 75,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 42,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
    "HELD": 0
   },
   "cum_new": 330,
