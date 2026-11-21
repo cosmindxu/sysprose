@@ -842,7 +842,7 @@ true values. What follows is what that branch and the review of it left open; en
       takes the first FeatureTyping target and is fixed. validate() ordering across loads is the
       separate entry 'Abstentions left in the order of listings'. Done when typesOf lists alike on
       the page and in a terminal, which waits for the decision in (1). [core-pass]
-- [ ] **Save the unnamed end by a name, instead of leaving it out (a loud note today; sound, only
+- [x] **Save the unnamed end by a name, instead of leaving it out (a loud note today; sound, only
       weaker).** Rechecked read-only on a683620 (2026-11-02): 240 neighbour cases lost or moved no
       statement and every end Save cannot name gets the `// Not saved:` note, so the page and the
       saved file no longer disagree; only the full fix below is left. History: fence-save-name: Save writes a binding, connection, flow or interface end through
@@ -865,6 +865,12 @@ true values. What follows is what that branch and the review of it left open; en
       (`settleRedefinitions`) as before. Probes: wave3-probes/fence-order/gen3.mts, req.mts,
       inl.mts; fence-text-scratch/review/dup3.mts, sk.mts; fence-editor2-scratch/s2/probes/p1.sysml.
       [fence-editor S2; fence-editor2; fence-save-name; fence-text; fence-order]
+      CLOSED 2026-11-21 (sm-saveend; user ruling "close as ruled"): Save writes a lone unnamed redefinition reached by a transition,
+      succession, allocation, dependency or alias end under the name it already goes by (`state s1 :>> s1;`), verified by re-parsing
+      (text.save-end-names). Ruled permanent limit, the loud `// Not saved:` note kept (never a wrong save): a named end behind an earlier
+      member of its name, two or more unnamed `:>> M`, an unnamed one beside a named member of its name, and 2nd+ requirement-relationship
+      or inline-specialization ends — any faithful text needs a member reordered or renamed, which changes the model (in a state machine,
+      the declaration-order tie-break). Reopen by re-adding the item with its original title.
 - [ ] **Z3 constraint classes: classes-3 (rollup, plan
       ~/.claude/plans/z3-constraint-classes.md).** classes-1 merged the census and
       `src/semantics/smt/shape.ts`; classes-2 merged the classifier, pinned.ts, the maturity
@@ -1391,7 +1397,7 @@ true values. What follows is what that branch and the review of it left open; en
       17 ms at f39e88a; children() calls per unreadScopes grow quadratically with depth on a chain
       (1678 at depth 30, 6043 at 60, pre-existing); no guard test exists for unreadScopes cost.
       [fence-rename]
-- [ ] **Abstentions left in Save of an end (rollup; sound, only weaker).** fence-text: the end is no
+- [x] **Abstentions left in Save of an end (rollup; sound, only weaker).** fence-text: the end is no
       longer written by a name where the next load would read another member, so the statement is
       saved as a `// Not saved:` note instead. Shapes: a named end behind an earlier member of its
       name (chain statements: any earlier member that goes by the name, including an unnamed `:>>`;
@@ -1402,6 +1408,12 @@ true values. What follows is what that branch and the review of it left open; en
       requirement-relationship end or an inline specialization target that is the 2nd or later
       member of its name in its owner, where a renaming or reordering would save it (probe
       wave3-probes/fence-order/gen3.mts, 144 of 240 neighbours). [fence-text; fence-order]
+      CLOSED 2026-11-21 (sm-saveend; user ruling "close as ruled"): Save writes a lone unnamed redefinition reached by a transition,
+      succession, allocation, dependency or alias end under the name it already goes by (`state s1 :>> s1;`), verified by re-parsing
+      (text.save-end-names). Ruled permanent limit, the loud `// Not saved:` note kept (never a wrong save): a named end behind an earlier
+      member of its name, two or more unnamed `:>> M`, an unnamed one beside a named member of its name, and 2nd+ requirement-relationship
+      or inline-specialization ends — any faithful text needs a member reordered or renamed, which changes the model (in a state machine,
+      the declaration-order tie-break). Reopen by re-adding the item with its original title.
 - [ ] **Abstentions left in the order of listings (rollup; sound, only weaker).** (1) validate()
       lists its diagnostics ordered by element id, so a page, a terminal and a peer list the same
       findings in different orders (probe wave3-probes/fence-order/gen.mts with the `.sort()`

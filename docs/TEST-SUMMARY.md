@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 185
-- **Tests:** 6013 total — 6013 passed, 0 failed, 0 skipped
+- **Files:** 186
+- **Tests:** 6027 total — 6027 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -181,6 +181,7 @@
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
 | test/unit/text.roundtrip.test.ts | 243 | 0 | 0 |
+| test/unit/text.save-end-names.test.ts | 14 | 0 | 0 |
 | test/unit/text.spec-7-18.test.ts | 18 | 0 | 0 |
 | test/unit/text.state-forms.test.ts | 16 | 0 | 0 |
 | test/unit/text.target-transition.test.ts | 11 | 0 | 0 |
