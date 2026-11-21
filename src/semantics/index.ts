@@ -16,6 +16,7 @@
 
 export {
   generalizationsOf,
+  variantGeneral,
   ownFeatures,
   effectiveFeatures,
   effectiveNameOf,

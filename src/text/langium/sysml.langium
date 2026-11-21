@@ -393,7 +393,11 @@ Definition infers Definition:
       (prefixMeta+=PrefixMetadata)*
       (visibility=Visibility)?
       (
-          prefixes+=Prefix (prefixes+=Prefix)*
+          // `variant Spec::smallEngine;` / `variant a.b;` — a variant reference by a QUALIFIED name or feature chain
+          // (SysML v2 §7.6.7 VariantReference). At least one separator is required, so the one-segment form
+          // (`variant smallEngine;`) stays in the alternative below and the two never share a derivation.
+          prefixes+='variant' name=VariantRefPath DeclSpecs DeclTailRest
+        | prefixes+=Prefix (prefixes+=Prefix)*
           ( keyword='state' (isDef?='def' | prefixes+=Direction)? ( StateDeclarationTail | NamelessStateDeclarationTail )
           | keyword=BaseKeyword (isDef?='def' | prefixes+=Direction)? DeclarationTail
             // Keyword-less prefixed feature: its name must NOT be a word that
@@ -721,6 +725,10 @@ QualifiedName returns string:
 
 RefName returns string:
     ID | UNRESTRICTED_NAME | KeywordName;
+
+// A qualified name or feature chain of at least two segments (the variant reference; see Definition).
+VariantRefPath returns string:
+    PlainRefName (('::' | '.') RefName)+;
 
 // Declaration name usable where NO keyword was consumed (keyword-less prefixed
 // features): RefName minus the words that are also BaseKeywords, so a leading
