@@ -7,7 +7,7 @@ Everything Sysprose hands to z3, or refuses to hand over, is sorted into a **con
 
 **Label only; no verdict changes.** A class is a label: it moves no verdict, no code, no exit code, no `detail`, no digest and no script byte. A level states the evidence this build holds for each class (docs/CONSTRAINT-CLASSES.md). It is not a verdict on any model and moves no verdict.
 
-The register is version 1; its facts were measured under z3 5.3.3. This page prints the **24 constraint classes** that have a row in the corpus (6 shapes, 3 modifiers, 6 readings, 9 fences). A class with no row is kept in the register and is not printed until a row stands in it.
+The register is version 1; its facts were measured under z3 5.3.3. This page prints the **25 constraint classes** that have a row in the corpus (6 shapes, 3 modifiers, 7 readings, 9 fences). A class with no row is kept in the register and is not printed until a row stands in it.
 
 ## What exists today
 
@@ -42,7 +42,7 @@ A fence has its own three states: `fenced` when a test pins each layer it is pro
 
 Where the printed classes stand now:
 
-- `experimental`: `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `text-as-real`, `partial-context`, `bind-equality`, `asserted-fact`, `per-instance`.
+- `experimental`: `ground`, `bool`, `nra-poly/pinned`, `nra-poly/free`, `text-as-real`, `partial-context`, `bind-equality`, `asserted-fact`, `inherited-context`, `per-instance`.
 - `tested`: `lra`, `lira`, `nra-div/pinned`.
 - `differential-tested`: `units`, `stated-value`, `defining-equation`, `requirement-clause`.
 - `fenced`: `fence/no-formal-clause`, `fence/unresolved-name`, `fence/dimension-clash`, `fence/offset-arithmetic`, `fence/refused-derivation`, `fence/non-numeric-operand`.
@@ -66,14 +66,15 @@ Counted with no solver from this repository (`npm run census:classes -- --check 
 | `text-as-real` | 2 | 2 | 1 | 0 | 0 (0) | 0 | none | `experimental` |
 | `partial-context` | 2 | 2 | 1 | 0 | 0 (0) | 2 | none | `experimental` |
 | `stated-value` | 311 | 78 | 1 | 7 | 737 (314) | 0 | none | `differential-tested` |
-| `defining-equation` | 16 | 14 | 1 | 2 | 69 (42) | 0 | none | `differential-tested` |
+| `defining-equation` | 20 | 15 | 1 | 2 | 69 (42) | 0 | none | `differential-tested` |
 | `bind-equality` | 9 | 5 | 1 | 0 | 237 (141) | 0 | none | `experimental` |
-| `asserted-fact` | 28 | 8 | 1 | 0 | 31 (18) | 0 | none | `experimental` |
+| `asserted-fact` | 29 | 9 | 1 | 0 | 31 (18) | 0 | none | `experimental` |
 | `requirement-clause` | 236 | 61 | 1 | 7 | 458 (272) | 0 | none | `differential-tested` |
+| `inherited-context` | 2 | 1 | 1 | 0 | 92 (84) | 0 | none | `experimental` |
 | `per-instance` | 1 | 1 | 1 | 0 | 327 (167) | 2 | none | `experimental` |
 | `fence/no-formal-clause` | 40 | 7 | 1 | — | — | — | none | `fenced` |
 | `fence/unparseable` | 1 | 1 | 1 | — | — | — | none | `unpinned` |
-| `fence/unresolved-name` | 3 | 3 | 2 | — | — | — | none | `fenced` |
+| `fence/unresolved-name` | 10 | 4 | 2 | — | — | — | none | `fenced` |
 | `fence/unit-unresolved` | 1 | 1 | 0 | — | — | — | none | `unpinned` |
 | `fence/dimension-clash` | 2 | 2 | 1 | — | — | — | none | `fenced` |
 | `fence/offset-arithmetic` | 3 | 3 | 1 | — | — | — | none | `fenced` |
@@ -230,6 +231,18 @@ How a fact entered the proof. A relation that has a formal clause has exactly on
 
 - **Encodes.** `require`, `assume`, `objective`, `constraint` and `keyword` clauses.
 - **Level of `requirement-clause`.** `differential-tested` (first unmet: a battery of 200 cells, have none).
+- **Tests.**
+  - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”
+
+### `inherited-context`
+
+- **Encodes.** A relation read in a specialising context.
+- **Level of `inherited-context`.** `experimental` (first unmet: a decided golden row, have 0).
+- **Open defects.**
+  - `D-inconsistent-axioms` (abstains): Re-read (g8-fence): a general's body re-read by name where a specialisation declares a name anew without `:>>` is fenced on every surface: the SMT binding rows by G-mask; the name, and what a binding joins to it, read nowhere in that context on the check and the numeric surface; the general's asserts there refused on the SMT engine with their variables kept; the `#equations` pair (G8C) filed `?` in its own sentence. g8 reads T/T/?/?, G8B/G8A tl and G8C t70 ?/?/?/?. Sound, only weaker (the context's own bodies over the name abstain too); the ill-formed shape is not yet reported (G-diag). The per-usage half, and the false T on a definition's own row (LK/LD/LN), closed by P-pin.
+  - `D-subsetting-contradiction` (abstains): Since instance3-pass S1 an assert read through a usage that subsets a feature an instance reads otherwise is read again in that instance (v11: `W::a in w` F, SMT inconsistent-axioms on every row); every other such shape leaves the SMT engine undecided on every row of the file (not-evaluable), and W's own row of the assert abstains on the check (since instance3-pass S2, beside a usage read below as the subsetted feature again, the assert is read as any relation, W's own row at W's values). Sound, only weaker: a hand-oracle generator of 912 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (p1 `[2]`, p2 `[0..1]`, a quoted name in an asserted equation or a declaration), where an equation naming the usage, or a multiplicity beyond one value, leaves it unrerooted and abstaining.
+  - `D-literal-reach` (abstains): Re-read: the literal engine and SMT go inconclusive on relations about another, consistent instance. Sound, none false.
+  - `D-subsets-otherwise` (abstains): Since instance3-pass S2 a subsetting usage that is the subsetted feature again (its kind and type, saying nothing of its own, named by no binding end or asserted equation, and its only value) is read below, in each context that redefines that feature, as one of that context's (sa7: W::c T, W::c in w F, k F, w0.p2.load T; V7 T); a hand-oracle generator of 1,200 models (both text orders) gives no wrong decided cell, as does one of 768 more with quoted spellings and multiplicities (a name an asserted equation spells with a quote, a usage declared `part 'p 2' :> p1;`, p1 or its redefinition `[2]`, p2 `[0..1]`): the usage is p1 again only where it is p1's one value. Every other shape, and a reading of the usage itself (a satisfy, a subject, a reference), still abstains wherever any context reads the subsetted feature otherwise (TC8, O2, RQ4, SA3S, RE3, AE3, AE4, RFN). Sound, only weaker.
 - **Tests.**
   - `test/unit/semantics.constraint-class.test.ts`: “follows the role, the source and the instance, in that order of precedence”
 

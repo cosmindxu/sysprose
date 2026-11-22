@@ -4,13 +4,13 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 186
-- **Tests:** 6027 total — 6027 passed, 0 failed, 0 skipped
+- **Files:** 189
+- **Tests:** 6080 total — 6080 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
 | test/campaign/authoring-campaign.test.ts | 144 | 0 | 0 |
-| test/campaign/cli.sysprose.test.ts | 130 | 0 | 0 |
+| test/campaign/cli.sysprose.test.ts | 140 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
 | test/campaign/verification.test.ts | 191 | 0 | 0 |
@@ -64,7 +64,7 @@
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
 | test/unit/checks-registry.test.ts | 140 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
-| test/unit/cli-reference.test.ts | 28 | 0 | 0 |
+| test/unit/cli-reference.test.ts | 29 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 36 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
@@ -161,6 +161,7 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
+| test/unit/semantics.variability.test.ts | 22 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
@@ -187,6 +188,7 @@
 | test/unit/text.target-transition.test.ts | 11 | 0 | 0 |
 | test/unit/text.time-trigger.test.ts | 6 | 0 | 0 |
 | test/unit/text.transition-redefinition.test.ts | 5 | 0 | 0 |
+| test/unit/text.variability.test.ts | 13 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 27 | 0 | 0 |
@@ -195,3 +197,4 @@
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
 | test/unit/validation.rules.test.ts | 90 | 0 | 0 |
+| test/unit/validation.variability.test.ts | 7 | 0 | 0 |

@@ -10,8 +10,8 @@ export const CLASS_FACTS: ClassFacts = {
       "encoderTests": 1,
       "goldenCases": 0,
       "goldenDecided": 0,
-      "models": 8,
-      "rows": 28,
+      "models": 9,
+      "rows": 29,
       "tableAgree": 31,
       "tableDisagree": 0,
       "tableProbes": 18
@@ -43,8 +43,8 @@ export const CLASS_FACTS: ClassFacts = {
       "encoderTests": 1,
       "goldenCases": 2,
       "goldenDecided": 2,
-      "models": 14,
-      "rows": 16,
+      "models": 15,
+      "rows": 20,
       "tableAgree": 69,
       "tableDisagree": 0,
       "tableProbes": 42
@@ -186,8 +186,8 @@ export const CLASS_FACTS: ClassFacts = {
       "encoderTests": 2,
       "goldenCases": 0,
       "goldenDecided": 0,
-      "models": 3,
-      "rows": 3,
+      "models": 4,
+      "rows": 10,
       "tableAgree": 0,
       "tableDisagree": 0,
       "tableProbes": 0
@@ -230,8 +230,8 @@ export const CLASS_FACTS: ClassFacts = {
       "encoderTests": 1,
       "goldenCases": 0,
       "goldenDecided": 0,
-      "models": 0,
-      "rows": 0,
+      "models": 1,
+      "rows": 2,
       "tableAgree": 92,
       "tableDisagree": 0,
       "tableProbes": 84
