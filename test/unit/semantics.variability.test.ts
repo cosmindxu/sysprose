@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseModel } from '@text/index';
+import { RULES_BY_ID } from '@validation/index';
 import { variabilityReport, variabilityLines, VARIABILITY_CODES, type OwnerReport } from '@semantics/variability';
 
 const BASE = (configs: string, extraConstraint = '') => `package A12 {
@@ -220,6 +221,38 @@ describe('variability — other shapes', () => {
     expect(cfg(o, 'c').completes).toBe(true);
     expect(cfg(o, 'c').forced).toEqual(['b::b2']);
     expect(cfg(o, 'd').status).toBe('violated');
+  });
+
+  // SysML v2 Usage::namingFeature(): a variant is named by the feature its ownedReferenceSubsetting references.
+  const REF_FORM = (configs: string) => `package P { part def E; part small : E; part big : E;
+    part def Car { variation part engine : E { variant small; variant big; } }
+    ${configs} }`;
+
+  it('reads `:>` of a reference-form variant by the name it takes from what it references', () => {
+    const o = R(REF_FORM(`part c1 : Car { part :>> engine :> engine::small; }
+      part c2 : Car { part :>> engine :> Car::engine::big; }
+      part c3 : Car { part :>> engine = engine::small; }`)).owners[0];
+    for (const n of ['c1', 'c2', 'c3']) expect(cfg(o, n).status).toBe('holds');
+    expect(cfg(o, 'c1').selections[0].text).toBe(':>> engine :> engine::small');
+  });
+
+  it('a reference-form variant name resolves without an error, and the model loads clean', () => {
+    const { model } = parseModel(REF_FORM('part c1 : Car { part :>> engine :> engine::small; }'));
+    expect(RULES_BY_ID.get('unresolved-type-ref')!.run(model)).toEqual([]);
+    expect(variabilityReport(model).owners[0].configurations[0].status).toBe('holds');
+  });
+
+  it('does not read `:>` of the referenced feature itself, and names the spelling that is read', () => {
+    const c = cfg(R(REF_FORM('part c4 : Car { part :>> engine :> small; }')).owners[0], 'c4');
+    expect(c.status).toBe('not-evaluated');
+    expect(c.selections[0].status).toBe('not-read');
+    expect(c.selections[0].reason).toContain('write `:> engine::small`');
+  });
+
+  it('an unnamed variant that only subsets takes no name (the reference form alone names a variant)', () => {
+    const o = R(`package P { part def E; part x : E; part def Car { variation part engine : E { variant part :> x; } } }`).owners[0];
+    expect(o.status).toBe('not-read');
+    expect(o.reasons[0]).toContain('a variant has no name');
   });
 });
 

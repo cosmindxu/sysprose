@@ -169,7 +169,7 @@ function resolveOwned(
       const target = targetId ? model.get(targetId) : undefined;
       if (target) return target;
     }
-    return undefined;
+    return resolveVariantReference(model, scopeId === null ? model.roots() : model.children(scopeId), name, publicOnly);
   }
   const children = scopeId === null ? model.roots() : model.children(scopeId);
   // First pass: direct (owned) members by their own name.
@@ -199,6 +199,35 @@ function resolveOwned(
     const targetId = (child.target ?? [])[0];
     const target = targetId ? model.get(targetId) : undefined;
     if (target) return target;
+  }
+  return resolveVariantReference(model, children, name, publicOnly);
+}
+
+/**
+ * Third pass: an unnamed `variant` usage answers to the name of the feature it
+ * references. SysML v2 `Usage::namingFeature()`: "If this Usage is a variant,
+ * then its naming Feature is the referencedFeature of its
+ * ownedReferenceSubsetting" — so in `variation part engine { variant
+ * smallEngine; }`, `engine::smallEngine` names the variant (the usage the
+ * variation owns), not the package's `smallEngine` it references. Only a
+ * variant with neither a name nor a short name of its own is read so; every
+ * other unnamed usage keeps KerML's rule (its first redefinition), which this
+ * pass does not touch.
+ */
+function resolveVariantReference(
+  model: Model,
+  children: readonly ElementRecord[],
+  name: string,
+  publicOnly: boolean,
+): ElementRecord | undefined {
+  for (const child of children) {
+    if (child.attrs.isVariant !== true || isRelationship(child.eClass)) continue;
+    if (child.declaredName !== undefined || child.declaredShortName !== undefined) continue;
+    if (publicOnly && !isPublic(child)) continue;
+    const rs = model.children(child.id).find((c) => c.eClass === 'ReferenceSubsetting');
+    const refId = (rs?.target ?? [])[0];
+    const referenced = refId ? model.get(refId) : undefined;
+    if (referenced && matchesOwnName(referenced, name)) return child;
   }
   return undefined;
 }

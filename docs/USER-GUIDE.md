@@ -4922,8 +4922,9 @@ profile; in short:
 - **A variation point** is a usage written `variation` (SysML v2 §7.6.7), or a
   usage typed by a variation definition (`variation part transmission :
   TransmissionChoices;` takes its variants from the definition). Its **variants**
-  are its `variant` usages; `variant smallEngine;` (the reference form) counts by
-  the referenced usage's name. The **superset owner** is the definition or usage
+  are its `variant` usages; `variant smallEngine;` (the reference form) is named
+  by the usage it references (SysML v2 `Usage::namingFeature()`), so
+  `engine::smallEngine` names that variant everywhere a name is read. The **superset owner** is the definition or usage
   that holds the points.
 - **Optional or not.** No multiplicity or `[1]` means exactly one variant;
   `[0..1]` means at most one. Another multiplicity on a point is not read.
@@ -4934,9 +4935,11 @@ profile; in short:
   selection: it is reported and left out, and the analyses say so.
 - **A selection** is written in a configuration (a usage that subsets or is typed
   by the owner) as `part :>> engine = engine::engine4Cyl;` or `part :>> engine :>
-  engine::engine4Cyl;`. Typing (`: Engine4Cyl`), `default` or `:=` values, an
-  unqualified `= engine4Cyl`, a subsetting of a non-variant and `bind` are
-  **not selections**; each is shown with its reason, and the configuration then
+  engine::engine4Cyl;`, a reference-form variant the same way (`:> engine::smallEngine`).
+  Typing (`: Engine4Cyl`), `default` or `:=` values, an
+  unqualified `= engine4Cyl`, a subsetting of a non-variant (also of the usage a
+  reference-form variant references, `:> smallEngine`, whose reason names the
+  spelling that is read) and `bind` are **not selections**; each is shown with its reason, and the configuration then
   gets no verdict. A name that is no variant of the point, or a variant of
   another point, is invalid.
 - **A selection constraint** is an `assert constraint` of the owner built from
@@ -4954,6 +4957,15 @@ profile; in short:
 All of it is decided by exhaustive enumeration of the structural configurations,
 so every figure is exact. Above 1,000,000 structural configurations the analyses
 are reported as not established; nothing is guessed.
+
+The model checker cannot evaluate a body over variant references
+(`engine == engine::e4`). For a selection constraint this analysis reads, its
+`validation/constraint-violation` note names this verdict per configuration
+(`… decided per configuration by \`sysprose variability\`: city HOLDS, touring
+VIOLATED`) instead of "could not be evaluated", with no per-configuration
+`target-by-specialisation` note beside it; it is a warning when a configuration is
+VIOLATED and info otherwise. A constraint this analysis does not read keeps the
+checker's own note.
 
 ### The keywords a file carries, including somebody else's
 
@@ -5365,7 +5377,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:566-583`, `1130-1155` (the two rules that ask),
+`src/validation/rules.ts:567-584`, `1131-1161` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

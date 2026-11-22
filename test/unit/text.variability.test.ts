@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { loadModelText } from '@text/load';
 import { serializeElement } from '@text/serializer';
 import { effectiveFeatures, generalizationsOf, variantGeneral } from '@semantics/index';
@@ -11,7 +12,8 @@ import { effectiveFeatures, generalizationsOf, variantGeneral } from '@semantics
 const load = async (text: string): Promise<any> => loadModelText(text, { fileName: 'v.sysml' });
 const find = (model: any, n: string) => model.all().find((e: any) => model.qualifiedName(e.id) === n);
 const diags = (r: any) => r.diagnostics.filter((d: any) => d.severity === 'error' || d.severity === 'warning');
-const probe = (f: string) => readFileSync(`/tmp/ps3/var/${f}`, 'utf8');
+// The SysML v2 spec's own variability examples (§7.6.7 e1/e2, Annex A.12), kept in the repository.
+const probe = (f: string) => readFileSync(resolve(import.meta.dirname, '../fixtures/verification/models/variability-spec', f), 'utf8');
 
 const E2 = `package Spec {
   part def Engine; part def FourCylinderEngine :> Engine; part def SixCylinderEngine :> Engine;
@@ -27,12 +29,19 @@ const E2 = `package Spec {
 `;
 
 describe('probe models load clean', () => {
-  for (const f of ['e1.sysml', 'e2.sysml', 'a12.sysml']) {
+  for (const f of ['e1.sysml', 'e2.sysml']) {
     it(f, async () => {
       const r = await load(probe(f));
       expect(diags(r.report)).toEqual([]);
     });
   }
+  // The annex's own myCar (engine4Cyl with transmissionAutomatic) violates its xor selection constraint: the one
+  // warning is that verdict, which `sysprose variability` decides and the checker names.
+  it('a12.sysml', async () => {
+    const d = diags((await load(probe('a12.sysml'))).report);
+    expect(d.map((x: any) => [x.code, x.severity])).toEqual([['validation/constraint-violation', 'warning']]);
+    expect(d[0].message).toContain('decided per configuration by `sysprose variability`: myCar VIOLATED');
+  });
 });
 
 describe('variant reference (§7.6.7)', () => {

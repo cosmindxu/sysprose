@@ -72,4 +72,44 @@ describe('validation — variability (SysML v2 §7.6.7, §8.4.2.3)', () => {
     }
     expect(all('package R { part def E; variation part def V :> E { variant part a : E; } }')).toEqual([]);
   });
+
+  describe('the checker names the verdict `sysprose variability` gives a selection constraint', () => {
+    const FAM = (touring: string) => `package F { part def E; part def T;
+      part def Fam {
+        variation part engine : E { variant part e4 : E; variant part e6 : E; }
+        variation part tr : T { variant part auto : T; variant part manual : T; }
+        assert constraint sel { (engine == engine::e4 and tr == tr::manual) or (engine == engine::e6 and tr == tr::auto) }
+      }
+      part city : Fam { part :>> engine = engine::e4; part :>> tr = tr::manual; }
+      part touring : Fam { part :>> engine = engine::e6; part :>> tr = ${touring}; }
+    }`;
+    const notes = (src: string) => ['constraint-violation', 'target-by-specialisation'].flatMap((id) => run(src, id));
+
+    it('one note with the verdict per configuration, in place of "could not be evaluated" and one note per configuration', () => {
+      const d = notes(FAM('tr::auto'));
+      expect(d).toHaveLength(1);
+      expect(d[0].ruleId).toBe('constraint-violation');
+      expect(d[0].severity).toBe('info');
+      expect(d[0].message).toContain('decided per configuration by `sysprose variability`: city HOLDS, touring HOLDS');
+      expect(d[0].message).not.toContain('could not be evaluated');
+    });
+
+    it('a configuration it finds VIOLATED makes the note a warning, as any violated constraint', () => {
+      const d = notes(FAM('tr::manual'));
+      expect(d).toHaveLength(1);
+      expect(d[0].severity).toBe('warning');
+      expect(d[0].message).toContain('city HOLDS, touring VIOLATED');
+    });
+
+    it('a constraint the analysis does not read keeps the checker\'s own note', () => {
+      const src = `package G { part def E; part def Fam {
+        variation part engine : E { variant part e4 : E; }
+        attribute k : Real;
+        assert constraint other { k > 1.0 }
+      } }`;
+      const d = notes(src);
+      expect(d.some((x) => x.message.includes('could not be evaluated'))).toBe(true);
+      expect(d.every((x) => !x.message.includes('sysprose variability'))).toBe(true);
+    });
+  });
 });
