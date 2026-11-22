@@ -55,7 +55,8 @@ import {
   type DerivationMemo,
 } from '../semantics/units-eval';
 import type { Diagnostic, Severity, ValidationRule } from './types';
-import { connectionCompatibility } from './rules-connection';
+import { directedFeaturesOf } from '../semantics/port-conformance';
+import { connectionCompatibility, flowEndCompatibility, interfaceEndConformance, portTyping } from './rules-connection';
 // The one import this layer makes of `src/api`, and it is deliberate rather
 // than accidental. The evidence carrier and the canonical model digest are
 // declared once, in `src/api/evidence.ts`, because that is where the RECORD is
@@ -421,6 +422,11 @@ const portDirection: ValidationRule = {
     for (const el of model.ofKind('PortUsage')) {
       if (isLibraryElement(el)) continue;
       const dir = asString(el.attrs.direction);
+      // §7.12.1: direction belongs to a port's FEATURES; a port usage's own
+      // direction is optional. Only a port that says nothing about direction at
+      // all — neither on itself nor on any feature, conjugation applied — is
+      // reported.
+      if (dir === undefined && directedFeaturesOf(model, el.id).length > 0) continue;
       if (dir === undefined) {
         out.push(mk(`Port "${label(model, el)}" has no direction (expected in/out/inout).`, el.id, 'warning'));
       } else if (!VALID_DIRECTIONS.has(dir)) {
@@ -1836,6 +1842,9 @@ export const RULES: ValidationRule[] = [
   variationMemberNotVariant,
   variationSpecializesVariation,
   variationVariantKind,
+  interfaceEndConformance,
+  flowEndCompatibility,
+  portTyping,
 ];
 
 /** Rule lookup by id. */

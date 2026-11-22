@@ -527,7 +527,10 @@ fragment DeclMiddle:
     ('of' ofPayload=QualifiedName (ofMult+=Multiplicity)?)?
     ('from' (fromMult+=Multiplicity)? flowFrom=QualifiedName (fromSpecs+=Specialization)*
         'to' (toMult+=Multiplicity)? flowTo=QualifiedName (toSpecs+=Specialization)*)?
-    ('connect' (connSrcMult+=Multiplicity)? connectSource=QualifiedName 'to' (connTgtMult+=Multiplicity)? connectTarget=QualifiedName)?
+    // SysML v2 §8.2.2.13 ConnectorEnd: an end may name the definition end it
+    // redefines, `connect sender ::> a.p to receiver references b.q`.
+    ('connect' (connSrcMult+=Multiplicity)? (connSrcEnd=Name ('::>' | 'references'))? connectSource=QualifiedName
+        'to' (connTgtMult+=Multiplicity)? (connTgtEnd=Name ('::>' | 'references'))? connectTarget=QualifiedName)?
     ('to' (sendMult+=Multiplicity)? sendTarget=QualifiedName)?
     (valueOp=ValueOp value=Expression)?
     ( ctrl='while' ctrlCond=Expression

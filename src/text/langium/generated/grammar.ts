@@ -7067,6 +7067,37 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                 "cardinality": "?"
               },
               {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Assignment",
+                    "feature": "connSrcEnd",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@83"
+                      },
+                      "arguments": []
+                    }
+                  },
+                  {
+                    "$type": "Alternatives",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "::>"
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": "references"
+                      }
+                    ]
+                  }
+                ],
+                "cardinality": "?"
+              },
+              {
                 "$type": "Assignment",
                 "feature": "connectSource",
                 "operator": "=",
@@ -7093,6 +7124,37 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                   },
                   "arguments": []
                 },
+                "cardinality": "?"
+              },
+              {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Assignment",
+                    "feature": "connTgtEnd",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@83"
+                      },
+                      "arguments": []
+                    }
+                  },
+                  {
+                    "$type": "Alternatives",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "::>"
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": "references"
+                      }
+                    ]
+                  }
+                ],
                 "cardinality": "?"
               },
               {

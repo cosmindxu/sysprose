@@ -28,8 +28,16 @@
  */
 
 import type { ElementId, ElementRecord, Model } from '@core/index';
-import { connectorEndsOf } from '../semantics/connectors';
+import { connectorEndsOf, payloadOf } from '../semantics/connectors';
 import { generalizationsOf } from '../semantics/inheritance';
+import {
+  declaredDefinitions,
+  effectiveDirection,
+  endMismatches,
+  payloadDefinition,
+  portConjugated,
+  portMismatches,
+} from '../semantics/port-conformance';
 import type { Diagnostic, ValidationRule } from './types';
 
 const CONNECTOR_KINDS = new Set(['ConnectionUsage', 'InterfaceUsage', 'Connector']);
@@ -124,8 +132,27 @@ export const connectionCompatibility: ValidationRule = {
         );
       }
 
-      // (b) Type — both ends resolved, and no PortDefinition in common.
-      if (a.defs.length > 0 && b.defs.length > 0) {
+      // (b) Conformance. Where either port has DIRECTED features, the
+      //     question is §7.12.1's: every directed feature of each port needs a
+      //     feature of a conforming definition with the conjugate direction on
+      //     the other (structural, so two port definitions with matching
+      //     features conform, and `T` to `T` with `out` features does not).
+      //     Where neither has one, it stays nominal: a port definition in common.
+      const mismatches = portMismatches(model, ends[0], ends[1]);
+      if (mismatches !== undefined) {
+        if (mismatches.length > 0) {
+          const first = mismatches[0];
+          const f = `\`${first.feature.direction} ${first.feature.name}${typeSuffix(model, first.feature.el.id)}\``;
+          const where = qualifiedLabel(model, model.get(first.port) ?? first.feature.el);
+          const otherPort = first.port === ends[0] ? b.el : a.el;
+          const why =
+            first.reason === 'direction' && first.other
+              ? `${f} of ${where} meets \`${first.other.direction} ${first.other.name}\` on ${qualifiedLabel(model, otherPort)}, which is not its conjugate (in↔out, inout↔inout)`
+              : `${f} of ${where} has no feature of a conforming definition on ${qualifiedLabel(model, otherPort)}`;
+          const more = mismatches.length > 1 ? ` (${mismatches.length - 1} more unmatched feature${mismatches.length > 2 ? 's' : ''})` : '';
+          out.push(mk(`Connection "${name}" joins ports that do not conform (SysML v2 §7.12.1): ${why}${more}.`, el.id));
+        }
+      } else if (a.defs.length > 0 && b.defs.length > 0) {
         const shared = a.defs.some((x) => b.defs.some((y) => y.id === x.id));
         if (!shared) {
           const nameOf = (defs: ElementRecord[]) => defs.map((d) => d.declaredName ?? `«${d.eClass}»`).join('/');
@@ -137,6 +164,167 @@ export const connectionCompatibility: ValidationRule = {
           );
         }
       }
+    }
+    return out;
+  },
+};
+
+/** ` : Def` for a feature with a declared definition, '' otherwise. */
+function typeSuffix(model: Model, id: ElementId): string {
+  const defs = declaredDefinitions(model, id);
+  return defs.length > 0 ? ` : ${defs.map((d) => d.declaredName ?? `«${d.eClass}»`).join(', ')}` : '';
+}
+
+function defNames(defs: ElementRecord[], conjugated = false): string {
+  return defs.map((d) => `${conjugated && d.eClass === 'PortDefinition' ? '~' : ''}${d.declaredName ?? `«${d.eClass}»`}`).join(', ');
+}
+
+/**
+ * `interface-end-conformance` — does each related feature of a connection typed
+ * by a connection or interface definition conform to the end it redefines?
+ *
+ * KerML §7.4.6.1: a connector end redefines the end of the association typing
+ * the connector, and its links relate only things classified by that end's
+ * type. A related port of another definition, or with the opposite
+ * conjugation, does not conform. It is a warning, not an error: classifiers are
+ * not disjoint, so the model is not contradictory, but the interface no longer
+ * says what is exchanged across it. Ends pair by the end name written in the
+ * connection (`connect sender ::> a.p to …`), else by position.
+ */
+export const interfaceEndConformance: ValidationRule = {
+  id: 'interface-end-conformance',
+  description: 'A connection end does not conform to the end of the connection or interface definition that types it.',
+  severity: 'warning',
+  run(model) {
+    let n = 0;
+    const out: Diagnostic[] = [];
+    for (const el of model.all()) {
+      if (el.attrs.isLibrary === true || !CONNECTOR_KINDS.has(el.eClass)) continue;
+      for (const m of endMismatches(model, el.id)) {
+        const rel = model.get(m.related);
+        if (!rel) continue;
+        const endText = `\`${m.end.declaredName ?? '«end»'} : ${defNames(m.required, portConjugated(model, m.end.id))}\``;
+        const relText = `${qualifiedLabel(model, rel)} : ${defNames(m.actual, rel.eClass === 'PortUsage' && portConjugated(model, rel.id))}`;
+        const why =
+          m.reason === 'conjugation'
+            ? `the end and the port it relates are conjugated differently, so the directions of the port's features are reversed with respect to the end (§7.12.3)`
+            : `which ${defNames(m.actual)} does not specialise, so the connection can only link something that is both (KerML §7.4.6)`;
+        out.push({
+          id: `interface-end-conformance#${n++}`,
+          ruleId: 'interface-end-conformance',
+          severity: 'warning',
+          message: `Connection "${qualifiedLabel(model, el)}" relates ${relText} through its end ${endText}${m.reason === 'conjugation' ? ': ' : ', '}${why}.`,
+          elementId: el.id,
+        });
+      }
+    }
+    return out;
+  },
+};
+
+/**
+ * `flow-end-compatibility` — does a flow's payload conform to the features it
+ * flows between, and does it flow from an output to an input?
+ *
+ * §7.16: a streaming flow takes its payload from an output feature of its
+ * source and delivers it to an input feature of its target; §7.12.1: a
+ * transfer between ports goes from `out` features to matching `in` features.
+ * Directions are read through the conjugation of the ports the end is reached
+ * through ({@link effectiveDirection}). A payload that does not resolve, or an
+ * untyped end, gives no finding.
+ */
+export const flowEndCompatibility: ValidationRule = {
+  id: 'flow-end-compatibility',
+  description: 'A flow payload does not conform to its end features, or a flow runs from an input or into an output.',
+  severity: 'warning',
+  run(model) {
+    let n = 0;
+    const out: Diagnostic[] = [];
+    const mk = (message: string, elementId: ElementId): Diagnostic => ({
+      id: `flow-end-compatibility#${n++}`,
+      ruleId: 'flow-end-compatibility',
+      severity: 'warning',
+      message,
+      elementId,
+    });
+    for (const el of model.all()) {
+      if (el.attrs.isLibrary === true) continue;
+      if (el.eClass !== 'Flow' && el.eClass !== 'FlowUsage' && el.eClass !== 'SuccessionFlowUsage') continue;
+      const src = el.source?.[0];
+      const tgt = el.target?.[0];
+      const name = qualifiedLabel(model, el);
+      const payload = payloadOf(el);
+      const pdef = payload ? payloadDefinition(model, el.id, payload) : undefined;
+      if (pdef) {
+        for (const [end, role] of [
+          [src, 'source'],
+          [tgt, 'target'],
+        ] as const) {
+          if (end === undefined) continue;
+          const defs = declaredDefinitions(model, end);
+          if (defs.length === 0) continue;
+          const conforms = defs.some(
+            (d) =>
+              d.id === pdef.id ||
+              generalizationsOf(model, d.id).some((g) => g.id === pdef.id) ||
+              generalizationsOf(model, pdef.id).some((g) => g.id === d.id),
+          );
+          if (!conforms) {
+            const endEl = model.get(end);
+            out.push(
+              mk(
+                `Flow "${name}" carries ${pdef.declaredName ?? payload} but its ${role} ${endEl ? qualifiedLabel(model, endEl) : end} is ${defNames(defs)}, and neither specialises the other (SysML v2 §7.16).`,
+                el.id,
+              ),
+            );
+          }
+        }
+      }
+      const owned = (id: ElementId | undefined) => {
+        const e = id ? model.get(id) : undefined;
+        return e !== undefined && e.ownerId !== null && model.get(e.ownerId)?.eClass === 'PortUsage';
+      };
+      // Only an end reached through a port is judged: an action parameter's
+      // direction is relative to the action, and a flow between actions at the
+      // same level is out-to-in by the same reading, but a flow into a nested
+      // action's parameter from its owner's parameter runs in-to-in legally.
+      if (src !== undefined && owned(src) && effectiveDirection(model, src) === 'in') {
+        out.push(mk(`Flow "${name}" takes its payload from ${qualifiedLabel(model, model.get(src)!)}, an \`in\` feature of its port; a flow's source is an output (§7.12.1, §7.16).`, el.id));
+      }
+      if (tgt !== undefined && owned(tgt) && effectiveDirection(model, tgt) === 'out') {
+        out.push(mk(`Flow "${name}" delivers its payload to ${qualifiedLabel(model, model.get(tgt)!)}, an \`out\` feature of its port; a flow's target is an input (§7.12.1, §7.16).`, el.id));
+      }
+    }
+    return out;
+  },
+};
+
+/**
+ * `port-typing` — §7.12.2: "A port usage must only be defined by port
+ * definitions." A port typed by an item, part or attribute definition says what
+ * passes but not as a port: it has no conjugate, and its features are the
+ * item's, not directed features of a port. A warning while models that write
+ * this form are brought to the spec's.
+ */
+export const portTyping: ValidationRule = {
+  id: 'port-typing',
+  description: 'A port usage is typed by a definition that is not a port definition.',
+  severity: 'warning',
+  run(model) {
+    let n = 0;
+    const out: Diagnostic[] = [];
+    for (const el of model.all()) {
+      if (el.attrs.isLibrary === true || el.attrs.implicit === true || el.eClass !== 'PortUsage') continue;
+      const defs = declaredDefinitions(model, el.id).filter((d) => d.attrs.isLibrary !== true);
+      const wrong = defs.filter((d) => d.eClass !== 'PortDefinition');
+      if (wrong.length === 0) continue;
+      out.push({
+        id: `port-typing#${n++}`,
+        ruleId: 'port-typing',
+        severity: 'warning',
+        message: `Port "${qualifiedLabel(model, el)}" is typed by ${wrong.map((d) => `${d.declaredName ?? '«def»'} (${d.eClass})`).join(', ')}; a port usage is defined only by port definitions (SysML v2 §7.12.2).`,
+        elementId: el.id,
+      });
     }
     return out;
   },

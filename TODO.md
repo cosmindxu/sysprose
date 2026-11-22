@@ -1837,8 +1837,45 @@ tagged `[O1 …]` are what its steps and reviews left open.
       CLOSED 2026-11-20 (sm-play): the Simulation panel shows a "Not started" line with the interpreter's sentence for an unread start and for a composite whose entry start is unread; runStateMachine refuses such a machine up front (pinned in semantics.play-start.test.ts).
 
 
-## Variability — follow-ups of `sysprose variability` (var-config)
+## Interfaces — functional, logical and physical exchanges (if-compat follow-ups)
 
-- [ ] **Wire `sysprose variability` into the mbse-workflow checks** (its exit contract: 0 holds;
-      1 invalid, violated or void; 2 undecided or usage error), with a product-family fixture of
-      the workflow's own. [var-config]
+The order of work: logical compatibility (if-compat: port conformance §7.12.1, end conformance
+KerML §7.4.6, flow ends §7.16, port typing §7.12.2, named connector ends §8.2.2.13), then the
+allocation of exchanges across layers, then the views, then the formal methods. Arcadia's rules are
+read from Voirin, *Conception architecturale des systèmes … Arcadia* (2018), §19.6–19.12, §20.2–20.5
+and §21.4–21.11.
+
+- [ ] **Read the cross multiplicity on a connector end.** `connect [2] a.p to [1] b.q` parses
+      (`connSrcMult`/`connTgtMult`) and the multiplicity is dropped without a note (SysML v2
+      §8.2.2.13 `OwnedCrossMultiplicityMember`). Store it, write it back on Save, and read it where
+      a connection's end multiplicity matters. [if-compat]
+- [ ] **Compare the undirected features and the nested ports of two connected ports.** §7.12.1's
+      conformance is over every feature; `connection-compatibility` compares the directed ones and
+      does not descend into nested ports (sound: it only reports fewer mismatches). [if-compat]
+- [ ] **Store the direction of an implicit feature copy under a conjugated port as seen through
+      it.** The copy of `update` under `b.meshIn : ~MeshPort` keeps `out` as written on `MeshPort`
+      (§7.12.3 makes it `in`). No current reader reaches it through a conjugated port (the
+      interface rules read `effectiveDirection`); a reader that does would read it reversed.
+      [if-compat]
+- [ ] **Bring `port-typing` models to the spec, then decide its severity.** v9 types 80 declared
+      ports by item definitions (`in port taskingIn : TaskingOrder;`); the mbse-workflow authoring
+      steps should write a port definition with directed items and type ports by it (and `~` on
+      the other side). Kept a warning until then. [if-compat]
+- [ ] **Allocate exchanges across layers, and check the allocations.** `allocate <flow> to
+      <interface or connection>` and `allocate <interface> to <connection>`, with Arcadia's
+      consistency rules: a flow between functions allocated to two different parts is carried by
+      exactly one exchange between those parts (Voirin §20.4) or a path of them (§20.5) with
+      conforming items (§21.9); each logical exchange is carried by a physical link or path
+      between the nodes hosting its ends (§19.11–19.12); nothing carried twice or by nothing. v9
+      writes the carrying only in doc comments ("the radio path that carries the peer link").
+- [ ] **An interface table (ICD) and the Interconnection view.** Per pair of parts: the
+      interface, its ends, the items each way, and the functional, logical and physical exchange
+      it belongs to; a `sysprose interfaces` command; interface type, end names and `~` on the
+      Interconnection view's edges, with mismatched edges marked by the rules above.
+- [ ] **Formal methods per kind of exchange.** Logical: interface protocol compatibility as
+      interface automata (de Alfaro & Henzinger 2001) over the two parts' state machines and the
+      items their shared port carries (no unspecified reception, no deadlock), and assume–guarantee
+      contracts on interface definitions (Benveniste et al. 2015); physical: capacity budgets per
+      link through the SMT engine and link degradation fed to the fault tree; across: units and
+      quantity kinds along flows and bindings.
+
