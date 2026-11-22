@@ -73,6 +73,7 @@ import {
   type ScopedStaleness,
 } from '../api/evidence';
 import { obligationsOf, type Obligation } from '../semantics/obligations';
+import { decidedSelectionConstraints } from '../semantics/variability';
 import { impactClosure } from '../api/analytics';
 
 /* ───────────────────────────── small helpers ───────────────────────────── */
@@ -1134,6 +1135,7 @@ const constraintViolation: ValidationRule = {
   run(model) {
     const mk = diagBuilder(this.id, this.severity);
     const out: Diagnostic[] = [];
+    const decided = decidedSelectionConstraints(model);
     for (const check of sweepConstraints(model)) {
       // A clash, a binding's conflict read in a context, or asserted equations that give one feature two values:
       // anchored at that context (for the equations, the element they meet in).
@@ -1144,6 +1146,10 @@ const constraintViolation: ValidationRule = {
       if (isNonNormativeStatement(model, el.id)) continue;
       if (check.result === 'violated') {
         out.push(mk(check.message, el.id, 'warning'));
+      } else if (check.result === 'unknown' && decided.has(check.id)) {
+        // A configuration the analysis finds VIOLATED is a violated constraint, decided exactly: a warning, as below.
+        const verdict = decided.get(check.id)!;
+        out.push(mk(`Constraint${check.expression ? ` ("${check.expression}")` : ''} is ${verdict}.`, el.id, / VIOLATED\b/.test(verdict) ? 'warning' : 'info'));
       } else if (check.result === 'unknown') {
         out.push(
           mk(`Constraint could not be evaluated${check.expression ? ` ("${check.expression}")` : ''}: ${check.message}.`, el.id, 'info'),
@@ -1181,8 +1187,11 @@ const targetBySpecialisation: ValidationRule = {
   run(model) {
     const mk = diagBuilder(this.id, this.severity);
     const out: Diagnostic[] = [];
+    const decided = decidedSelectionConstraints(model);
     for (const check of takeSweep(model)) {
       if (!check.instances) continue;
+      // A selection constraint `sysprose variability` decides: constraint-violation names its verdict per configuration.
+      if (decided.has(check.id)) continue;
       const el = model.get(check.id);
       if (!el || isLibraryElement(el)) continue;
       if (isNonNormativeStatement(model, el.id)) continue;

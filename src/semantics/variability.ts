@@ -10,8 +10,9 @@
  * `variation` (SysML v2 §7.6.7), or a usage TYPED by a variation definition
  * (Annex A.12: `variation part transmission : TransmissionChoices;` takes its
  * variants from the definition). Its VARIANTS are its owned `variant` usages
- * (or the definition's); a `variant X;` reference form is read by the
- * referenced usage's name. A point with both own variants and a variation
+ * (or the definition's); a `variant X;` reference form is named by the
+ * usage it references (SysML v2 `Usage::namingFeature()`), and name resolution
+ * reads `p::X` as that variant (`resolve-names.ts`). A point with both own variants and a variation
  * definition, a variant with no name, or two variants of one name make the
  * owner NOT READ.
  *
@@ -46,7 +47,10 @@
  * owner and redefines points in its body):
  *   - `part :>> p = X::v;`  (bound with `=`; X is the point's name or its
  *     variation definition's name) — a selection;
- *   - `part :>> p :> X::v;` (the redefinition subsets the variant) — a selection;
+ *   - `part :>> p :> X::v;` (the redefinition subsets the variant) — a selection,
+ *     for a reference-form variant too (`:> p::smallEngine`); subsetting the
+ *     usage such a variant references (`:> smallEngine`) is not one, and its
+ *     reason names the spelling that is;
  *   - everything else is NOT a selection and is refused with its reason:
  *     `default`/`:=` values (overridable), an unqualified `= v`, typing only
  *     (`: Engine4Cyl` names a type, not a variant), a subsetting of a
@@ -107,6 +111,8 @@ export interface VariabilityDiagnostic {
 export interface VariabilityVariant {
   key: string;
   name: string;
+  /** The feature a reference-form variant (`variant X;`) references, by id. */
+  referenced?: string;
 }
 
 export interface VariabilityPoint {
@@ -178,6 +184,8 @@ export interface ConfigurationReport {
   completion?: string[];
   forced?: string[];
   violated?: string[];
+  /** The ids of the violated constraints (names may repeat: `<anonymous>`). */
+  violatedIds?: string[];
   blockedBy?: string[];
   note?: string;
 }
@@ -255,14 +263,14 @@ function insideVariant(model: Model, e: ElementRecord): boolean {
   }
   return false;
 }
+// SysML v2 `Usage::namingFeature()`: a variant is named by the feature its
+// ownedReferenceSubsetting references (`variant X;`), any other usage by its
+// first redefinition (KerML `Feature::namingFeature()`). A plain subsetting
+// names nothing: an unnamed `variant part :> X;` has no name.
 function nameOf(model: Model, e: ElementRecord): string | null {
   if (e.declaredName) return e.declaredName;
-  // `variant X;` and friends: the effective name is the referenced usage's.
-  for (const cls of ['ReferenceSubsetting', 'Subsetting', 'Redefinition']) {
-    const t = targets(model, e.id, cls)[0];
-    if (t?.declaredName) return t.declaredName;
-  }
-  return null;
+  const t = targets(model, e.id, isVariantUsage(e) ? 'ReferenceSubsetting' : 'Redefinition')[0];
+  return t?.declaredName ?? null;
 }
 function multiplicityOf(e: ElementRecord): string | null {
   const m = e.attrs.multiplicity;
@@ -316,7 +324,8 @@ function extractPoints(model: Model, owner: ElementRecord): Owned {
       }
       seen.add(vn);
       const key = `${e.id}/${v.id}`;
-      variants.push({ key, name: vn });
+      const ref = v.declaredName ? undefined : targets(model, v.id, 'ReferenceSubsetting')[0]?.id;
+      variants.push(ref === undefined ? { key, name: vn } : { key, name: vn, referenced: ref });
       nested.push({ el: v, key });
     }
     points.push({
@@ -655,13 +664,21 @@ function selectionsOf(model: Model, cfg: ElementRecord, points: VariabilityPoint
         }
       }
       for (const t of targets(model, m.id, 'Subsetting')) {
-        const text = `${label} :> ${model.qualifiedName(t.id) || t.declaredName || t.id}`;
         const hit = p.variants.find((x) => x.key === `${p.id}/${t.id}`);
+        const text = `${label} :> ${hit ? `${p.name}::${hit.name}` : model.qualifiedName(t.id) || t.declaredName || t.id}`;
         if (hit) addValid(p, hit.key, text, '`:>`');
         else if (points.some((q) => q !== p && q.variants.some((x) => x.key === `${q.id}/${t.id}`))) {
           rows.push({ point: p.name, text, status: 'invalid', reason: `${t.declaredName} is a variant of another point, not of ${p.name}` });
         } else {
-          rows.push({ point: p.name, text, status: 'not-read', reason: `${t.declaredName ?? 'the target'} is not a variant of ${p.name}; subsetting a non-variant is not a selection` });
+          const via = p.variants.find((x) => x.referenced === t.id);
+          rows.push({
+            point: p.name,
+            text,
+            status: 'not-read',
+            reason: via
+              ? `${t.declaredName} is what the variant ${p.name}::${via.name} references, not the variant; write \`:> ${p.name}::${via.name}\``
+              : `${t.declaredName ?? 'the target'} is not a variant of ${p.name}; subsetting a non-variant is not a selection`,
+          });
         }
       }
       const typed = targets(model, m.id, 'FeatureTyping');
@@ -752,6 +769,7 @@ function configurations(model: Model, owner: ElementRecord, f: Formula, diags: V
       if (bad.length > 0) {
         rep.status = 'violated';
         rep.violated = bad.map((c) => c.row.name);
+        rep.violatedIds = bad.map((c) => c.row.id);
         for (const c of bad) diags.push({ code: VARIABILITY_CODES.constraintViolated, severity: 'error', message: `${name}: the selection constraint ${c.row.name} is VIOLATED by ${selText(f.points, sel).join(', ')}`, elementId: cfg.id });
       } else rep.status = f.unread === 0 ? 'holds' : 'holds-over-read-constraints';
     }
@@ -784,6 +802,55 @@ function constraintsOf(model: Model, owner: ElementRecord, points: VariabilityPo
     }
   }
   return { rows, read };
+}
+
+/**
+ * The selection constraints this analysis decides, by constraint id, each with
+ * the sentence that states its verdict per configuration. The model checker
+ * (`constraint-violation`, `target-by-specialisation`) cannot evaluate a body
+ * over variant references (`engine == engine::e4`): it names the verdict this
+ * analysis gives instead of reporting the constraint as unevaluated beside a
+ * report that decides it. Only a constraint read here (all of its body
+ * understood) of an owner read here is listed; any other keeps the checker's
+ * own note. Memoised per model revision.
+ */
+const decidedCache = new WeakMap<Model, { rev: number; map: Map<string, string> }>();
+export function decidedSelectionConstraints(model: Model): Map<string, string> {
+  const hit = decidedCache.get(model);
+  if (hit !== undefined && hit.rev === model.rev) return hit.map;
+  const map = new Map<string, string>();
+  if (model.all().some((e) => e.attrs.isVariant === true && !isLibrary(e))) {
+    for (const o of variabilityReport(model).owners) {
+      if (o.status !== 'read') continue;
+      for (const c of o.constraints) {
+        if (!c.read) continue;
+        const per = o.configurations.map((cfg) => {
+          const short = cfg.name.split('::').pop() ?? cfg.name;
+          const word =
+            cfg.status === 'violated'
+              ? cfg.violatedIds?.includes(c.id)
+                ? 'VIOLATED'
+                : 'HOLDS'
+              : cfg.status === 'holds'
+                ? 'HOLDS'
+                : cfg.status === 'holds-over-read-constraints'
+                  ? 'HOLDS over the constraints read'
+                  : cfg.status === 'invalid'
+                    ? 'INVALID selection'
+                    : cfg.status === 'partial'
+                      ? 'PARTIAL'
+                      : 'NOT EVALUATED';
+          return `${short} ${word}`;
+        });
+        map.set(
+          c.id,
+          `a selection constraint over the variation points of ${o.name}, decided per configuration by \`sysprose variability\`: ${per.length > 0 ? per.join(', ') : 'no configuration is written'}`,
+        );
+      }
+    }
+  }
+  decidedCache.set(model, { rev: model.rev, map });
+  return map;
 }
 
 export function variabilityReport(model: Model): VariabilityReport {
