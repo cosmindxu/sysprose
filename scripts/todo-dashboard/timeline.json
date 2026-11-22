@@ -4104,9 +4104,9 @@
   "open_raw": 68,
   "open": 68,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 40,
-   "POLISH": 26,
+   "FALSE": 5,
+   "WEAKER": 38,
+   "POLISH": 23,
    "HELD": 2
   },
   "new": 0,
@@ -4125,6 +4125,38 @@
    "HELD": 0
   },
   "cum_new": 331,
+  "cum_closed": 261
+ },
+ {
+  "idx": 129,
+  "sha": "22a1540",
+  "when": "2026-11-22T09:52:28+01:00",
+  "day": "2026-11-22",
+  "subject": "Merge round var-config: TEST-SUMMARY, docs counts (L7 146 cases, 189 files), class facts; TODO: variability follow-ups",
+  "open_raw": 71,
+  "open": 71,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 40,
+   "POLISH": 29,
+   "HELD": 2
+  },
+  "new": 3,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 3,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 334,
   "cum_closed": 261
  }
 ]

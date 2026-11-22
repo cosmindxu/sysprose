@@ -1,6 +1,6 @@
 {
  "meta": {
-  "generated": "2026-11-21T17:49:41+01:00",
+  "generated": "2026-11-22T09:52:36+01:00",
   "sources": [
    "scripts/todo-dashboard/coverage-universe-source.json",
    "docs/CONFORMANCE.md",
@@ -2225,8 +2225,8 @@
    "source": "docs/CONSTRAINT-CLASSES.md (class register)",
    "note": "",
    "state": "decided",
-   "evidence": "class level `differential-tested`; counted facts: rows 16",
-   "weight": 16,
+   "evidence": "class level `differential-tested`; counted facts: rows 20",
+   "weight": 20,
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
@@ -2236,7 +2236,7 @@
      "href": "../../docs/CONSTRAINT-CLASSES.md"
     }
    ],
-   "weight_used": 16,
+   "weight_used": 20,
    "weight_source": "counted rows"
   },
   {
@@ -2269,8 +2269,8 @@
    "source": "docs/CONSTRAINT-CLASSES.md (class register)",
    "note": "",
    "state": "partial",
-   "evidence": "class level `experimental`; counted facts: rows 28",
-   "weight": 28,
+   "evidence": "class level `experimental`; counted facts: rows 29",
+   "weight": 29,
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
@@ -2280,7 +2280,7 @@
      "href": "../../docs/CONSTRAINT-CLASSES.md"
     }
    ],
-   "weight_used": 28,
+   "weight_used": 29,
    "weight_source": "counted rows"
   },
   {
@@ -2303,6 +2303,28 @@
     }
    ],
    "weight_used": 236,
+   "weight_source": "counted rows"
+  },
+  {
+   "id": "CON:inherited-context",
+   "area": "Constraints & parametrics",
+   "kind": "CON",
+   "name": "inherited-context",
+   "source": "docs/CONSTRAINT-CLASSES.md (class register)",
+   "note": "",
+   "state": "partial",
+   "evidence": "class level `experimental`; counted facts: rows 2",
+   "weight": 2,
+   "clause_ids": [],
+   "clauses": [],
+   "rows_against": 0,
+   "evidence_links": [
+    {
+     "path": "docs/CONSTRAINT-CLASSES.md",
+     "href": "../../docs/CONSTRAINT-CLASSES.md"
+    }
+   ],
+   "weight_used": 2,
    "weight_source": "counted rows"
   },
   {
@@ -2379,8 +2401,8 @@
    "source": "docs/CONSTRAINT-CLASSES.md (class register)",
    "note": "",
    "state": "refused",
-   "evidence": "class level `fenced`; counted facts: rows 3",
-   "weight": 3,
+   "evidence": "class level `fenced`; counted facts: rows 10",
+   "weight": 10,
    "clause_ids": [],
    "clauses": [],
    "rows_against": 0,
@@ -2390,7 +2412,7 @@
      "href": "../../docs/CONSTRAINT-CLASSES.md"
     }
    ],
-   "weight_used": 3,
+   "weight_used": 10,
    "weight_source": "counted rows"
   },
   {
@@ -2527,23 +2549,23 @@
   }
  ],
  "metrics": {
-  "rows": 86,
-  "measured": 56,
+  "rows": 87,
+  "measured": 57,
   "unmeasured": 30,
-  "construct_weighted": 73.5,
-  "construct_equal": 50.0,
+  "construct_weighted": 73.4,
+  "construct_equal": 49.1,
   "construct_covered_rows": 28,
-  "construct_measured_rows": 56,
-  "construct_weighted_num": 2861,
-  "construct_weighted_den": 3891,
-  "decision_weighted": 87.7,
-  "decision_equal": 28.0,
-  "decision_weighted_num": 1181,
-  "decision_weighted_den": 1346,
-  "construct_coverage": 73.5,
-  "decision_rows": 25,
+  "construct_measured_rows": 57,
+  "construct_weighted_num": 2865,
+  "construct_weighted_den": 3905,
+  "decision_weighted": 87.1,
+  "decision_equal": 26.9,
+  "decision_weighted_num": 1185,
+  "decision_weighted_den": 1360,
+  "construct_coverage": 73.4,
+  "decision_rows": 26,
   "decision_decided": 7,
-  "decision_coverage": 28.0,
+  "decision_coverage": 26.9,
   "false": 7,
   "false_defects": 1,
   "false_defect_ids": [
