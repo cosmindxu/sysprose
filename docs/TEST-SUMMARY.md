@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 190
-- **Tests:** 6100 total — 6100 passed, 0 failed, 0 skipped
+- **Tests:** 6103 total — 6103 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -196,6 +196,6 @@
 | test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
-| test/unit/validation.interfaces.test.ts | 13 | 0 | 0 |
+| test/unit/validation.interfaces.test.ts | 16 | 0 | 0 |
 | test/unit/validation.rules.test.ts | 90 | 0 | 0 |
 | test/unit/validation.variability.test.ts | 10 | 0 | 0 |
