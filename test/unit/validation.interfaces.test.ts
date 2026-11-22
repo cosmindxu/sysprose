@@ -146,6 +146,36 @@ describe('interface conformance', () => {
     expect(f[0]).toMatch(/"P::S::taskingIn" is typed by TaskingOrder \(ItemDefinition\)/);
   });
 
+  it('port-typing leaves keyword-less directed features alone: action parameters are not ports', async () => {
+    const m = await bound(`package P {
+    item def Order;
+    action def Decide; action decide : Decide { in risk : Order; out order : Order; }
+}`);
+    expect(portTyping.run(m)).toEqual([]);
+  });
+
+  it('a keyword-less `out x : T;` in a port definition is one of its directed features (§7.12.1)', async () => {
+    const m = await bound(`package P {
+    item def Msg;
+    port def TxPort { out m : Msg; }
+    part def A { port tx : TxPort; port tx2 : TxPort; }
+    part sys { part a : A; part b : A; connection c connect a.tx to b.tx2; }
+}`);
+    expect(on(m, connectionCompatibility, 'P::sys::c')[0]).toMatch(/do not conform \(SysML v2 §7\.12\.1\)/);
+  });
+
+  it('a conjugation mismatch on a port definition with no directed feature is worded as classification', async () => {
+    const m = await bound(`package P {
+    port def DataPort { attribute rate : ScalarValues::Real; }
+    interface def Svc { end provider : DataPort; end consumer : ~DataPort; }
+    part def A { out port o : DataPort; } part def B { in port i : DataPort; }
+    part sys { part a : A; part b : B; interface s : Svc connect a.o to b.i; }
+}`);
+    const f = on(m, interfaceEndConformance, 'P::sys::s');
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatch(/not classified by its conjugate/);
+  });
+
   it('port-direction no longer asks for a direction on a port whose features are directed', async () => {
     const m = await bound(`package P {${DEFS}
     port def Bare;

@@ -155,7 +155,9 @@ export function directedFeaturesOf(model: Model, portId: ElementId): DirectedFea
   const conj = portConjugated(model, portId);
   const out: DirectedFeature[] = [];
   for (const f of effectiveFeatures(model, portId)) {
-    if (f.attrs.isLibrary === true || f.attrs.isEnd === true || f.eClass === 'PortUsage') continue;
+    if (f.attrs.isLibrary === true || f.attrs.isEnd === true) continue;
+    // A nested port is its own pair; a keyword-less `out x : T;` is a directed feature of this port, not a port.
+    if (f.eClass === 'PortUsage' && f.attrs.keywordless !== true) continue;
     const d = declaredDirection(model, f.id);
     if (d === undefined) continue;
     out.push({ el: f, name: f.declaredName ?? `«${f.eClass}»`, direction: conj ? conjugateDirection(d) : d });

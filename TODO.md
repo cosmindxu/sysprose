@@ -1845,6 +1845,13 @@ allocation of exchanges across layers, then the views, then the formal methods. 
 read from Voirin, *Conception architecturale des systèmes … Arcadia* (2018), §19.6–19.12, §20.2–20.5
 and §21.4–21.11.
 
+- [ ] **Map a keyword-less directed feature to a ReferenceUsage.** `in x : T;` with no keyword is a
+      directed reference feature in SysML v2 (BNF `DefaultReferenceUsage`, §8.2.2.6): an action's
+      parameter, an item of a port definition. The mapper makes it a `PortUsage` (map-to-model.ts,
+      "Keyword-less feature"), so every rule and view reads an action's parameters as ports. if-param
+      marks it `keywordless` so that port-typing skips it and a port definition's `out x : T;` counts as
+      a directed feature; the metaclass itself is still the departure. Changing it reaches the flow
+      ends, connectivity, the diagrams and the FMI import, which all read `PortUsage`. [if-param]
 - [ ] **Read the cross multiplicity on a connector end.** `connect [2] a.p to [1] b.q` parses
       (`connSrcMult`/`connTgtMult`) and the multiplicity is dropped without a note (SysML v2
       §8.2.2.13 `OwnedCrossMultiplicityMember`). Store it, write it back on Save, and read it where
