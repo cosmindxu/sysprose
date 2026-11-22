@@ -3097,6 +3097,11 @@ class Mapper {
     if (!node.keyword && prefixes.length === 0 && eClass === 'ReferenceUsage') {
       attrs.keywordless = true;
     }
+    // `out fuelOut : Fuel;` with no keyword: SysML v2 reads a directed reference
+    // feature (BNF DefaultReferenceUsage); this tool maps it to PortUsage, and
+    // marks it, so the rules about ports the author declared (port-typing) and
+    // the directed features of a port definition can tell it apart.
+    if (!node.keyword && eClass === 'PortUsage') attrs.keywordless = true;
 
     // Additive descriptors preserved on attrs (do not affect existing shapes:
     // each key is set only when the corresponding syntax is present).

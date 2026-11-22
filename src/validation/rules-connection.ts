@@ -31,6 +31,7 @@ import type { ElementId, ElementRecord, Model } from '@core/index';
 import { connectorEndsOf, payloadOf } from '../semantics/connectors';
 import { generalizationsOf } from '../semantics/inheritance';
 import {
+  directedFeaturesOf,
   declaredDefinitions,
   effectiveDirection,
   endMismatches,
@@ -207,7 +208,9 @@ export const interfaceEndConformance: ValidationRule = {
         const relText = `${qualifiedLabel(model, rel)} : ${defNames(m.actual, rel.eClass === 'PortUsage' && portConjugated(model, rel.id))}`;
         const why =
           m.reason === 'conjugation'
-            ? `the end and the port it relates are conjugated differently, so the directions of the port's features are reversed with respect to the end (§7.12.3)`
+            ? directedFeaturesOf(model, m.related).length > 0
+              ? `the end and the port it relates are conjugated differently, so the directions of the port's features are reversed with respect to the end (§7.12.3)`
+              : `the end and the port it relates are conjugated differently: a port typed by a port definition is not classified by its conjugate, and the other way round (§7.12.3, KerML §7.4.6)`
             : `which ${defNames(m.actual)} does not specialise, so the connection can only link something that is both (KerML §7.4.6)`;
         out.push({
           id: `interface-end-conformance#${n++}`,
@@ -315,6 +318,10 @@ export const portTyping: ValidationRule = {
     const out: Diagnostic[] = [];
     for (const el of model.all()) {
       if (el.attrs.isLibrary === true || el.attrs.implicit === true || el.eClass !== 'PortUsage') continue;
+      // `in x : T;` with no keyword is a directed reference feature (an action's
+      // parameter, a port definition's item), mapped to PortUsage for now: it is
+      // not a port the author wrote, and nothing requires a port definition of it.
+      if (el.attrs.keywordless === true) continue;
       const defs = declaredDefinitions(model, el.id).filter((d) => d.attrs.isLibrary !== true);
       const wrong = defs.filter((d) => d.eClass !== 'PortDefinition');
       if (wrong.length === 0) continue;
