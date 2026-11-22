@@ -4168,9 +4168,9 @@
   "open_raw": 69,
   "open": 69,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 40,
-   "POLISH": 27,
+   "FALSE": 5,
+   "WEAKER": 38,
+   "POLISH": 24,
    "HELD": 2
   },
   "new": 0,
@@ -4190,5 +4190,37 @@
   },
   "cum_new": 334,
   "cum_closed": 263
+ },
+ {
+  "idx": 131,
+  "sha": "a302b04",
+  "when": "2026-11-22T19:31:24+01:00",
+  "day": "2026-11-22",
+  "subject": "Merge if-compat: interfaces read the SysML v2 way (port conformance \u00a77.12.1, end conformance KerML \u00a77.4.6, flow ends \u00a77.16, port typing \u00a77.1",
+  "open_raw": 75,
+  "open": 75,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 40,
+   "POLISH": 33,
+   "HELD": 2
+  },
+  "new": 7,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 7,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 341,
+  "cum_closed": 264
  }
 ]
