@@ -1839,17 +1839,6 @@ tagged `[O1 …]` are what its steps and reviews left open.
 
 ## Variability — follow-ups of `sysprose variability` (var-config)
 
-- [ ] **Stop the general checker contradicting `variability` on constraints over variant
-      references.** A `selectionConstraint` (or any assert) that reads a variation's variants is
-      decided by `sysprose variability` (HOLDS/VIOLATED per configuration), but `sysprose check`
-      still emits its info notes on the same constraint ("could not be evaluated", a target read by
-      specialisation). Read side by side, the two reports seem to disagree. The checker should defer to the
-      variability verdict for these constraints, or name it, rather than report them as unevaluated.
-      [var-config]
-- [ ] **Read a variant selected by subsetting (`:>`).** A configuration that selects a
-      reference-form variant with `:>` instead of `:` or `:>>` is not read as a selection today; the
-      configuration then reads as selecting nothing for that variation. Read it per SysML v2 §7.6.7, with a
-      fixture, and pin the exit code. [var-config]
 - [ ] **Wire `sysprose variability` into the mbse-workflow checks** (its exit contract: 0 holds;
       1 invalid, violated or void; 2 undecided or usage error), with a product-family fixture of
       the workflow's own. [var-config]
