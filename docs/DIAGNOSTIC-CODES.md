@@ -334,8 +334,29 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A connection joins two `out` (or two `in`) ports, or two ports whose port definitions share no ancestor.
+- **Fires when:** A connection joins two `out` (or two `in`) ports; or ports with directed features that do not conform (SysML v2 §7.12.1: each directed feature needs a feature of a conforming definition with the conjugate direction on the other port); or, where neither port has a directed feature, two ports whose port definitions share no ancestor.
 - **Hint given:** Wire an `out` port to an `in` port (or use `inout`), and give both ends the same port definition — or a conjugated one (`~PortDef`) on the receiving side.
+
+### `validation/interface-end-conformance`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A connection or interface typed by a definition relates a feature that does not conform to the end it redefines: another definition, or a port conjugated differently from the end (KerML §7.4.6, SysML v2 §7.12.3). Ends pair by the end name written in the connection, else by position.
+- **Hint given:** Connect the ports the interface definition names, the right way round: `interface i : I connect a.p to b.q;` with `a.p : P` for `end x : P` and `b.q : ~P` for `end y : ~P` — or name the ends, `connect x ::> a.p to y ::> b.q`.
+
+### `validation/flow-end-compatibility`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A flow carries a payload that does not conform to the feature it flows from or to, or takes its payload from an `in` feature of a port or delivers it to an `out` one (directions read through conjugation; SysML v2 §7.12.1, §7.16).
+- **Hint given:** Flow between features of the payload's definition, from an `out` feature to an `in` feature: `flow of Msg from a.p.msg to b.q.msg;` with `out item msg : Msg` in `P` and `b.q : ~P`.
+
+### `validation/port-typing`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A port usage is typed by a definition that is not a port definition (SysML v2 §7.12.2: a port usage is defined only by port definitions).
+- **Hint given:** Declare a port definition whose directed features carry the item, and type the port by it: `port def TaskingPort { in item tasking : TaskingOrder; }` then `port taskingIn : TaskingPort;` (and `~TaskingPort` on the sending side).
 
 ### `validation/duplicate-name`
 
@@ -1104,4 +1125,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*144 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*147 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

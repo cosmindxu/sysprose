@@ -1251,7 +1251,11 @@ function hasEndpoints(el: ElementRecord): boolean {
  * MeshInterface;`. A bare anonymous connection keeps the short `connect a to b`.
  */
 function connectionLine(model: Model, el: ElementRecord, indent: number): string {
-  const connect = `connect ${endpoint(model, el, 'source')} to ${endpoint(model, el, 'target')}`;
+  const named = (which: 'source' | 'target'): string => {
+    const end = which === 'source' ? el.attrs.sourceEndName : el.attrs.targetEndName;
+    return `${typeof end === 'string' && end !== '' ? `${quoteName(end)} ::> ` : ''}${endpoint(model, el, which)}`;
+  };
+  const connect = `connect ${named('source')} to ${named('target')}`;
   const bare =
     el.declaredName === undefined && el.eClass !== 'InterfaceUsage' && specializationFragments(model, el).length === 0;
   return renderWithBody(model, el, indent, bare ? connect : `${header(model, el)} ${connect}`);

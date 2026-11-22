@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (33 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (36 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -4967,6 +4967,47 @@ VIOLATED`) instead of "could not be evaluated", with no per-configuration
 VIOLATED and info otherwise. A constraint this analysis does not read keeps the
 checker's own note.
 
+### Interfaces: whether the two ends of a connection agree
+
+`Check` reads every connection, interface and flow between ports the way SysML v2
+does: direction belongs to the **features of a port definition**
+(`port def MeshPort { out item update : Msg; }`), a conjugated port (`~MeshPort`)
+reverses every directed feature, and a connection typed by an interface
+definition relates ports that conform to that definition's ends. Four warnings
+come out of that reading; none fails the file, because SysML v2 does not forbid
+any of these at the language level:
+
+- **`connection-compatibility`.** Where either port has directed features, the
+  two ports must *conform* (SysML v2 §7.12.1): every directed feature of each
+  needs a feature of a conforming definition with the conjugate direction on the
+  other. `MeshPort` to `MeshPort` (`out update` meets `out update`) does not;
+  `MeshPort` to `~MeshPort` does, and so do two different port definitions whose
+  features match (`out item m : Msg` against `in item m : Msg`). Where neither
+  port has a directed feature, the old question stays: a port definition in
+  common, and not `out` to `out` on the usages.
+- **`interface-end-conformance`.** `interface i : MeshInterface connect a.x to
+  b.y` relates `a.x` through the definition's first end and `b.y` through its
+  second (KerML §7.4.6). A port of another definition there, or one conjugated
+  differently from its end (the interface connected the wrong way round), is
+  reported. Ends can be named in the connection, in either order:
+  `connect receiver ::> b.meshIn to sender ::> a.meshOut` (or `references`);
+  Save writes the names back.
+- **`flow-end-compatibility`.** `flow of Report from a.p.update to b.q.update`
+  carries a `Report` from and to features typed `Msg`: reported when neither
+  definition specialises the other. A flow that takes its payload from an `in`
+  feature of a port, or delivers it to an `out` one, is reported too, with the
+  directions read through the conjugation of the ports on the way (`b.q :
+  ~MeshPort` makes `b.q.update` an `in`).
+- **`port-typing`.** A port typed by an item, part or attribute definition
+  (`in port taskingIn : TaskingOrder;`) is not a port in SysML v2 terms
+  (§7.12.2: a port usage is defined only by port definitions). Declare a port
+  definition whose directed features carry the item, and type the port by it.
+
+`port-direction` no longer asks for `in`/`out` on a port whose features are
+directed: it reports only a port that says nothing about direction anywhere. A
+definition that is not given (an untyped feature, a payload name that does not
+resolve) gives no finding: the rules only report what the model states.
+
 ### The keywords a file carries, including somebody else's
 
 A `#keyword` in front of a declaration is the notation's own extension point:
@@ -5377,7 +5418,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:567-584`, `1131-1161` (the two rules that ask),
+`src/validation/rules.ts:573-590`, `1137-1167` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

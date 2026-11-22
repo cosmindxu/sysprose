@@ -3178,6 +3178,10 @@ class Mapper {
       const patch: Record<string, AttrValue> = {};
       if (srcRef) patch.sourceRef = srcRef;
       if (tgtRef) patch.targetRef = tgtRef;
+      // `connect sender ::> a.p to receiver ::> b.q` (§8.2.2.13 ConnectorEnd):
+      // the definition end each related feature redefines, by name.
+      if (node.connSrcEnd) patch.sourceEndName = node.connSrcEnd;
+      if (node.connTgtEnd) patch.targetEndName = node.connTgtEnd;
       this.model.update(el.id, { source: [], target: [], attrs: patch });
       this.deferEnds(el.id, srcRef, tgtRef, node, 'ref/unresolved-connection-end', (r) => `Unresolved connection end '${r}'`);
     }

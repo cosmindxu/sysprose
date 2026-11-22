@@ -659,7 +659,9 @@ export interface Definition extends langium.AstNode {
     body?: Body;
     connectSource?: QualifiedName;
     connectTarget?: QualifiedName;
+    connSrcEnd?: Name;
     connSrcMult: Array<Multiplicity>;
+    connTgtEnd?: Name;
     connTgtMult: Array<Multiplicity>;
     ctrl?: 'for' | 'loop' | 'until' | 'while';
     ctrlColl?: Expression;
@@ -1590,7 +1592,9 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'body' },
                         { name: 'connectSource' },
                         { name: 'connectTarget' },
+                        { name: 'connSrcEnd' },
                         { name: 'connSrcMult', defaultValue: [] },
+                        { name: 'connTgtEnd' },
                         { name: 'connTgtMult', defaultValue: [] },
                         { name: 'ctrl' },
                         { name: 'ctrlColl' },
