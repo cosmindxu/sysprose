@@ -1,6 +1,6 @@
 /**
  * planning — build a migration/effort PLAN from a SysML v2 {@link Model}, in the
- * spirit of the DOORS→CodeBeamer wave slicing: ATOMIC elements (each carrying a
+ * spirit of requirements-tool-style wave slicing: ATOMIC elements (each carrying a
  * workload) roll up into GROUPS by a chosen association, the groups are ORDERED
  * by a chosen algorithm, then bin-packed into capacity-bounded time SLICES
  * (waves). Pure + deterministic (no React/DOM, reuses the graph-algorithms).
@@ -131,7 +131,7 @@ function couplingGraph(
 
 /* ────────────────── MinLA optimization (DOORS planner port) ──────────────── */
 /*
- * The DOORS→CodeBeamer planner's optimization layer minimizes the weighted
+ * A requirements-tool-style planner's optimization layer minimizes the weighted
  * Minimum Linear Arrangement (MinLA) objective over the groups ("systems"):
  *     C(order) = Σ_{unordered pairs {i,j}} w_ij · |pos_i − pos_j|
  * where w_ij is the symmetric coupling weight (# cross-group relationships,

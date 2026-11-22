@@ -1671,6 +1671,128 @@ const staleEvidence: ValidationRule = {
   },
 };
 
+/* ───────────────── variability (SysML v2 §7.6.7, §8.4.2.3) ───────────────── */
+
+/** True for a Definition or Usage metaclass (the only members §8.4.2.3 speaks of). */
+const isDefOrUsage = (eClass: string): boolean =>
+  eClass.endsWith('Definition') || eClass.endsWith('Usage');
+
+/** The variants a variation owns (usages) or the members it wrongly owns, by element. */
+function variationMembers(model: Model, v: ElementRecord): ElementRecord[] {
+  return model.children(v.id).filter((c) => !isLibraryElement(c) && isDefOrUsage(c.eClass));
+}
+
+function variationBuilder(
+  id: string,
+  description: string,
+  check: (
+    model: Model,
+    el: ElementRecord,
+    mk: ReturnType<typeof diagBuilder>,
+    out: Diagnostic[],
+  ) => void,
+): ValidationRule {
+  return {
+    id,
+    description,
+    severity: 'error',
+    run(model) {
+      const mk = diagBuilder(this.id, this.severity);
+      const out: Diagnostic[] = [];
+      for (const el of model.all()) {
+        if (isLibraryElement(el)) continue;
+        check(model, el, mk, out);
+      }
+      return out;
+    },
+  };
+}
+
+const variationVariantOutside = variationBuilder(
+  'variation-variant-outside',
+  'A variant usage is declared outside a variation.',
+  (model, el, mk, out) => {
+    if (el.attrs.isVariant !== true) return;
+    const owner = el.ownerId !== null ? model.get(el.ownerId) : undefined;
+    if (owner && owner.attrs.isVariation === true) return;
+    out.push(
+      mk(
+        `${label(model, el)} is declared \`variant\` but is not inside a variation — SysML v2 §7.6.7: ` +
+          '"Variant usages may only be declared within a variation."',
+        el.id,
+      ),
+    );
+  },
+);
+
+const variationMemberNotVariant = variationBuilder(
+  'variation-member-not-variant',
+  'A member of a variation is not a variant usage.',
+  (model, el, mk, out) => {
+    if (el.attrs.isVariation !== true || el.eClass.startsWith('Enumeration')) return;
+    for (const m of variationMembers(model, el)) {
+      if (m.attrs.isVariant === true) continue;
+      out.push(
+        mk(
+          `${label(model, m)} is a member of the variation ${label(model, el)} but is not a variant — ` +
+            'SysML v2 §8.4.2.3 (validateDefinitionVariationMembership / validateUsageVariationMembership): ' +
+            'all the ownedMembers of a variation must be variant usages.',
+          m.id,
+        ),
+      );
+    }
+  },
+);
+
+const variationSpecializesVariation = variationBuilder(
+  'variation-specializes-variation',
+  'A variation specializes another variation.',
+  (model, el, mk, out) => {
+    if (el.attrs.isVariation !== true) return;
+    for (const rel of model.children(el.id)) {
+      // A variation USAGE may be TYPED by a variation definition (Annex A.12:
+      // `variation part transmission : TransmissionChoices;`), so typing is not
+      // read as specialization here; subclassification and subsetting are.
+      if (rel.eClass !== 'Subclassification' && rel.eClass !== 'Subsetting') continue;
+      for (const t of rel.target ?? []) {
+        const target = model.get(t);
+        if (!target || target.attrs.isVariation !== true) continue;
+        out.push(
+          mk(
+            `${label(model, el)} is a variation that specializes the variation ${label(model, target)} — ` +
+              'SysML v2 §8.4.2.3: "it is not valid for a variation to specialize another variation".',
+            el.id,
+          ),
+        );
+      }
+    }
+  },
+);
+
+const variationVariantKind = variationBuilder(
+  'variation-variant-kind',
+  'A variant usage has a kind inconsistent with its owning variation.',
+  (model, el, mk, out) => {
+    if (el.attrs.isVariation !== true || el.eClass.startsWith('Enumeration')) return;
+    const expected = el.eClass.endsWith('Definition')
+      ? el.eClass.slice(0, -'Definition'.length) + 'Usage'
+      : el.eClass;
+    for (const m of variationMembers(model, el)) {
+      // A variant that names a separately declared usage carries no kind keyword
+      // (a ReferenceUsage): §7.6.7 leaves its kind to that usage.
+      if (m.attrs.isVariant !== true || m.eClass === 'ReferenceUsage' || !m.eClass.endsWith('Usage')) continue;
+      if (isKindOf(m.eClass, expected) || isKindOf(expected, m.eClass)) continue;
+      out.push(
+        mk(
+          `${label(model, m)} is a variant ${m.eClass} in the variation ${label(model, el)} (${el.eClass}) — ` +
+            'SysML v2 §7.6.7: "The kind of a variant usage must be consistent with the kind of its owning variation."',
+          m.id,
+        ),
+      );
+    }
+  },
+);
+
 export const RULES: ValidationRule[] = [
   duplicateName,
   unresolvedImport,
@@ -1701,6 +1823,10 @@ export const RULES: ValidationRule[] = [
   unwritableNoteBody,
   staleEvidence,
   transitionInParallelState,
+  variationVariantOutside,
+  variationMemberNotVariant,
+  variationSpecializesVariation,
+  variationVariantKind,
 ];
 
 /** Rule lookup by id. */

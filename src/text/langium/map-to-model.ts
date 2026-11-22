@@ -3119,7 +3119,16 @@ class Mapper {
 
     const declaredShortName = unquoteName(node.shortName);
     // `state <M> parallel { … }`: the word sat in the name slot (see readsShortNameParallel) and is the keyword.
-    const declaredName = shortParallel ? undefined : unquoteName(node.name);
+    // `variant smallEngine;` — a variant declaration with no kind keyword is a REFERENCE to a usage declared elsewhere
+    // (SysML v2 §7.6.7, BNF VariantReference): the variant is a nameless usage whose reference subsetting names it,
+    // never a fresh feature that happens to share the name. `attrs.variantRef` lets the serializer write it back so.
+    const variantRefName =
+      !node.keyword && !node.isDef && prefixes.length === 1 && prefixes[0] === 'variant' &&
+      node.name !== undefined && node.shortName === undefined && !node.preMult?.length && !node.valueOp &&
+      !node.isSufficient
+        ? (refSegments(node.name).length > 1 ? node.name : unquoteName(node.name))
+        : undefined;
+    const declaredName = shortParallel || variantRefName !== undefined ? undefined : unquoteName(node.name);
 
     const isRequirement = eClass === 'RequirementUsage' || eClass === 'RequirementDefinition';
     if (isRequirement && declaredShortName) attrs.reqId = declaredShortName;
@@ -3131,7 +3140,13 @@ class Mapper {
       attrs,
     });
 
+    if (variantRefName !== undefined) {
+      this.model.setAttrs(el.id, { variantRef: true });
+      this.deferredSpecs.push({ elementId: el.id, op: '::>', ref: variantRefName, node });
+    }
+
     if (
+      variantRefName === undefined &&
       eClass === 'ReferenceUsage' && !node.keyword && !node.isDef && declaredName === undefined && !node.body &&
       node.specializations.length === 0 && !node.multiplicity?.length && !node.valueOp && this.faultErrors.length > 0
     ) {

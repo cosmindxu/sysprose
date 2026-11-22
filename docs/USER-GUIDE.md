@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (29 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (33 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -4898,6 +4898,62 @@ and changes nothing else — including the exit code.
 **Source of truth:** `src/semantics/mc/patterns.ts` (the catalogue, the monitor
 and the bad-prefix search), `src/semantics/mc/atoms.ts` (the five atom
 spellings), and `src/semantics/mc/explore.ts` for the walk they both stand on.
+
+### Variability: which configurations a family admits
+
+`sysprose variability <file> [--json]` reads the variation points of a model and
+answers two questions: what the family admits, and whether each configuration of
+it selects validly. It is a report command: the findings are in the output and
+the `--json` payload (`verification/variability-*`) and a top-level `verdict`.
+**It judges, and an agent can act on the exit code alone:** **0** the model loaded
+clean, every configuration HOLDS its selection constraints, every family has a
+valid configuration and nothing was refused (`not read`, `not established`);
+**1** a decided negative: an INVALID selection, a VIOLATED selection constraint
+or a VOID family (it outranks a 2); **2** a usage/IO error, a degraded model, a
+model with no variation point it reads, or anything undecided: a PARTIAL
+configuration, a refused selection or constraint, an owner not read, a variation
+with no variants, a HOLDS only over the constraints read, or a family past the
+enumeration cap. A dead variant or a false-optional point is a warning in the
+report and does **not** move the exit code; gate on its
+`verification/variability-dead-variant` / `-false-optional` code if you want it
+to. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
+profile; in short:
+
+- **A variation point** is a usage written `variation` (SysML v2 §7.6.7), or a
+  usage typed by a variation definition (`variation part transmission :
+  TransmissionChoices;` takes its variants from the definition). Its **variants**
+  are its `variant` usages; `variant smallEngine;` (the reference form) counts by
+  the referenced usage's name. The **superset owner** is the definition or usage
+  that holds the points.
+- **Optional or not.** No multiplicity or `[1]` means exactly one variant;
+  `[0..1]` means at most one. Another multiplicity on a point is not read.
+- **Nesting.** A point inside a variant is active only when that variant is
+  selected; a selection written for an inactive point is invalid. A point under
+  a feature of multiplicity above one (`cylinder : Cylinder [6]`) is read as one
+  shared choice. A variation with no variants cannot be configured by any
+  selection: it is reported and left out, and the analyses say so.
+- **A selection** is written in a configuration (a usage that subsets or is typed
+  by the owner) as `part :>> engine = engine::engine4Cyl;` or `part :>> engine :>
+  engine::engine4Cyl;`. Typing (`: Engine4Cyl`), `default` or `:=` values, an
+  unqualified `= engine4Cyl`, a subsetting of a non-variant and `bind` are
+  **not selections**; each is shown with its reason, and the configuration then
+  gets no verdict. A name that is no variant of the point, or a variant of
+  another point, is invalid.
+- **A selection constraint** is an `assert constraint` of the owner built from
+  `p == p::v` (or `p == Def::v`) with `and`, `or`, `xor`, `implies`, `not ( )`
+  and parentheses (one operator per level: mixed precedence is refused). Anything
+  else is **not read**, with its reason, and is treated as absent: the count
+  becomes "at most", a HOLDS is qualified, dead variants, core variants and a void
+  model stay sound.
+- **Per configuration:** complete (every active non-optional point selected):
+  selection constraints HOLD or are VIOLATED, naming the constraint. Partial:
+  whether it completes, one completion, and the variants the constraints FORCE.
+- **Per family:** void, the number of valid configurations, core variants (in every
+  valid configuration), dead variants (in none) and false-optional points.
+
+All of it is decided by exhaustive enumeration of the structural configurations,
+so every figure is exact. Above 1,000,000 structural configurations the analyses
+are reported as not established; nothing is guessed.
 
 ### The keywords a file carries, including somebody else's
 

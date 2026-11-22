@@ -25,7 +25,7 @@ npm run sysprose -- --help                 # the subcommand list
 npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
-**The exit-code contract is per subcommand, and there are 7 of them.** Most
+**The exit-code contract is per subcommand, and there are 8 of them.** Most
 subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status`, `reach` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
@@ -45,8 +45,11 @@ because there is no solver in that lane and no `--free` for it either:
 `fault-tree` judges an *architecture from the failure side* and carries the last of them,
 because its 1 is a combination of contract failures rather than one refuted
 obligation — a decomposition that refines can still have a single point of
-failure: 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine whose failure modes this command found none of (or found and does not inject), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over. Each section below states its own
-contract in full, and every section states which of the 7 it obeys.
+failure: 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine whose failure modes this command found none of (or found and does not inject), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over.
+`variability` judges a *product-line configuration* and carries the seventh,
+because a violated configuration must not exit 0 under the reporting contract and an
+undecided one must not exit like a verdict: 0 the model loaded clean, every configuration HOLDS its selection constraints, every family has at least one valid configuration, and nothing was refused ('not read' or 'not established') · 1 at least one decided negative: an INVALID selection, a VIOLATED selection constraint, or a VOID family (no valid configuration), which outranks a 2 · 2 usage/IO error, a degraded model, a model with no variation point this command reads, or ANY undecided result — a PARTIAL configuration, a selection or constraint refused as 'not read', an owner not read, a variation with no variants, a HOLDS only over the constraints read, or a family past the enumeration cap ('not established'). A dead variant or a false-optional point is reported as a warning and does NOT move the exit code. There is no solver and no --free here. Each section below states its own
+contract in full, and every section states which of the 8 it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is
@@ -92,6 +95,7 @@ rather than reporting on the first one.
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
 | [`reach`](#reach) | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | `reach` | reports |
 | [`check-behaviour`](#check-behaviour) | Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? | `behaviour` | judges |
+| [`variability`](#variability) | Which configurations does this family admit, and does each configuration select validly? | `variability` | judges |
 
 ### Options every subcommand takes
 
@@ -486,6 +490,20 @@ Computed by `behaviourReport (src/semantics/mc/patterns.ts)`. With `--json` the 
 
 **Exit codes.** 0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every `cover` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits — or a `recovery` assertion some reachable configuration cannot discharge, reported as that set rather than as a run — or, under --cover-required, a cover this walk did not witness on any run it saw whole · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a trigger the machine names that the walk never offered with no bound hit (`verification/trigger-not-offered`), a construct this engine does not explore, a witness the interpreter does not take (`verification/witness-not-replayed`), a `recovery` withheld because the interpreter’s chase budget stops a run somewhere that does not hold `p` (`verification/recovery-budget-withheld`), a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass — or a `cover` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — `--cover-required` spends the 1 for it instead. There is no solver in this lane and no --free: the walk reads the model’s own values.
 
+### `variability`
+
+**Which configurations does this family admit, and does each configuration select validly?**
+
+```bash
+npm run sysprose -- variability <file.sysml|-> [options]
+```
+
+_No flags of its own._
+
+Computed by `variabilityReport (src/semantics/variability.ts)`. With `--json` the answer is published under `variability`, beside `ok` and `file`.
+
+**Exit codes.** 0 the model loaded clean, every configuration HOLDS its selection constraints, every family has at least one valid configuration, and nothing was refused ('not read' or 'not established') · 1 at least one decided negative: an INVALID selection, a VIOLATED selection constraint, or a VOID family (no valid configuration), which outranks a 2 · 2 usage/IO error, a degraded model, a model with no variation point this command reads, or ANY undecided result — a PARTIAL configuration, a selection or constraint refused as 'not read', an owner not read, a variation with no variants, a HOLDS only over the constraints read, or a family past the enumeration cap ('not established'). A dead variant or a false-optional point is reported as a warning and does NOT move the exit code. There is no solver and no --free here.
+
 ### `trace` relationship presets
 
 A preset names the **relationship** kinds only. The row and column metaclasses
@@ -534,4 +552,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*22 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*23 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

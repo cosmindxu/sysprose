@@ -1,5 +1,5 @@
 /**
- * PlanningView — a DOORS→CodeBeamer-style migration/effort wave planner over
+ * PlanningView — a requirements-tool-style migration/effort wave planner over
  * the live model. ATOMIC elements (each carrying a workload attribute) roll up
  * into GROUPS by a chosen association, the groups are ORDERED by a chosen
  * algorithm and bin-packed into capacity-bounded time SLICES (waves), rendered

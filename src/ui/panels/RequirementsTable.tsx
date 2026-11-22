@@ -1,5 +1,5 @@
 /**
- * RequirementsTable — a DOORS-NG / CodeBeamer-style requirements editor, natively
+ * RequirementsTable — a requirements-tool-style requirements editor, natively
  * bound to the SysML v2 model (the 'requirements' view).
  *
  * MODEL-BACKED (like Explorer): it reads the live {@link Model} and subscribes to

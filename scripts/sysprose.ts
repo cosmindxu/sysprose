@@ -183,6 +183,12 @@ import {
   generalizationsOf,
 } from '../src/semantics/index';
 import { isAsserted } from '../src/semantics/defining-equation';
+import {
+  variabilityLines,
+  variabilityReport,
+  type VariabilityReport,
+  type VariabilityVerdictCounts,
+} from '../src/semantics/variability';
 // Deep imports rather than `../src/diagram/index`: the diagram barrel pulls the
 // layout engine in with it, and neither of these two builders needs it.
 import { buildGrid, valueCellHasOperator } from '../src/diagram/grid';
@@ -288,6 +294,8 @@ interface Report {
    * share, and all an automation needs, is `verdict.exitCode`.
    */
   faultTree?: FaultTreeReport;
+  /** The run of `variability`, which judges configurations and families (VARIABILITY_EXIT_CODES). */
+  variability?: VariabilityReport;
 }
 
 /** The four figures the verify exit contract is computed from, and the answer. */
@@ -479,6 +487,16 @@ function judgeFaultTree(report: FaultTreeReport, degraded: boolean): FaultTreeVe
     undecidedChecks: report.undecidedChecks,
     exitCode: degraded ? 2 : report.exitCode,
   };
+}
+
+/** The verdict block of `variability`: its counts and the exit code. */
+interface VariabilityVerdict extends VariabilityVerdictCounts {
+  exitCode: number;
+}
+
+/** The exit code of a variability run, degradation included (the rule of {@link judge}). */
+function judgeVariability(report: VariabilityReport, degraded: boolean): VariabilityVerdict {
+  return { ...report.verdict, exitCode: degraded ? 2 : report.exitCode };
 }
 
 /* ────────────────────────────── small helpers ───────────────────────────── */
@@ -3662,6 +3680,10 @@ async function buildReport(
       return reportReach(model, name, args);
     case 'check-behaviour':
       return reportCheckBehaviour(model, name, args);
+    case 'variability': {
+      const r = variabilityReport(model);
+      return { json: r, text: variabilityLines(r, name).join('\n'), variability: r };
+    }
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.
@@ -3943,6 +3965,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     | BehaviourVerdict
     | BoundsVerdict
     | FaultTreeVerdict
+    | VariabilityVerdict
     | undefined = built.verify
     ? judge(built.verify, degraded)
     : built.consistency
@@ -3955,7 +3978,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
           ? judgeBounds(built.bounds, degraded)
         : built.faultTree
           ? judgeFaultTree(built.faultTree, degraded)
-          : undefined;
+          : built.variability
+            ? judgeVariability(built.variability, degraded)
+            : undefined;
 
   const body = flagGiven(parsed, 'json')
     ? JSON.stringify(

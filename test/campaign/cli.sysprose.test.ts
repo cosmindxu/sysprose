@@ -6011,6 +6011,8 @@ package P {
         { argv: ['evidence-detach', UAV] },
         { argv: ['reach', UAV] },
         { argv: ['check-behaviour', UAV, ...BEHAVIOUR] },
+        { argv: ['variability', `${FIXV}/models/variability-family.sysml`] },
+        { argv: ['variability', `${FIXV}/models/variability-family.sysml`, '--json'], idBlind: true },
       ];
 
       // Every subcommand this tool ships, or this case is not the bridge it says
@@ -6047,4 +6049,57 @@ package P {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 900_000);
+  /**
+   * `variability` has its own verdict contract (VARIABILITY_EXIT_CODES): an agent
+   * acts on the exit code alone. One small model per exit, in-process.
+   */
+  describe('variability exit contract', () => {
+    const FAM = `package P { part def Engine; part def E4 :> Engine; part def E6 :> Engine;
+      part def Fam { variation part engine : Engine { variant part e4 : E4; variant part e6 : E6; }
+        variation part gear : Engine { variant part auto : E4; variant part man : E6; }
+        assert constraint sc { (engine == engine::e4 and gear == gear::man) or (engine == engine::e6 and gear == gear::auto) } }
+      CFG }`;
+    const VOID = `package P { part def Engine; part def E4 :> Engine; part def E6 :> Engine;
+      part def Fam { variation part engine : Engine { variant part e4 : E4; variant part e6 : E6; }
+        assert constraint a { engine == engine::e4 and engine == engine::e6 } } }`;
+    const DEAD = `package P { part def Engine; part def E4 :> Engine; part def E6 :> Engine;
+      part def Fam { variation part engine : Engine { variant part e4 : E4; variant part e6 : E6; }
+        assert constraint a { engine == engine::e4 } }
+      part c : Fam { part :>> engine = engine::e4; } }`;
+    const CASES: Array<[string, string, number]> = [
+      ['holds', FAM.replace('CFG', 'part c : Fam { part :>> engine = engine::e4; part :>> gear = gear::man; }'), 0],
+      ['a dead variant is a warning and does not move the exit', DEAD, 0],
+      ['the constraint is violated', FAM.replace('CFG', 'part c : Fam { part :>> engine = engine::e4; part :>> gear = gear::auto; }'), 1],
+      ['an invalid selection', FAM.replace('CFG', 'part c : Fam { part :>> engine = engine::e4; part :>> gear = engine::e6; }'), 1],
+      ['a void family', VOID, 1],
+      ['a violated configuration outranks a partial one', FAM.replace('CFG', 'part c : Fam { part :>> engine = engine::e4; part :>> gear = gear::auto; } part d : Fam { part :>> engine = engine::e4; }'), 1],
+      ['a partial configuration', FAM.replace('CFG', 'part c : Fam { part :>> engine = engine::e4; }'), 2],
+      ['a refused selection', FAM.replace('CFG', 'part c : Fam { part :>> engine = e4; part :>> gear = gear::man; }'), 2],
+      ['a model with no variability', 'package P { part def A; part a : A; }', 2],
+    ];
+    it.each(CASES)('%s', async (label, src, code) => {
+      const dir = mkdtempSync(join(tmpdir(), 'sysprose-var-'));
+      try {
+        const file = join(dir, 'm.sysml');
+        writeFileSync(file, src);
+        const r = await run(['variability', file, '--json']);
+        expect(r.code, label).toBe(code);
+        const body = JSON.parse(r.stdout) as { verdict: { exitCode: number } };
+        expect(body.verdict.exitCode, 'the payload and the process must agree').toBe(r.code);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('a degraded model exits 2', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'sysprose-var-'));
+      try {
+        const file = join(dir, 'm.sysml');
+        writeFileSync(file, 'package P { part def {');
+        expect((await run(['variability', file])).code).toBe(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });

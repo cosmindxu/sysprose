@@ -34,6 +34,7 @@ import {
   DEFAULT_MAX_ORDER,
   EXIT_CODES,
   FAULT_TREE_EXIT_CODES,
+  VARIABILITY_EXIT_CODES,
   PATTERN_NAMES,
   REFINE_EXIT_CODES,
   SCOPE_NAMES,
@@ -126,11 +127,12 @@ describe('the generated command reference', () => {
       write: WRITE_EXIT_CODES,
       behaviour: BEHAVIOUR_EXIT_CODES,
       'fault-tree': FAULT_TREE_EXIT_CODES,
+      variability: VARIABILITY_EXIT_CODES,
     };
     expect(
       COMMANDS.map((c) => c.exitContract).filter((v, i, a) => a.indexOf(v) === i).sort(),
       'the command table no longer declares every exit contract',
-    ).toEqual(['bounds', 'behaviour', 'fault-tree', 'refine', 'report', 'verify', 'write'].sort());
+    ).toEqual(['bounds', 'behaviour', 'fault-tree', 'refine', 'report', 'variability', 'verify', 'write'].sort());
 
     for (const cmd of COMMANDS) {
       const section = sections.get(cmd.name);
@@ -288,6 +290,18 @@ describe('the generated command reference', () => {
     // forgiveness flag least of all: an undecided order-1 check is exactly the
     // state a "no single point of failure" sentence may never be written over.
     const flags = flagsFor(COMMANDS.find((c) => c.name === 'fault-tree')!).map((f) => f.name);
+    expect(flags).not.toContain('free');
+    expect(flags).not.toContain('allow-inconclusive');
+  });
+
+  it('gives `variability` a verdict contract whose 1 is decided and whose dead variants do not move it', () => {
+    expect(VARIABILITY_EXIT_CODES).toContain('1 at least one decided negative: an INVALID selection, a VIOLATED selection constraint, or a VOID family');
+    expect(VARIABILITY_EXIT_CODES).toContain("nothing was refused ('not read' or 'not established')");
+    expect(VARIABILITY_EXIT_CODES).toContain('a PARTIAL configuration');
+    expect(VARIABILITY_EXIT_CODES).toContain('does NOT move the exit code');
+    expect(VARIABILITY_EXIT_CODES).not.toBe(EXIT_CODES);
+    expect(COMMANDS.filter((c) => c.exitContract === 'variability').map((c) => c.name)).toEqual(['variability']);
+    const flags = flagsFor(COMMANDS.find((c) => c.name === 'variability')!).map((f) => f.name);
     expect(flags).not.toContain('free');
     expect(flags).not.toContain('allow-inconclusive');
   });

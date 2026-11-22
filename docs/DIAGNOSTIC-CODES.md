@@ -400,6 +400,34 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A transition joins two concurrent substates of a parallel state — a state definition or usage marked `parallel` (SysML v2 §7.18.2). The regions of a parallel state are performed concurrently, and §7.18.2 allows no transition between the concurrent states nested in one.
 - **Hint given:** Keep each transition inside one region (a substate of the parallel state and its own substates), or write the states as exclusive substates by removing `parallel` from the state definition or usage.
 
+### `validation/variation-variant-outside`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A usage declared `variant` is not inside a variation (SysML v2 §7.6.7: "Variant usages may only be declared within a variation").
+- **Hint given:** Move the variant into a `variation` definition or usage, or drop the `variant` keyword to make it an ordinary usage.
+
+### `validation/variation-member-not-variant`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A usage or definition owned by a variation is not a variant (SysML v2 §8.4.2.3: all the ownedMembers of a variation must be variant usages). Comments, documentation, imports and metadata are not counted.
+- **Hint given:** Write the member as a variant (`variant part x;`), or move it out of the variation.
+
+### `validation/variation-specializes-variation`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A variation definition or usage specializes (`:>`) another variation (SysML v2 §8.4.2.3: "it is not valid for a variation to specialize another variation"). Typing a variation usage by a variation definition is allowed.
+- **Hint given:** Specialize a non-variation definition instead, or list all the variants in a single variation.
+
+### `validation/variation-variant-kind`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A variant usage has a kind (part, action, ...) inconsistent with its owning variation (SysML v2 §7.6.7). A variant naming a separately declared usage carries no kind and is not checked.
+- **Hint given:** Use the same kind keyword as the variation, e.g. `variant part` inside a `variation part def`.
+
 ### `validation/requirement-subject`
 
 - **Severity:** warning
@@ -873,6 +901,90 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** A `check-behaviour` search found a run that breaks a property (`fail`) or reaches the situation a `cover` names (`covered`), and the interpreter, driven with that run’s events, does not take it: at some step it fires another transition, or none, or enters another state, or stands in the same state under another stack of states. Every witness is replayed through `runStateMachine` before the row stands on it — with the declaration-order tie-break resolved the witness’s way, the one choice the semantic profile leaves open, and with run-to-completion, the 64-step chase budget, the priority rule and the events all the interpreter’s own. A run the interpreter does not take refutes nothing and witnesses nothing, so the row is inconclusive and exits 2, and the witness is not printed.
 - **Hint given:** Nothing is claimed about the property, and nothing here is a defect in the model: the search and the interpreter disagree about one run, which is a defect in this engine. The row names the step where the two parted and what the interpreter does there instead; the Simulation tab takes the first declared transition at a tie, so it cannot follow a witness that took another branch of one. Report the model. No flag lowers this row.
 
+### `verification/variability-invalid-selection`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A configuration (a usage that subsets or is typed by a superset owner) selects wrongly: a name that is no variant of the point, a variant of another point, a point selected twice, or a selection of a point that is inactive because the variant that holds it is not selected (P3).
+- **Hint given:** Select exactly one variant of each active point, written `part :>> p = p::v;` or `part :>> p :> p::v;`.
+
+### `verification/variability-constraint-violated`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A complete configuration violates a selection constraint (an `assert constraint` of the owner over `p == p::v` atoms). The row names the constraint and the selection.
+- **Hint given:** Change the selection, or the constraint if the family rule is what is wrong.
+
+### `verification/variability-partial-configuration`
+
+- **Severity:** warning
+- **Source:** verification
+- **Fires when:** A configuration leaves an active non-optional point unselected. The row says whether it completes under the selection constraints and which variants are FORCED, or which constraint blocks every completion.
+- **Hint given:** Select the missing points; the forced variants are the only ones that can complete it.
+
+### `verification/variability-selection-not-read`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A spelling in a configuration that is not read as a selection (typing, `default`/`:=`, an unqualified name, a subsetting of a non-variant, `bind`). The configuration gets no verdict while one is present.
+- **Hint given:** Write the selection as `part :>> p = p::v;`.
+
+### `verification/variability-constraint-not-read`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** An `assert constraint` of a superset owner outside the supported atoms/operators (`p == p::v`; and, or, xor, implies, not ( ), parentheses). It is treated as absent: the count becomes an upper bound and a HOLDS is qualified.
+- **Hint given:** Restate it over `p == p::v` atoms with explicit parentheses.
+
+### `verification/variability-owner-not-read`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A superset owner the tool does not read as a variability model (a point with several variation sources, a variant with no name, duplicate variant names, a point multiplicity other than [1] or [0..1]). No analysis or verdict is given.
+- **Hint given:** Make the variation point one of the supported shapes.
+
+### `verification/variability-no-variants`
+
+- **Severity:** warning
+- **Source:** verification
+- **Fires when:** A variation point with no variants (own or from its variation definition): no selection can configure it. It is left out of the formula and the analyses range over the other points.
+- **Hint given:** Add its variants.
+
+### `verification/variability-void`
+
+- **Severity:** warning
+- **Source:** verification
+- **Fires when:** No configuration satisfies the variation structure and the selection constraints (AO10).
+- **Hint given:** Relax a selection constraint.
+
+### `verification/variability-dead-variant`
+
+- **Severity:** warning
+- **Source:** verification
+- **Fires when:** A variant that no valid configuration selects (AO14), given the constraints read.
+- **Hint given:** Remove the variant or the constraint that excludes it.
+
+### `verification/variability-false-optional`
+
+- **Severity:** warning
+- **Source:** verification
+- **Fires when:** An optional point `[0..1]` that is selected in every valid configuration where it is active (AO15).
+- **Hint given:** Make the point mandatory, or relax the constraint that forces it.
+
+### `verification/variability-not-established`
+
+- **Severity:** warning
+- **Source:** verification
+- **Fires when:** The family analyses were not run: the structural enumeration exceeds the cap (1,000,000). Nothing is claimed.
+- **Hint given:** Split the family.
+
+### `verification/variability-family`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** The number of valid configurations of a superset owner (AO12), exact unless constraints were not read (then an upper bound), with core and dead variants.
+- **Hint given:** This is a fact about the model, not a finding.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -992,4 +1104,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*128 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*144 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

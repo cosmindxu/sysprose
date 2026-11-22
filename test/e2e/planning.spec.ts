@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { captureErrors, gotoApp, shot } from './fixtures';
 
 /**
- * Planning view — the DOORS→CodeBeamer-style migration/effort wave planner.
+ * Planning view — the requirements-tool-style migration/effort wave planner.
  * Switches to the view, asserts the board + summary render, exercises the
  * ordering / grouping / capacity config controls (the plan rebuilds without
  * error), and checks zero console/page errors throughout.

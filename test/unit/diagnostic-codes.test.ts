@@ -24,6 +24,11 @@ import { parseModel } from '@text/index';
 const DOC = readFileSync(resolve(process.cwd(), 'docs/DIAGNOSTIC-CODES.md'), 'utf8');
 const documented = new Set([...DOC.matchAll(/^### `([^`]+)`$/gm)].map((m) => m[1]));
 
+// `sysprose variability` raises its own `verification/variability-*` codes from
+// src/semantics/variability.ts, not from the api lane compared below; their
+// severities are pinned against the catalogue in test/unit/semantics.variability.test.ts.
+const VARIABILITY_LANE = (code: string): boolean => code.startsWith('verification/variability-');
+
 describe('diagnostic-code catalogue', () => {
   it('documents every code it defines', () => {
     const missing = DIAGNOSTIC_CODES.map((c) => c.code).filter((c) => !documented.has(c));
@@ -83,7 +88,7 @@ describe('diagnostic-code catalogue', () => {
     // severity would read the loudest verdict in a run at the same level as
     // "this construct is outside the fragment". This is the comparison.
     const catalogueErrors = DIAGNOSTIC_CODES.filter(
-      (c) => c.code.startsWith('verification/') && c.severity === 'error',
+      (c) => c.code.startsWith('verification/') && !VARIABILITY_LANE(c.code) && c.severity === 'error',
     )
       .map((c) => c.code)
       .sort();
@@ -97,7 +102,7 @@ describe('diagnostic-code catalogue', () => {
     // filing it as info would put it beside "this construct is outside the
     // fragment", which is the tool talking about itself.
     const catalogueWarnings = DIAGNOSTIC_CODES.filter(
-      (c) => c.code.startsWith('verification/') && c.severity === 'warning',
+      (c) => c.code.startsWith('verification/') && !VARIABILITY_LANE(c.code) && c.severity === 'warning',
     )
       .map((c) => c.code)
       .sort();
@@ -111,7 +116,7 @@ describe('diagnostic-code catalogue', () => {
     // And every other verification code is an info line — the reading rule the
     // catalogue states in prose, asserted.
     for (const c of DIAGNOSTIC_CODES) {
-      if (!c.code.startsWith('verification/')) continue;
+      if (!c.code.startsWith('verification/') || VARIABILITY_LANE(c.code)) continue;
       if (VERIFICATION_ERROR_CODES.has(c.code) || VERIFICATION_WARNING_CODES.has(c.code)) continue;
       expect(c.severity, `${c.code} is neither an error, a warning, nor an info line`).toBe('info');
     }
