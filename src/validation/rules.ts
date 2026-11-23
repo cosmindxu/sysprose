@@ -1843,7 +1843,7 @@ const variationEnumKeyword = variationBuilder(
     const bad =
       el.eClass === 'EnumerationDefinition'
         ? (['abstract', 'variation'] as const).filter((k) => el.attrs[k === 'abstract' ? 'isAbstract' : 'isVariation'] === true)
-        : el.eClass === 'EnumerationUsage' && el.attrs.isVariant === true
+        : el.eClass === 'EnumerationUsage' && el.attrs.isVariant === true && el.ownerId !== null && model.get(el.ownerId)?.eClass === 'EnumerationDefinition'
           ? (['variant'] as const)
           : [];
     if (bad.length === 0) return;
