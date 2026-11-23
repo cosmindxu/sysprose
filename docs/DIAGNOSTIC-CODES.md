@@ -351,6 +351,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A flow carries a payload that does not conform to the feature it flows from or to, or takes its payload from an `in` feature of a port or delivers it to an `out` one (directions read through conjugation; SysML v2 §7.12.1, §7.16).
 - **Hint given:** Flow between features of the payload's definition, from an `out` feature to an `in` feature: `flow of Msg from a.p.msg to b.q.msg;` with `out item msg : Msg` in `P` and `b.q : ~P`.
 
+### `validation/exchange-allocation`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A flow is allocated to a connection or interface whose ends are not on the components its functions are allocated to, whose ports do not carry its item out of the sender and into the receiver, or it is allocated to more than one; or a connection is allocated to a connection between nodes its components are not deployed on (Arcadia §19.10–19.11, §20.4, §21.9; the allocation itself is legal SysML v2, §7.15).
+- **Hint given:** Allocate each flow to the one link between the components its two functions are allocated to, in the same direction: `allocate command to ground; allocate execute to drone; connection cmdLink connect ground.cmdOut to drone.cmdIn; allocate cmdFlow to cmdLink;` with the flow's item an `out` feature of `cmdOut`'s port def and `in` under `~`. Allocate a link to a physical connection only between the nodes its components are allocated to.
+
 ### `validation/port-typing`
 
 - **Severity:** warning
@@ -1125,4 +1132,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*147 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*148 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

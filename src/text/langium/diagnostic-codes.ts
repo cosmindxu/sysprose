@@ -369,6 +369,13 @@ const CODES = [
     hint: 'Flow between features of the payload\'s definition, from an `out` feature to an `in` feature: `flow of Msg from a.p.msg to b.q.msg;` with `out item msg : Msg` in `P` and `b.q : ~P`.',
   },
   {
+    code: 'validation/exchange-allocation',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A flow is allocated to a connection or interface whose ends are not on the components its functions are allocated to, whose ports do not carry its item out of the sender and into the receiver, or it is allocated to more than one; or a connection is allocated to a connection between nodes its components are not deployed on (Arcadia §19.10–19.11, §20.4, §21.9; the allocation itself is legal SysML v2, §7.15).',
+    hint: 'Allocate each flow to the one link between the components its two functions are allocated to, in the same direction: `allocate command to ground; allocate execute to drone; connection cmdLink connect ground.cmdOut to drone.cmdIn; allocate cmdFlow to cmdLink;` with the flow\'s item an `out` feature of `cmdOut`\'s port def and `in` under `~`. Allocate a link to a physical connection only between the nodes its components are allocated to.',
+  },
+  {
     code: 'validation/port-typing',
     source: 'validation',
     severity: 'warning',
