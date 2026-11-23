@@ -1487,6 +1487,11 @@ const MOVED_BY_THE_CENSUS = {
    * examples, and `totals` gained `traps: 0`.
    */
   trapsField: 'traps',
+  /**
+   * The event-completeness reading (sm-par S4): one new machine field, `eventCompleteness`, `null` on all three shipped
+   * machines (each names no trigger, so there is no alphabet to read) — no row, count or finding moves.
+   */
+  eventsField: 'eventCompleteness',
   trapCensusField: 'trapCensus',
   /**
    * O1 S4's one re-recorded sentence (review B's M1), the reason on every
@@ -1524,7 +1529,11 @@ function withoutLivelocks(report: { machines: unknown; totals: unknown; diagnost
 } {
   const { machineFields, totalsField, code } = MOVED_BY_THE_CENSUS.livelock;
   const machines = (report.machines as Record<string, unknown>[]).map((m) =>
-    Object.fromEntries(Object.entries(m).filter(([k]) => !(machineFields as readonly string[]).includes(k))),
+    Object.fromEntries(
+      Object.entries(m).filter(
+        ([k]) => !(machineFields as readonly string[]).includes(k) && k !== MOVED_BY_THE_CENSUS.eventsField,
+      ),
+    ),
   );
   const totals = Object.fromEntries(
     Object.entries(report.totals as Record<string, unknown>).filter(([k]) => k !== totalsField),

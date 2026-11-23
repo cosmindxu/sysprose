@@ -71,6 +71,7 @@ export type ReportLineKind =
   | 'unreachable'
   | 'dead'
   | 'never-fired'
+  | 'events'
   | 'no-way-out'
   | 'withheld'
   | 'trap'
@@ -251,6 +252,26 @@ export function reachMachineLines(m: MachineReach, block: number): ReportLine[] 
         'never-fired',
         `    never fired  ${transitionLabel(t)} — enabled where a run reaches, and taken by no run: an inner transition wins wherever it is enabled, or it is due only where the chase budget stops a chase`,
         { elementId: t.id },
+      ),
+    );
+  }
+  // A READING, never a finding: no code, no withholding, no exit-code effect. One line per machine.
+  const ec = m.eventCompleteness;
+  if (ec !== null) {
+    const shown = ec.states
+      .slice(0, 3)
+      .map((e) => `${e.state.name} ignores ${e.ignored.map((x) => `\`${x}\``).join(', ')}`)
+      .join('; ');
+    out.push(
+      line(
+        'events',
+        ec.states.length === 0
+          ? `    events       every one of the ${ec.alphabet.length} event(s) is accepted by each of the ${ec.statesRead} reachable state(s) read` +
+              (ec.statesSkipped > 0 ? ` (${ec.statesSkipped} state(s) inside parallel regions not read)` : '')
+          : `    events       ${ec.states.length} of ${ec.statesRead} reachable state(s) ignore at least one of the ${ec.alphabet.length} event(s) ` +
+              `(${shown}${ec.states.length > 3 ? '; …' : ''}) — an event no transition accepts is dropped there, which a model may intend; a reading, not a defect` +
+              (ec.statesSkipped > 0 ? `; ${ec.statesSkipped} state(s) inside parallel regions not read` : ''),
+        { elementId: id },
       ),
     );
   }

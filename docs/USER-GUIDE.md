@@ -3958,7 +3958,14 @@ neither. The line names the gap only where there is one, and a `never fired`
 row under the `dead` rows names each transition in it (`t65 (c65 -> c66) —
 enabled where a run reaches, and taken by no run: …`); the row has no code,
 since a step the budget or the priority rule keeps a run from taking is the
-interpreter doing what the profile says, not a defect. Both are withheld with
+interpreter doing what the profile says, not a defect.
+
+`reach` also prints one `events` line per machine that names a trigger: how many
+of its reachable states ignore at least one event of the alphabet (neither they
+nor a state around them accept it; there is no event pool, so it is dropped
+there), with the first few named. It is a reading, not a defect: no code, no
+verdict, no exit code, and states inside parallel regions are not read (a sibling
+region may take the event). `--json` carries it as `eventCompleteness`. Both are withheld with
 the `dead` rows, over a walk that did not finish. `--json` carries the same
 count as `transitions.fired`, and the transitions in the gap as
 `transitions.enabledNeverFired`.
@@ -4813,6 +4820,15 @@ every observation.
 active leaf, which is how you name a `done` node), `trigger t` (the event
 offered on this step), `fires T` (a named transition fired), or an **expression**
 — read by the same parser your guards are read with, over the same store.
+
+**Combining `state` atoms**: `state A and state B`, `state A or state B`,
+`not state A` and parentheses (`not` over `and` over `or`) are read at one
+observation, over the same active stack a plain `state X` reads. On a parallel
+machine `absence of state a2 and state b2` is the mutual-exclusion claim for two
+regions. `state r1::a2` names a state by the tail of its qualified name. A name
+that matches no state, or several, refuses the whole property
+(`verification/unknown-atom`); a leaf that is a trigger, a transition or an
+expression is not mixed in.
 
 **A property lives in the model, as §7.27 metadata.** `--pattern` is for trying
 one out; the carrier is how a claim stays with the machine it is about, and it
