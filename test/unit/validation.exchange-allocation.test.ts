@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { parseModel, resolveConnectorFeatureChains } from '@text/index';
 import { preloadFullLibrary, loadFullStandardLibrary } from '../../src/library/full-library';
 import { resolveTypeReferences } from '../../src/library/resolve';
-import { exchangeAllocation } from '../../src/validation/rules-allocation';
+import { exchangeAllocation, exchangeUnallocated, functionPortAllocation } from '../../src/validation/rules-allocation';
 import { RULES_BY_ID } from '@validation/index';
 import type { Model } from '@core/index';
 
@@ -109,5 +109,105 @@ describe('exchange-allocation', () => {
 
   it('does not judge a flow whose functions are allocated nowhere', async () => {
     expect(await run('action loose : Command; action loose2 : Execute; flow f3 of Cmd from loose.cmd to loose2.cmd; allocate f3 to otherLink;')).toEqual([]);
+  });
+});
+
+describe('exchange-unallocated and function-port-allocation', () => {
+  const runR = async (rule: typeof exchangeUnallocated, body: string) =>
+    rule.run(await bound(`package P { ${DEFS} part sys { ${SYS} ${body} } }`)).map((d) => d.message);
+
+  it('are registered as warnings', () => {
+    expect(RULES_BY_ID.get('exchange-unallocated')?.severity).toBe('warning');
+    expect(RULES_BY_ID.get('function-port-allocation')?.severity).toBe('warning');
+  });
+
+  it('I1: silent when no flow is allocated anywhere (opt-in)', async () => {
+    expect(await runR(exchangeUnallocated, '')).toEqual([]);
+  });
+
+  it('I1: one allocated and one not gives exactly one finding', async () => {
+    const m = await runR(exchangeUnallocated, 'allocate cmdFlow to cmdLink;');
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatch(/reportFlow.*crosses from .*drone to .*ground and no connection carries it.*§20\.4/);
+  });
+
+  it('I1: all allocated is silent; a same-host flow is silent', async () => {
+    expect(await runR(exchangeUnallocated, 'allocate cmdFlow to cmdLink; allocate reportFlow to reportLink;')).toEqual([]);
+    expect(await runR(exchangeUnallocated, 'allocate cmdFlow to cmdLink; allocate reportFlow to reportLink; action echo : Show; allocate echo to ground; flow local of Report from show.report to echo.report;')).toEqual([]);
+  });
+
+  it('I1: a host through perform counts', async () => {
+    const m = await runR(exchangeUnallocated, 'part ops : Drone { perform execute; } allocate cmdFlow to cmdLink; action act2 : Show; part g2 : Ground { perform act2; } flow viaPerform of Report from execute.report to act2.report;');
+    expect(m.some((x) => /viaPerform/.test(x))).toBe(true);
+  });
+
+  it('I1: a function on a sub-component of the other host is not a crossing (delegation, not an exchange)', async () => {
+    // `ctl.sub` resolves to `Ctl::sub`, owned by the definition typing `ctl`: inside it, read through typing.
+    const inside = `package P {
+  item def Cmd; item def Rep;
+  port def CmdPort { out item c : Cmd; }
+  part def Ctl { out port o : CmdPort; part sub : Sub; }
+  part def Sub;
+  part def Act { in port i : ~CmdPort; }
+  action def Send { out c : Cmd; }
+  action def Recv { in c : Cmd; }
+  part sys {
+    part ctl : Ctl; part act : Act; part act2 : Act;
+    connection link connect ctl.o to act.i;
+    action send : Send; action recv : Recv; action recv2 : Recv; action other : Recv;
+    flow f1 of Cmd from send.c to recv.c;
+    flow f3 of Cmd from send.c to other.c; allocate f1 to link;
+    allocate send to ctl; allocate recv to act; allocate recv2 to act2; allocate other to ctl.sub;
+  }
+}`;
+    expect(exchangeUnallocated.run(await bound(inside)).map((x) => x.message)).toEqual([]);
+    const across = `package P {
+  item def Cmd; item def Rep;
+  port def CmdPort { out item c : Cmd; }
+  part def Ctl { out port o : CmdPort; part sub : Sub; }
+  part def Sub;
+  part def Act { in port i : ~CmdPort; }
+  action def Send { out c : Cmd; }
+  action def Recv { in c : Cmd; }
+  part sys {
+    part ctl : Ctl; part act : Act; part act2 : Act;
+    connection link connect ctl.o to act.i;
+    action send : Send; action recv : Recv; action recv2 : Recv; action other : Recv;
+    flow f1 of Cmd from send.c to recv.c;
+    allocate f1 to link; flow f2 of Cmd from send.c to recv2.c;
+    allocate send to ctl; allocate recv to act; allocate recv2 to act2; allocate other to ctl;
+  }
+}`;
+    expect(exchangeUnallocated.run(await bound(across)).map((x) => x.message)).toHaveLength(1);
+  });
+
+  it('I1: a flow with an unhosted end is silent', async () => {
+    expect(await runR(exchangeUnallocated, 'allocate cmdFlow to cmdLink; allocate reportFlow to reportLink; action loose : Show; flow lf of Report from execute.report to loose.report;')).toEqual([]);
+  });
+
+  it('I2: a parameter allocated to the right port is silent', async () => {
+    expect(await runR(functionPortAllocation, 'allocate command.cmd to ground.cmdOut; allocate execute.cmd to drone.cmdIn; allocate execute.report to drone.reportOut;')).toEqual([]);
+  });
+
+  it('I2: a port on another component is flagged', async () => {
+    const m = await runR(functionPortAllocation, 'allocate execute.cmd to ground.cmdOut;');
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatch(/port is on .*ground, but the function runs on .*drone.*§20\.3/);
+  });
+
+  it('I2: wrong direction and wrong item are flagged', async () => {
+    const d = await runR(functionPortAllocation, 'allocate execute.cmd to drone.reportOut;');
+    expect(d).toHaveLength(1);
+    expect(d[0]).toMatch(/has no feature of that kind/);
+    const dir = await runR(functionPortAllocation, 'allocate execute.report to drone.reportOut; allocate command.cmd to ground.cmdOut; action sink : Show; allocate sink to ground; allocate sink.report to ground.cmdOut;');
+    expect(dir.length).toBeGreaterThan(0);
+    const o = await runR(functionPortAllocation, 'allocate execute.cmd to drone.cmdIn;');
+    expect(o).toEqual([]);
+  });
+
+  it('I2: an out parameter on an in port is flagged', async () => {
+    const m = await runR(functionPortAllocation, 'action cmdIn2 : Command; allocate cmdIn2 to drone; allocate cmdIn2.cmd to drone.cmdIn;');
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatch(/parameter is `out` but cmd is `in`/);
   });
 });
