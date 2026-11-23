@@ -190,7 +190,7 @@ export const BOUNDS_EXIT_CODES = `Exit codes: 0 every bound asked for was DECIDE
  * admits — and **2 is everything undecided**, which here includes a bound the
  * walk hit, a machine construct this engine refuses to explore, a witness the
  * interpreter does not take and a `recovery` the chase budget withholds (both
- * O1, `docs/06` §8.5), a LIVENESS pattern it does not decide in-process, a
+ * O1, `docs/06` §8.5), a LIVENESS pattern over a walk that is not whole (it is decided only over a graph the walk saw whole), a
  * property it could not read, an atom that names nothing, and a VACUOUS
  * property, which no flag launders into a pass. `--strict-vacuity` raises that last row from a line to an error and
  * changes nothing else, exactly as it does for `verify` (§2).
@@ -935,7 +935,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         kind: 'value',
         metavar: 'SPEC',
         fallback: 'the properties the machine itself carries',
-        doc: `One property, in the same field names the @SysproseVerification::PropertyPattern carrier uses: \`pattern=absence, scope=globally, p=state failsafe\`. Patterns: ${PATTERN_NAMES.join(' | ')} — the first four are SAFETY and are decided here; \`cover\` is a GUARANTEE (can some run reach the situation I name?), decided here in both directions and answered \`covered\` with a witness or \`not covered\`; \`recovery\` is BRANCHING-TIME (from every configuration the machine can be in, can it get back to the state I name?), decided here in both directions by reverse reachability over a walk whose relation is the machine's own — \`recoverable\`, or \`not recoverable\` naming the configurations that cannot — and withheld as inconclusive over any other walk; it reads \`state\` and \`node\` atoms only, over \`globally\` only; the last two are LIVENESS and report inconclusive, because a bad-prefix search decides neither. Scopes: ${SCOPE_NAMES.join(' | ')}. Atoms: \`state X\`, \`trigger t\`, \`fires T\`, \`node N\`, or an expression. It is checked BESIDE the carriers, never instead of them, and a field value may hold no comma or semicolon (the carrier form has no such limit)`,
+        doc: `One property, in the same field names the @SysproseVerification::PropertyPattern carrier uses: \`pattern=absence, scope=globally, p=state failsafe\`. Patterns: ${PATTERN_NAMES.join(' | ')} — the first four are SAFETY and are decided here; \`cover\` is a GUARANTEE (can some run reach the situation I name?), decided here in both directions and answered \`covered\` with a witness or \`not covered\`; \`recovery\` is BRANCHING-TIME (from every configuration the machine can be in, can it get back to the state I name?), decided here in both directions by reverse reachability over a walk whose relation is the machine's own — \`recoverable\`, or \`not recoverable\` naming the configurations that cannot — and withheld as inconclusive over any other walk; it reads \`state\` and \`node\` atoms only, over \`globally\` only; the last two are LIVENESS: a bad-prefix search decides neither, so a lasso search does, and only over a graph the walk saw whole (under no fairness and a live environment) — \`fail\` with a lasso, or \`pass\`; over any other walk they report inconclusive. Scopes: ${SCOPE_NAMES.join(' | ')}. Atoms: \`state X\`, \`trigger t\`, \`fires T\`, \`node N\`, or an expression. It is checked BESIDE the carriers, never instead of them, and a field value may hold no comma or semicolon (the carrier form has no such limit)`,
       },
       {
         name: 'max-configs',

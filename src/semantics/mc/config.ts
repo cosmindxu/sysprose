@@ -36,6 +36,7 @@
 
 import { type ElementId, type ElementRecord, type Model, isUsage, unquoteName } from '@core/index';
 import { parseExpr, evaluate, readQuotedName, type ExprNode } from '../expr';
+import { namesReadIn } from '../relations';
 import { scopeFor, type Scope } from '../evaluate-model';
 // The ONE reader of an edge's payload in this codebase: `itemFlowsOf` uses it to
 // decide that a `Succession` with an item is a succession flow, and the step
@@ -890,6 +891,62 @@ export function seedStore(
     const entries = initial instanceof Map ? initial.entries() : Object.entries(initial);
     for (const [k, v] of entries) store.set(k, v);
   }
+}
+
+/**
+ * The attributes a walk seeded from a DEFAULT value and a guard or atom reads.
+ *
+ * `attribute n : Integer default 0` is a start value a specialisation may
+ * redefine, where `attribute n = 0` is not, and the walk seeds both the same
+ * way ({@link seedStore}). A verdict that rests on the first is true of the
+ * default and of nothing a redefinition chooses, so it carries a note naming
+ * it: `n = 0 (default, redefinable)`. The note moves no verdict; it says what
+ * the verdict holds for.
+ *
+ * "DEPENDS ON" IS "IS READ BY": a name some transition guard of the machine's
+ * region reads, or one of `exprTexts` (the property's own atoms). That is an
+ * upper bound — a guard that never decides anything still names its
+ * attribute — which is the safe side for a disclosure. Only the feature
+ * {@link seedStore} would seed from (the first with a literal value, in region
+ * order) counts, so a `=` redefinition of a defaulted attribute is not noted.
+ * Each name once, in first-read order.
+ */
+export function defaultsReadBy(
+  model: Model,
+  machineId: ElementId,
+  exprTexts: readonly (string | undefined)[] = [],
+): string[] {
+  const machine = model.get(machineId);
+  if (!machine) return [];
+  const region = machineRegion(model, machineId);
+  const texts: string[] = [];
+  for (const tr of region.transitions) {
+    const g = guardTextOf(tr);
+    if (g !== undefined) texts.push(g);
+  }
+  for (const t of exprTexts) if (t !== undefined && t.trim() !== '') texts.push(t);
+  const read: string[] = [];
+  for (const t of texts) {
+    try {
+      for (const n of namesReadIn(parseExpr(t))) if (!read.includes(n)) read.push(n);
+    } catch {
+      // Not an expression (a `state X` atom, say): it reads no attribute.
+    }
+  }
+  if (read.length === 0) return [];
+  const seeded = new Map<string, ElementRecord>();
+  for (const f of region.descendants) {
+    if (!isUsage(f.eClass) || !f.declaredName || seeded.has(f.declaredName)) continue;
+    if (literalValueOf(f) !== undefined) seeded.set(f.declaredName, f);
+  }
+  const notes: string[] = [];
+  for (const n of read) {
+    const f = seeded.get(n);
+    if (f === undefined || f.attrs.defaultValue !== true) continue;
+    const v = literalValueOf(f);
+    notes.push(`${n} = ${typeof v === 'string' ? JSON.stringify(v) : String(v)} (default, redefinable)`);
+  }
+  return notes;
 }
 
 /* ──────────────────── state-machine reading primitives ──────────────────── */
