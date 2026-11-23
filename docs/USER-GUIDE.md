@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (37 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (40 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -4553,7 +4553,7 @@ $ npm run sysprose -- check-behaviour examples/uav-isr.sysml --element FlightMod
     --pattern 'pattern=absence, scope=globally, p=state failsafe'
 examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pass, 1 fail, 0 vacuous, 0 inconclusive, 0 covered, 0 not covered
   a pass is a claim about every configuration this walk reached, under the bounds printed beside it, and about nothing outside them; a covered is a claim that ONE run this walk saw reaches the situation named, and not covered that none it saw whole does: pass, fail, vacuous, inconclusive, covered, not covered are the six words this command reaches
-  liveness (`existence`, `response`) is decided only over a graph the walk saw whole, by a lasso search under no fairness and a live environment (a run goes on while anything is enabled); on any other walk both report inconclusive
+  liveness (`existence`, `response`) is NOT decided here: a bad-prefix search finds no bad prefix for either, so both report inconclusive
   FAIL         `state failsafe` never holds, over the whole run
     from --pattern
     fail — witness trace of 3 step(s) …
@@ -4770,8 +4770,8 @@ is a decided *no*, not an unopened antecedent.
 | `precedence` | safety | S holds before P ever does | yes |
 | `cover` | **guarantee** | P holds on some run | yes — `covered` with a witness, or `not covered` (exit 2; exit 1 under `--cover-required`) |
 | `recovery` | **branching** | P is reachable from every reachable configuration | yes — `recoverable`, or `not recoverable` naming the configurations that cannot (exit 1); withheld unless the walk's relation is the machine's, and `recoverable` withheld where the chase budget stops a run away from P; `state`/`node` atoms and `globally` only |
-| `existence` | **liveness** | P holds at some point | yes, over a graph the walk saw whole only — `pass`, or `fail` with a lasso; otherwise inconclusive |
-| `response` | **liveness** | every P is followed by an S | yes, over a graph the walk saw whole only — `pass`, or `fail` with a lasso; otherwise inconclusive |
+| `existence` | **liveness** | P holds at some point | **no** |
+| `response` | **liveness** | every P is followed by an S | **no** |
 
 A safety property is broken by a finite run, so a search for one either finds it
 or, having seen the whole graph, has not. A **guarantee** — `cover` is
@@ -4784,18 +4784,11 @@ than a requirement it violates, which is why it has two words of its own and why
 it; it is answered by reverse reachability over the same walk, in both
 directions, and only over a walk whose relation is the machine's. A **liveness** property is broken only
 by an infinite run that never delivers what it promised, and a bad-prefix search
-finds no bad prefix for one on *any* graph, so it never decides one. `existence`
-and `response` are decided by a **lasso search** instead — over the product of the
-configuration graph and a scope monitor, finding cycles with the same strongly
-connected components `reach` uses — and **only when the walk reports its graph
-exhaustive** (no bound hit, no guard it could not decide, no unsupported
-construct). Over any other walk both come back `inconclusive: liveness not
-checked in-process`, exactly as before, and no flag lowers that. A violated
-property prints a **lasso**: the prefix, then a `↻` marker and the cycle the run
-repeats forever (or, where nothing is enabled at the end of the prefix, the
-configuration it stays in), replayed through the interpreter like any witness.
-
-**The fairness assumption, stated on every liveness verdict.** Dwyer's `existence` and `response` are plain LTL over the runs of the machine, so the reading the catalogue supports is the plain one: **no fairness**. A run that loops forever while a transition out of the loop stays enabled is a run of the machine, and it counts against the property; a verdict never rests on "the environment eventually sends the event that leaves the cycle". The one thing assumed on top is a **live environment** — the cooperative environment `recovery` and the modality already read: a run goes on while any transition is enabled, and a configuration where none is enabled repeats forever (the stutter extension of a finite maximal run). Both halves are uniform and printed on every liveness verdict. Fairness (weak or strong) is deliberately not assumed: it would turn a model that can spin forever into a `pass`, and it is a property of an environment this engine does not model.
+finds no bad prefix for one on *any* graph. Reporting "nothing found, so it
+holds" would print this command's strongest verdict for exactly the two
+properties it cannot decide, so both come back `inconclusive: liveness not
+checked in-process` — until a lasso search lands and a fairness assumption is
+named.
 
 `bounded-existence` counts **occurrences**, not configurations. `state Outer`
 holds at every observation from the moment the machine enters `Outer` until it
@@ -4855,7 +4848,7 @@ written with `about`, including inside its own target, is refused
 | **covered** | a `cover` witnessed by a run, printed step by step — still covered under a bound, for the same reason; re-worded to *a run this WALK admits* where the run crossed a dwell or an undecided guard | 0 |
 | **not covered** | a `cover` no explored run witnessed, over a graph the walk saw **whole**: a decided absence and a missing behaviour, not a violated requirement (`verification/not-covered`, info) | **2** — or 1 under `--cover-required`, which adds `verification/cover-required` and changes no word |
 | **vacuous** | the property's antecedent never holds, over a graph the walk saw **whole**: a scope no run opens, or a `precedence` whose P never happens | **2** |
-| **inconclusive** | a bound hit — including one that stopped the walk before the antecedent, which is *not* a vacuity — a guard the walk could not evaluate, a construct the explorer refuses (parallel regions, history), a liveness pattern over a walk that is not whole, a property that could not be read, an atom that names nothing, or a witness the interpreter does not take (`verification/witness-not-replayed`, below) | **2** |
+| **inconclusive** | a bound hit — including one that stopped the walk before the antecedent, which is *not* a vacuity — a guard the walk could not evaluate, a construct the explorer refuses (parallel regions, history), a liveness pattern, a property that could not be read, an atom that names nothing, or a witness the interpreter does not take (`verification/witness-not-replayed`, below) | **2** |
 
 **A bound can hide a violation and can never invent one**, which is why those
 rows are not symmetric — and why `covered` sits with `fail` on the witness side
@@ -4906,6 +4899,10 @@ and changes nothing else — including the exit code.
 and the bad-prefix search), `src/semantics/mc/atoms.ts` (the five atom
 spellings), and `src/semantics/mc/explore.ts` for the walk they both stand on.
 
+### Variation rules the checker fences
+
+Beside the errors for a variant outside a variation, a non-variant member, a variation specializing a variation and a variant of the wrong kind, `sysml-check` warns (`validation/variation-*`) on four spec departures: `abstract` written with `variation` (§7.6.7: a variation is always abstract); `abstract`/`variation` on an `enum def` or `variant` on an enumerated value (§7.8.2); a variant whose type does not specialize its variation's type (§8.4.2.3); and a variation usage typed by a variation definition (`variation part tr : TransmissionChoices`). The last one follows the normative text of §8.4.2.3 (validateUsageVariationSpecialization: a variation usage may not specialize any variation definition or usage) although Annex A.12 writes the form: the annex example contradicts the text, and `sysprose variability` still reads such a usage.
+
 ### Variability: which configurations a family admits
 
 `sysprose variability <file> [--json]` reads the variation points of a model and
@@ -4915,8 +4912,8 @@ the `--json` payload (`verification/variability-*`) and a top-level `verdict`.
 **It judges, and an agent can act on the exit code alone:** **0** the model loaded
 clean, every configuration HOLDS its selection constraints, every family has a
 valid configuration and nothing was refused (`not read`, `not established`);
-**1** a decided negative: an INVALID selection, a VIOLATED selection constraint
-or a VOID family (it outranks a 2); **2** a usage/IO error, a degraded model, a
+**1** a decided negative: an INVALID selection, a VIOLATED selection constraint,
+a connection that breaks in a configuration or a VOID family (it outranks a 2); **2** a usage/IO error, a degraded model, a
 model with no variation point it reads, or anything undecided: a PARTIAL
 configuration, a refused selection or constraint, an owner not read, a variation
 with no variants, a HOLDS only over the constraints read, or a family past the
@@ -4958,6 +4955,18 @@ profile; in short:
 - **Per configuration:** complete (every active non-optional point selected):
   selection constraints HOLD or are VIOLATED, naming the constraint. Partial:
   whether it completes, one completion, and the variants the constraints FORCE.
+- **Connections per configuration.** The owner's connectors between ports
+  (`connect eng.p to ecu.q;`) are checked again with each chosen variant's
+  redefined port in place of the superset's (a variant writing `port :>> p : Sg;`).
+  A connector well-typed in the superset but ill-typed in a configuration
+  (SysML v2 §7.12.1 conformance, or port definitions that do not conform) is
+  `verification/variability-connection-broken`, an error and a decided negative.
+  It is reported for each valid family configuration and for each complete
+  configuration usage. The figure `valid` keeps its meaning (structure and
+  selection constraints); the configurations whose connection breaks are listed
+  separately under it, not subtracted. A connector already ill-typed in the
+  superset is `connection-compatibility`'s finding, and an end that is not a
+  feature owned directly by the point is not re-read.
 - **Per family:** void, the number of valid configurations, core variants (in every
   valid configuration), dead variants (in none) and false-optional points.
 
@@ -5009,17 +5018,6 @@ any of these at the language level:
   (`in port taskingIn : TaskingOrder;`) is not a port in SysML v2 terms
   (§7.12.2: a port usage is defined only by port definitions). Declare a port
   definition whose directed features carry the item, and type the port by it.
-- **`exchange-allocation`.** An allocation between exchanges is legal SysML
-  v2 between any two elements (§7.15); the consistency rules are Arcadia's
-  (Voirin 2018). `allocate cmdFlow to cmdLink` is reported when the flow's two
-  functions are not allocated to (or performed by) the components the link
-  joins (§20.4), when the link's ports do not carry the flow's item `out` of
-  the sender and `in` to the receiver (§21.9, directions read through `~`), and
-  when a flow is allocated to more than one link (one and only one, §20.4).
-  `allocate cmdLink to rfLink` is reported when the link's components are not
-  deployed on the nodes the physical connection joins, in either order
-  (§19.10–19.11). A member that subsets its fleet counts as the fleet; an end
-  whose function is allocated nowhere is not judged.
 
 `port-direction` no longer asks for `in`/`out` on a port whose features are
 directed: it reports only a port that says nothing about direction anywhere. A
@@ -5436,7 +5434,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:574-591`, `1138-1168` (the two rules that ask),
+`src/validation/rules.ts:573-590`, `1137-1167` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 
@@ -5842,7 +5840,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A missing solver is red, not green** | `--engine auto` and `--engine smt` with no solver report `verification/tool-absent` on every obligation and exit **2**. `--allow-inconclusive` reaches `verification/timeout` and `verification/unsupported-construct` only — never tool-absence, never a design admitted, never a vacuity, never a refutation. |
 | **`proved` is a solver's word, not a kernel's** | z3 is trusted as a solver. Nothing here is checked in a proof kernel, and the phrase "kernel-checked" is reserved for an imported result whose axiom set was parsed. |
 | **A cross-check is planned, not built** | There is no `export` command and no `--cross-check` flag: the plan for them is in [`04-formal-verification-plan.md`](04-formal-verification-plan.md). Measured on this machine: `z3` 5.0.0 is on `PATH` and `cvc5` is not, so the cross-check as planned would run the z3 binary against the z3 WASM build (`z3-solver` 5.3.1, engine 5.3.1.0). That would catch an export defect; it would not be two engines agreeing. `--cross-check cvc5` is planned to report `inconclusive: cvc5 not installed` with the command to run, and a disagreement to be always inconclusive with both verdicts named — the tool never picks a winner. |
-| **Liveness only over a whole graph, and no reactive-synthesis question** | `existence` and `response` are decided by a lasso search when the walk saw its graph whole, under no fairness and a live environment, and come back inconclusive over any other walk. `consistency` decides whether static contracts can hold at once, which is a different question from whether a reactive component could be built to meet them — a question this tool does not ask and whose word it never prints. Two words are reserved outright, and a guard in the test suite keeps both out of the source and the documents. |
+| **No liveness, and no reactive-synthesis question either** | `existence` and `response` come back inconclusive until a lasso search lands and a fairness assumption is named. `consistency` decides whether static contracts can hold at once, which is a different question from whether a reactive component could be built to meet them — a question this tool does not ask and whose word it never prints. Two words are reserved outright, and a guard in the test suite keeps both out of the source and the documents. |
 | **No domain axioms from a quantity kind** | Typing a feature `ISQ::PowerValue` tells this tool nothing about its sign. A freed feature bounded on one side only is `verification/free-variable-unbounded`, never a refutation — otherwise `cruisePower = -1 W` reads as a counterexample and the arithmetic check confirms it. |
 | **A narrow encodable fragment** | Only single-valued scalar features with ScalarValues typing are encoded. Multiplicity > 1, strings, `null`, `%` and variable exponents are `verification/unsupported-construct` — inconclusive, with the construct named. A name that resolves to nothing and an enum comparison (`c == Color::red`, which the expression reader does not take) are `verification/not-evaluable`, a defect in the relation that `--allow-inconclusive` does not forgive. Ordering on °C is encoded in kelvin; arithmetic on °C is refused, exactly as the numeric surface refuses it. <!-- BEGIN GENERATED constraint-classes:user-guide (scripts/gen-constraint-classes.ts; npm run classes) --> The rows this tool sorts, encoded or refused, fall into **25 constraint classes** with a computed maturity level each (shape, modifier, reading, fence): a label only, which moves no verdict and which no command prints yet — see [`CONSTRAINT-CLASSES.md`](CONSTRAINT-CLASSES.md).<!-- END GENERATED constraint-classes:user-guide --> |
 | **A bounded behaviour walk** | The in-process engine decides the finite abstraction it exhaustively explored, and says so: a `pass` needs the whole configuration graph, a `fail` does not. There is no event pool and no deferred events, completion chasing stops at 64, and `after(n)` is a discrete clock, not dense time. |

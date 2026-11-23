@@ -295,7 +295,7 @@ describe('the generated command reference', () => {
   });
 
   it('gives `variability` a verdict contract whose 1 is decided and whose dead variants do not move it', () => {
-    expect(VARIABILITY_EXIT_CODES).toContain('1 at least one decided negative: an INVALID selection, a VIOLATED selection constraint, or a VOID family');
+    expect(VARIABILITY_EXIT_CODES).toContain('1 at least one decided negative: an INVALID selection, a VIOLATED selection constraint, a connection that breaks in a configuration');
     expect(VARIABILITY_EXIT_CODES).toContain("nothing was refused ('not read' or 'not established')");
     expect(VARIABILITY_EXIT_CODES).toContain('a PARTIAL configuration');
     expect(VARIABILITY_EXIT_CODES).toContain('does NOT move the exit code');

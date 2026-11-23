@@ -474,6 +474,34 @@ const CODES = [
     hint: 'Use the same kind keyword as the variation, e.g. `variant part` inside a `variation part def`.',
   },
   {
+    code: 'validation/variation-abstract-keyword',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A definition or usage is written with both `abstract` and `variation` (SysML v2 §7.6.7: a variation is always abstract, so the keyword is not used on it).',
+    hint: 'Drop `abstract`; `variation` already makes it abstract.',
+  },
+  {
+    code: 'validation/variation-enum-keyword',
+    source: 'validation',
+    severity: 'warning',
+    when: 'An enumeration definition is written with `abstract` or `variation`, or an enumerated value with `variant` (SysML v2 §7.8.2: an enumeration definition is always a variation and its values are its variants).',
+    hint: 'Remove the keyword; write `enum def Color { enum red; enum green; }`.',
+  },
+  {
+    code: 'validation/variation-variant-not-specializing',
+    source: 'validation',
+    severity: 'warning',
+    when: "A variant's declared type does not specialize anything its variation is declared against (SysML v2 §8.4.2.3: a variant specializes its variation). Skipped when a type is unresolved or a variant names a separate usage.",
+    hint: "Type the variant by the variation's type or one of its specializations.",
+  },
+  {
+    code: 'validation/variation-usage-typed-by-variation',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A variation usage is typed by a variation definition (`variation part e : EngineChoices`). SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.',
+    hint: 'Type the usage by a non-variation definition and list the variants in the usage, or make it a plain usage typed by the variation definition.',
+  },
+  {
     code: 'validation/requirement-subject',
     source: 'validation',
     severity: 'warning',
@@ -1162,6 +1190,13 @@ const CODES = [
     severity: 'info',
     when: 'The number of valid configurations of a superset owner (AO12), exact unless constraints were not read (then an upper bound), with core and dead variants.',
     hint: 'This is a fact about the model, not a finding.',
+  },
+  {
+    code: 'verification/variability-connection-broken',
+    source: 'verification',
+    severity: 'error',
+    when: 'A connector of a superset owner is ill-typed (SysML v2 §7.12.1 port conformance, or no shared port definition) once the chosen variants of a valid configuration, or of a configuration usage, redefine the ports it joins. A connector already ill-typed in the superset is `connection-compatibility`\'s finding and is not repeated.',
+    hint: 'Make the variant keep the port type (or a conforming one), or choose a different variant for that configuration.',
   },
 
   /* ── round-trip oracle ── */

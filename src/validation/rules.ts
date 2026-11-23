@@ -1707,11 +1707,12 @@ function variationBuilder(
     mk: ReturnType<typeof diagBuilder>,
     out: Diagnostic[],
   ) => void,
+  severity: Severity = 'error',
 ): ValidationRule {
   return {
     id,
     description,
-    severity: 'error',
+    severity,
     run(model) {
       const mk = diagBuilder(this.id, this.severity);
       const out: Diagnostic[] = [];
@@ -1809,6 +1810,122 @@ const variationVariantKind = variationBuilder(
   },
 );
 
+/**
+ * Variability spec fences, all warnings (the model is read; the author is told it departs from the spec).
+ * SysML v2 part1 §7.6.7 (l.3490): "A variation is always abstract, so the abstract keyword is not used on a
+ * variation." §7.8.2 (l.3789): "An enumeration definition is always considered to be a variation ... The keywords
+ * abstract and variation may not be used with an enumeration definition. The declaration of an enumeration usage as
+ * an enumerated value ... may not include the keyword variant". §8.4.2.3 validateUsageVariationSpecialization
+ * (l.17205-17215): "A variation Usage may not specialize any variation Definition or Usage" - typing is a
+ * specialization, so `variation part e : VarDef` is fenced although Annex A.12 writes it (the annex example
+ * contradicts the normative text; the user ruled the normative text). §8.4.2.3 checkUsageVariationDefinition-
+ * Specialization / checkUsageVariationUsageSpecialization (l.16938-16950): a variant specializes its variation.
+ */
+const variationAbstractKeyword = variationBuilder(
+  'variation-abstract-keyword',
+  'The `abstract` keyword is written on a variation.',
+  (model, el, mk, out) => {
+    if (el.attrs.isVariation !== true || el.attrs.isAbstract !== true || el.eClass.startsWith('Enumeration')) return;
+    out.push(
+      mk(
+        `${label(model, el)} is declared both \`abstract\` and \`variation\` — SysML v2 §7.6.7: ` +
+          '"A variation is always abstract, so the abstract keyword is not used on a variation."',
+        el.id,
+      ),
+    );
+  },
+  'warning',
+);
+
+const variationEnumKeyword = variationBuilder(
+  'variation-enum-keyword',
+  'A variation, abstract or variant keyword is written on an enumeration.',
+  (model, el, mk, out) => {
+    const bad =
+      el.eClass === 'EnumerationDefinition'
+        ? (['abstract', 'variation'] as const).filter((k) => el.attrs[k === 'abstract' ? 'isAbstract' : 'isVariation'] === true)
+        : el.eClass === 'EnumerationUsage' && el.attrs.isVariant === true && el.ownerId !== null && model.get(el.ownerId)?.eClass === 'EnumerationDefinition'
+          ? (['variant'] as const)
+          : [];
+    if (bad.length === 0) return;
+    out.push(
+      mk(
+        `${label(model, el)} is an enumeration written with \`${bad.join('`, `')}\` — SysML v2 §7.8.2: "An enumeration ` +
+          'definition is always considered to be a variation and its enumerated values are its variants. The keywords ' +
+          'abstract and variation may not be used with an enumeration definition", and an enumerated value may not ' +
+          'include the keyword variant.',
+        el.id,
+      ),
+    );
+  },
+  'warning',
+);
+
+/** The types a variation is declared against: its direct generals (definition) or declared type (usage); undefined when any is unresolved. */
+function variationBaseTypes(model: Model, v: ElementRecord): ElementId[] | undefined {
+  if (v.attrs.specializes !== undefined || v.attrs.typeRef !== undefined || v.attrs.type !== undefined) {
+    // Textual residue only counts when it did not resolve to a relationship.
+    if (declaredTypeElementId(model, v.id) === undefined && model.relationshipsFrom(v.id).length === 0) return undefined;
+  }
+  const out: ElementId[] = [];
+  for (const r of model.relationshipsFrom(v.id)) {
+    if (r.eClass !== 'Subclassification' && r.eClass !== 'FeatureTyping' && r.eClass !== 'Subsetting') continue;
+    const t = r.target?.[0];
+    if (t === undefined || !model.has(t)) return undefined;
+    out.push(t);
+  }
+  return out;
+}
+
+const variationVariantNotSpecializing = variationBuilder(
+  'variation-variant-not-specializing',
+  'A variant does not specialize the type of its variation.',
+  (model, el, mk, out) => {
+    if (el.attrs.isVariation !== true || el.eClass.startsWith('Enumeration')) return;
+    const bases = variationBaseTypes(model, el);
+    if (bases === undefined || bases.length === 0) return;
+    for (const m of variationMembers(model, el)) {
+      if (m.attrs.isVariant !== true || m.eClass === 'ReferenceUsage' || !m.eClass.endsWith('Usage')) continue;
+      const t = declaredTypeElementId(model, m.id);
+      if (t === undefined) continue;
+      if (bases.some((b) => conforms(model, t, b))) continue;
+      out.push(
+        mk(
+          `${label(model, m)} is a variant of ${label(model, el)} but its type ${label(model, model.require(t))} does not ` +
+            'specialize anything the variation specializes — SysML v2 §8.4.2.3 (checkUsageVariationDefinitionSpecialization / ' +
+            'checkUsageVariationUsageSpecialization): a variant specializes its variation, so its type must conform to the ' +
+            "variation's type.",
+          m.id,
+        ),
+      );
+    }
+  },
+  'warning',
+);
+
+const variationUsageTypedByVariation = variationBuilder(
+  'variation-usage-typed-by-variation',
+  'A variation usage is typed by a variation definition.',
+  (model, el, mk, out) => {
+    if (el.attrs.isVariation !== true || !el.eClass.endsWith('Usage') || el.eClass.startsWith('Enumeration')) return;
+    for (const rel of model.relationshipsFrom(el.id)) {
+      if (rel.eClass !== 'FeatureTyping') continue;
+      const target = rel.target?.[0] !== undefined ? model.get(rel.target[0]) : undefined;
+      if (!target || target.attrs.isVariation !== true || isLibraryElement(target)) continue;
+      out.push(
+        mk(
+          `${label(model, el)} is a variation usage typed by the variation definition ${label(model, target)} — ` +
+            'SysML v2 §8.4.2.3 validateUsageVariationSpecialization: "A variation Usage may not specialize any variation ' +
+            'Definition or Usage". Annex A.12 writes this form but contradicts the normative text; Sysprose follows the ' +
+            'normative text.',
+          el.id,
+        ),
+      );
+    }
+  },
+  'warning',
+);
+
 export const RULES: ValidationRule[] = [
   duplicateName,
   unresolvedImport,
@@ -1843,6 +1960,10 @@ export const RULES: ValidationRule[] = [
   variationMemberNotVariant,
   variationSpecializesVariation,
   variationVariantKind,
+  variationAbstractKeyword,
+  variationEnumKeyword,
+  variationVariantNotSpecializing,
+  variationUsageTypedByVariation,
   interfaceEndConformance,
   flowEndCompatibility,
   portTyping,

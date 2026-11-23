@@ -351,13 +351,6 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A flow carries a payload that does not conform to the feature it flows from or to, or takes its payload from an `in` feature of a port or delivers it to an `out` one (directions read through conjugation; SysML v2 §7.12.1, §7.16).
 - **Hint given:** Flow between features of the payload's definition, from an `out` feature to an `in` feature: `flow of Msg from a.p.msg to b.q.msg;` with `out item msg : Msg` in `P` and `b.q : ~P`.
 
-### `validation/exchange-allocation`
-
-- **Severity:** warning
-- **Source:** validation
-- **Fires when:** A flow is allocated to a connection or interface whose ends are not on the components its functions are allocated to, whose ports do not carry its item out of the sender and into the receiver, or it is allocated to more than one; or a connection is allocated to a connection between nodes its components are not deployed on (Arcadia §19.10–19.11, §20.4, §21.9; the allocation itself is legal SysML v2, §7.15).
-- **Hint given:** Allocate each flow to the one link between the components its two functions are allocated to, in the same direction: `allocate command to ground; allocate execute to drone; connection cmdLink connect ground.cmdOut to drone.cmdIn; allocate cmdFlow to cmdLink;` with the flow's item an `out` feature of `cmdOut`'s port def and `in` under `~`. Allocate a link to a physical connection only between the nodes its components are allocated to.
-
 ### `validation/port-typing`
 
 - **Severity:** warning
@@ -455,6 +448,34 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Source:** validation
 - **Fires when:** A variant usage has a kind (part, action, ...) inconsistent with its owning variation (SysML v2 §7.6.7). A variant naming a separately declared usage carries no kind and is not checked.
 - **Hint given:** Use the same kind keyword as the variation, e.g. `variant part` inside a `variation part def`.
+
+### `validation/variation-abstract-keyword`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A definition or usage is written with both `abstract` and `variation` (SysML v2 §7.6.7: a variation is always abstract, so the keyword is not used on it).
+- **Hint given:** Drop `abstract`; `variation` already makes it abstract.
+
+### `validation/variation-enum-keyword`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** An enumeration definition is written with `abstract` or `variation`, or an enumerated value with `variant` (SysML v2 §7.8.2: an enumeration definition is always a variation and its values are its variants).
+- **Hint given:** Remove the keyword; write `enum def Color { enum red; enum green; }`.
+
+### `validation/variation-variant-not-specializing`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A variant's declared type does not specialize anything its variation is declared against (SysML v2 §8.4.2.3: a variant specializes its variation). Skipped when a type is unresolved or a variant names a separate usage.
+- **Hint given:** Type the variant by the variation's type or one of its specializations.
+
+### `validation/variation-usage-typed-by-variation`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A variation usage is typed by a variation definition (`variation part e : EngineChoices`). SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.
+- **Hint given:** Type the usage by a non-variation definition and list the variants in the usage, or make it a plain usage typed by the variation definition.
 
 ### `validation/requirement-subject`
 
@@ -1013,6 +1034,13 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** The number of valid configurations of a superset owner (AO12), exact unless constraints were not read (then an upper bound), with core and dead variants.
 - **Hint given:** This is a fact about the model, not a finding.
 
+### `verification/variability-connection-broken`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A connector of a superset owner is ill-typed (SysML v2 §7.12.1 port conformance, or no shared port definition) once the chosen variants of a valid configuration, or of a configuration usage, redefine the ports it joins. A connector already ill-typed in the superset is `connection-compatibility`'s finding and is not repeated.
+- **Hint given:** Make the variant keep the port type (or a conforming one), or choose a different variant for that configuration.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -1132,4 +1160,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*148 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*152 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

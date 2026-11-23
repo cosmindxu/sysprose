@@ -113,3 +113,57 @@ describe('validation — variability (SysML v2 §7.6.7, §8.4.2.3)', () => {
     });
   });
 });
+
+describe('validation — variability spec fences (warnings)', () => {
+  const FENCES = [
+    'variation-abstract-keyword',
+    'variation-enum-keyword',
+    'variation-variant-not-specializing',
+    'variation-usage-typed-by-variation',
+  ];
+  const fences = (src: string) => FENCES.flatMap((id) => run(src, id));
+
+  it('are registered as warnings', () => {
+    for (const id of FENCES) expect(RULES_BY_ID.get(id)!.severity).toBe('warning');
+  });
+
+  it('abstract with variation (p1) is flagged; variation alone and abstract alone are silent', () => {
+    const d = run('package P { part def Engine; abstract variation part def EC :> Engine { variant part a : Engine; } }', 'variation-abstract-keyword');
+    expect(d).toHaveLength(1);
+    expect(d[0].message).toContain('§7.6.7');
+    expect(fences('package P { part def E; variation part def V :> E { variant part a : E; } abstract part def A; }')).toEqual([]);
+  });
+
+  it('a keyword on an enumeration (p5) is flagged; a plain enum def is silent', () => {
+    const d = run('package P { variation enum def C3 { variant enum x; } abstract enum def D { enum q; } }', 'variation-enum-keyword');
+    expect(d).toHaveLength(3);
+    expect(d[0].message).toContain('§7.8.2');
+    expect(fences('package P { enum def Color { enum red; enum green; } enum def C2 :> Color { enum blue; } }')).toEqual([]);
+  });
+
+  it('a variant that does not specialize its variation (p4) is flagged, definition and usage forms', () => {
+    const d = run(
+      'package P { part def Engine; part def Other; variation part def EC :> Engine { variant part a : Other; } part v { variation part e : Engine { variant part b : Other; } } }',
+      'variation-variant-not-specializing',
+    );
+    expect(d).toHaveLength(2);
+    expect(d[0].message).toContain('§8.4.2.3');
+  });
+
+  it('a conforming variant, a reference-form variant and an unresolved type stay silent', () => {
+    const src = `package P { part def Engine; part def Small :> Engine; part sm : Small;
+      variation part def EC :> Engine { variant part a : Small; variant part b : Engine; }
+      part v { variation part e : Engine { variant part c : Small; variant sm; } } }`;
+    expect(fences(src)).toEqual([]);
+  });
+
+  it('a variation usage typed by a variation definition (l.17210, A.12 form) is flagged; typing by a plain definition is silent', () => {
+    const bad = 'package P { part def T; variation part def TC :> T { variant part m : T; } part v { variation part tr : TC; } }';
+    const d = run(bad, 'variation-usage-typed-by-variation');
+    expect(d).toHaveLength(1);
+    expect(d[0].message).toContain('contradicts the normative text');
+    expect(fences(EXAMPLES.e1)).toEqual([]);
+    expect(fences('package P { part def T; part v { variation part tr : T { variant part m : T; } } }')).toEqual([]);
+    expect(run(EXAMPLES.a12, 'variation-usage-typed-by-variation')).toHaveLength(1);
+  });
+});

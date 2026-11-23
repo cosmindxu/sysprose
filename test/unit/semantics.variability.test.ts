@@ -273,3 +273,47 @@ describe('catalogue agreement', () => {
     }
   });
 });
+
+describe('variability — per-configuration connection typing (p12)', () => {
+  const CAR = (bigPort: string) => `package P {
+    port def Pw; port def Sg;
+    part def Eng { port p : Pw; }
+    part def Ecu { port q : Pw; }
+    part def Car {
+      variation part eng : Eng { variant part small : Eng; variant part big : Eng { port :>> p : ${bigPort}; } }
+      part ecu : Ecu;
+      connect eng.p to ecu.q;
+    }
+    part c1 : Car { part :>> eng = eng::big; }
+    part c2 : Car { part :>> eng = eng::small; }
+  }`;
+
+  it('a variant retyping a port to an incompatible type breaks the connection in that configuration only', () => {
+    const r = variabilityReport(parseModel(CAR('Sg')).model);
+    const o = r.owners[0];
+    expect(o.analysis!.valid).toBe(2);
+    expect(o.analysis!.connectionBroken).toHaveLength(1);
+    expect(o.analysis!.connectionBroken[0].configuration).toContain('big');
+    const c1 = o.configurations.find((c) => c.name.endsWith('c1'))!;
+    const c2 = o.configurations.find((c) => c.name.endsWith('c2'))!;
+    expect(c1.connectionBroken).toHaveLength(1);
+    expect(c2.connectionBroken).toBeUndefined();
+    expect(r.verdict.connectionBroken).toBe(2);
+    expect(r.exitCode).toBe(1);
+    expect(r.diagnostics.filter((d) => d.code === VARIABILITY_CODES.connectionBroken)).toHaveLength(2);
+    expect(variabilityLines(r, 'p12').join('\n')).toContain('CONNECTION BROKEN');
+  });
+
+  it('a variant keeping a conforming port type leaves every configuration clean', () => {
+    const r = variabilityReport(parseModel(CAR('Pw')).model);
+    expect(r.owners[0].analysis!.connectionBroken).toEqual([]);
+    expect(r.verdict.connectionBroken).toBe(0);
+    expect(r.exitCode).toBe(0);
+  });
+
+  it('a connector already ill-typed in the superset is not repeated (connection-compatibility owns it)', () => {
+    const src = CAR('Pw').replace('port q : Pw', 'port q : Sg');
+    const r = variabilityReport(parseModel(src).model);
+    expect(r.owners[0].analysis!.connectionBroken).toEqual([]);
+  });
+});
