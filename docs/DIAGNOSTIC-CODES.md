@@ -1237,4 +1237,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*161 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*163 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

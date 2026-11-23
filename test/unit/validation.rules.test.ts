@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 49 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(49);
+  it('exposes all 51 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(51);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
