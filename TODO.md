@@ -1857,11 +1857,13 @@ and §21.4–21.11.
       (SysML v2 §7.17: the performed action is the usage's referenced feature, a ReferenceSubsetting).
       `exchange-allocation` resolves the name from the performer's scope until it is mapped; every
       other reader of `perform` sees a fresh action. [xalloc]
-- [ ] **Exchange allocation — completeness and the views.** `exchange-allocation` judges the
-      allocations a model writes (Arcadia §19.10–19.11, §20.4, §21.9). Still open: a flow between
-      functions on two components with no allocation at all (§20.4 "doit être implémenté"), a
-      functional port realised by no port (§20.3), the ICD table (one row per exchange: functional,
-      logical, physical) and the Interconnection overlay. [xalloc]
+- [ ] **Exchange allocation — the views.** `exchange-allocation` judges the allocations a model
+      writes (Arcadia §19.10–19.11, §20.4, §21.9); `exchange-unallocated` flags a flow between
+      functions on two components that no connection carries, in a scope that allocates flows (§20.4);
+      `functional-port-realisation` judges `allocate fn.p to comp.q` (§20.3). Still open: the ICD
+      table (one row per exchange: functional, logical, physical), the Interconnection overlay, and
+      a function parameter with no port realisation at all (not judged: opt-in only where written).
+      [xalloc]
 - [ ] **Read the cross multiplicity on a connector end.** `connect [2] a.p to [1] b.q` parses
       (`connSrcMult`/`connTgtMult`) and the multiplicity is dropped without a note (SysML v2
       §8.2.2.13 `OwnedCrossMultiplicityMember`). Store it, write it back on Save, and read it where

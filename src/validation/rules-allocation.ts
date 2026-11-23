@@ -35,7 +35,7 @@
 import type { ElementId, ElementRecord, Model } from '@core/index';
 import { payloadOf } from '../semantics/connectors';
 import { generalizationsOf } from '../semantics/inheritance';
-import { declaredDefinitions, directedFeaturesOf, payloadDefinition } from '../semantics/port-conformance';
+import { declaredDefinitions, declaredDirection, directedFeaturesOf, payloadDefinition } from '../semantics/port-conformance';
 import { resolveName } from '../semantics/resolve-names';
 import type { Diagnostic, ValidationRule } from './types';
 
@@ -267,6 +267,146 @@ export const exchangeAllocation: ValidationRule = {
         `"${label(model, flow)}" is allocated to ${distinct.length} exchanges (${distinct.map((t) => label(model, t)).join(', ')}); a functional exchange is implemented by one and only one exchange (Arcadia §20.4).`,
         anchor?.id ?? flow,
       );
+    }
+    return out;
+  },
+};
+
+/** The nearest enclosing package (or namespace) of an element: the scope a layer's allocations are read in. */
+function scopeOf(model: Model, el: ElementRecord): ElementId | undefined {
+  const seen = new Set<ElementId>();
+  let cur: ElementRecord | undefined = el.ownerId ? model.get(el.ownerId) : undefined;
+  while (cur && !seen.has(cur.id)) {
+    if (cur.eClass === 'Package' || cur.eClass === 'LibraryPackage') return cur.id;
+    seen.add(cur.id);
+    cur = cur.ownerId ? model.get(cur.ownerId) : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * `exchange-unallocated` — a flow between functions on two components that no
+ * connection carries (Arcadia §20.4: a functional exchange between functions on
+ * two components is implemented by one and only one component exchange between
+ * them; `exchange-allocation` owns "more than one").
+ *
+ * OPT-IN BY SHAPE. Judged only in a scope (nearest owning package) that already
+ * allocates at least one flow to a connection: that is a layer modelling the
+ * functional-to-component exchange allocation. A scope with none is silent.
+ * A flow whose functions share a host (same, containing or subsetting
+ * component), or whose end has no known host, is not judged.
+ */
+export const exchangeUnallocated: ValidationRule = {
+  id: 'exchange-unallocated',
+  description:
+    'A flow between functions on two different components, in a scope that allocates flows to connections, is allocated to no connection (Arcadia §20.4).',
+  severity: 'warning',
+  run(model) {
+    const out: Diagnostic[] = [];
+    const scopes = new Set<ElementId | undefined>();
+    const allocated = new Set<ElementId>();
+    for (const al of model.all()) {
+      if (al.attrs.isLibrary === true || !ALLOCATION_KINDS.has(al.eClass)) continue;
+      const from = al.source?.[0] ? model.get(al.source[0]) : undefined;
+      const to = al.target?.[0] ? model.get(al.target[0]) : undefined;
+      if (from && to && FLOW_KINDS.has(from.eClass) && LINK_KINDS.has(to.eClass)) {
+        scopes.add(scopeOf(model, al));
+        allocated.add(from.id);
+      }
+    }
+    if (scopes.size === 0) return out;
+    const idx = buildIndex(model);
+    let n = 0;
+    for (const f of model.all()) {
+      if (f.attrs.isLibrary === true || !FLOW_KINDS.has(f.eClass) || allocated.has(f.id)) continue;
+      if (!scopes.has(scopeOf(model, f))) continue;
+      const a = f.source?.[0];
+      const b = f.target?.[0];
+      if (a === undefined || b === undefined) continue;
+      const ha = hostsOf(model, idx, endOwner(model, a));
+      const hb = hostsOf(model, idx, endOwner(model, b));
+      if (ha.length === 0 || hb.length === 0) continue;
+      if (ha.some((x) => hb.some((y) => related(model, x, y)))) continue;
+      const on = (h: ElementId[]) => h.map((x) => label(model, x)).join(' or ');
+      out.push({
+        id: `exchange-unallocated#${n++}`,
+        ruleId: 'exchange-unallocated',
+        severity: 'warning',
+        message: `"${label(model, f.id)}" crosses from ${on(ha)} to ${on(hb)} and no connection carries it; allocate it to the connection between them (Arcadia §20.4).`,
+        elementId: f.id,
+      });
+    }
+    return out;
+  },
+};
+
+/**
+ * `functional-port-realisation` — a function's parameter allocated to a port
+ * (Arcadia §20.3: each functional port is realised by a component port).
+ * Judged only where `allocate fn.p to comp.q;` is written, with `q` a port:
+ *  - the port belongs to a host of the function (or a part it contains, or that
+ *    subsets it);
+ *  - the port carries the parameter's item in the parameter's direction
+ *    (`out` by `out`, `in` by `in`, `inout` either), read through conjugation;
+ *  - the item conforms (as for `exchange-allocation`, §21.9).
+ */
+export const functionalPortRealisation: ValidationRule = {
+  id: 'functional-port-realisation',
+  description:
+    'A function parameter is allocated to a port that is not on a component hosting the function, or that does not carry its item in its direction (Arcadia §20.3, §21.9).',
+  severity: 'warning',
+  run(model) {
+    const out: Diagnostic[] = [];
+    let idx: Index | undefined;
+    let typed: Map<ElementId, ElementRecord[]> | undefined;
+    const usagesOf = (def: ElementRecord): ElementRecord[] | undefined => {
+      if (!typed) {
+        typed = new Map();
+        for (const e of model.all()) {
+          if (e.attrs.isLibrary === true || !e.eClass.endsWith('Usage')) continue;
+          for (const d of declaredDefinitions(model, e.id)) typed.set(d.id, [...(typed.get(d.id) ?? []), e]);
+        }
+      }
+      return typed.get(def.id);
+    };
+    let n = 0;
+    const mk = (message: string, elementId: ElementId) =>
+      out.push({ id: `functional-port-realisation#${n++}`, ruleId: 'functional-port-realisation', severity: 'warning', message, elementId });
+    for (const al of model.all()) {
+      if (al.attrs.isLibrary === true || !ALLOCATION_KINDS.has(al.eClass)) continue;
+      const p = al.source?.[0] ? model.get(al.source[0]) : undefined;
+      const q = al.target?.[0] ? model.get(al.target[0]) : undefined;
+      if (!p || !q || q.eClass !== 'PortUsage' || isExchange(p)) continue;
+      // A parameter is a directed feature of the function (mapped as a PortUsage today) or a reference.
+      if (p.eClass !== 'ReferenceUsage' && p.eClass !== 'PortUsage') continue;
+      const fn = p.ownerId ? model.get(p.ownerId) : undefined;
+      if (!fn || !/Action|Calculation/.test(fn.eClass)) continue;
+      const what = `"${label(model, p.id)}" allocated to port "${label(model, q.id)}"`;
+      idx ??= buildIndex(model);
+      // `allocate ex.cmd to d.cmdIn` resolves to the features of the DEFINITIONS the
+      // usages are typed by, so a definition stands for the usages typed by it.
+      const isDef = fn.eClass.endsWith('Definition');
+      const hosts = isDef ? (usagesOf(fn) ?? []).flatMap((u) => hostsOf(model, idx!, u)) : hostsOf(model, idx, fn);
+      const owner = q.ownerId ? model.get(q.ownerId) : undefined;
+      const onOwner = (h: ElementId) =>
+        owner !== undefined &&
+        (related(model, h, owner.id) ||
+          (owner.eClass.endsWith('Definition') &&
+            declaredDefinitions(model, h).some((d) => d.id === owner.id || generalizationsOf(model, d.id).some((g) => g.id === owner.id))));
+      if (hosts.length > 0 && owner && !hosts.some(onOwner)) {
+        mk(`${what}: the port is on ${label(model, owner.id)}, but the function runs on ${[...new Set(hosts)].map((h) => label(model, h)).join(' or ')}; a functional port is realised by a port of the component that hosts the function (Arcadia §20.3).`, al.id);
+        continue;
+      }
+      const feats = directedFeaturesOf(model, q.id);
+      const dir = declaredDirection(model, p.id);
+      const def = declaredDefinitions(model, p.id)[0];
+      if (feats.length === 0 || !def || dir === undefined) continue;
+      const conforming = feats.filter((f) => conformsTo(model, f.el, def));
+      if (conforming.length === 0) {
+        mk(`${what}: the parameter carries ${def.declaredName}, but the port has no feature of that kind (it carries ${feats.map((f) => `${f.direction} ${f.name}`).join(', ')}); a functional port is realised by a port carrying the same item (Arcadia §20.3, §21.9).`, al.id);
+      } else if (dir !== 'inout' && !conforming.some((f) => f.direction === dir || f.direction === 'inout')) {
+        mk(`${what}: the parameter is \`${dir}\` but ${conforming[0]!.name} is \`${conforming[0]!.direction}\` on the port; an \`${dir}\` parameter is realised by a port that carries the item ${dir === 'out' ? 'out' : 'in'} (Arcadia §20.3, SysML v2 §7.12.1).`, al.id);
+      }
     }
     return out;
   },

@@ -376,6 +376,20 @@ const CODES = [
     hint: 'Allocate each flow to the one link between the components its two functions are allocated to, in the same direction: `allocate command to ground; allocate execute to drone; connection cmdLink connect ground.cmdOut to drone.cmdIn; allocate cmdFlow to cmdLink;` with the flow\'s item an `out` feature of `cmdOut`\'s port def and `in` under `~`. Allocate a link to a physical connection only between the nodes its components are allocated to.',
   },
   {
+    code: 'validation/exchange-unallocated',
+    source: 'validation',
+    severity: 'warning',
+    when: 'In a scope that already allocates flows to connections, a flow between functions hosted on two different components is allocated to no connection (Arcadia §20.4: a functional exchange between functions on two components is implemented by one and only one exchange between them).',
+    hint: 'Allocate the flow to the connection between the two components: `allocate cmdFlow to cmdLink;`, or add the connection `connection cmdLink connect ground.cmdOut to drone.cmdIn;` first.',
+  },
+  {
+    code: 'validation/functional-port-realisation',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A function parameter is allocated to a port that is not on a component hosting the function, or whose directed features do not carry the parameter\'s item in its direction (Arcadia §20.3, §21.9; SysML v2 §7.12.1).',
+    hint: 'Allocate the parameter to a port of the component that performs the function, carrying the same item the same way: `allocate execute.cmd to drone.cmdIn;` with `in item cmd : Cmd` on the port definition.',
+  },
+  {
     code: 'validation/port-typing',
     source: 'validation',
     severity: 'warning',
