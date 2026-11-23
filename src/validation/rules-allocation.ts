@@ -73,14 +73,27 @@ function endOwner(model: Model, endId: ElementId | undefined): ElementRecord | u
   return cur;
 }
 
-/** Is `a` the same feature as `b`, a container of it, or does one subset the other? */
+/**
+ * Is `a` the same feature as `b`, a container of it, or does one subset the other?
+ *
+ * Containment is read through typing too: `ctl.sub` resolves to the feature
+ * `Ctl::sub` owned by the definition `Ctl`, so a feature owned (at any depth) by
+ * a definition of `outer`, or by one it specialises, is inside `outer`. A
+ * component and its own sub-component are joined by delegation, never by a
+ * component exchange between them (Arcadia §20.4).
+ */
 function related(model: Model, a: ElementId, b: ElementId): boolean {
   if (a === b) return true;
   const within = (inner: ElementId, outer: ElementId) => {
+    const defs = new Set<ElementId>();
+    for (const d of declaredDefinitions(model, outer)) {
+      defs.add(d.id);
+      for (const g of generalizationsOf(model, d.id)) defs.add(g.id);
+    }
     const seen = new Set<ElementId>();
     let cur = model.get(inner)?.ownerId ?? null;
     while (cur !== null && !seen.has(cur)) {
-      if (cur === outer) return true;
+      if (cur === outer || defs.has(cur)) return true;
       seen.add(cur);
       cur = model.get(cur)?.ownerId ?? null;
     }

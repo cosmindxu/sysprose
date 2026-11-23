@@ -141,6 +141,46 @@ describe('exchange-unallocated and function-port-allocation', () => {
     expect(m.some((x) => /viaPerform/.test(x))).toBe(true);
   });
 
+  it('I1: a function on a sub-component of the other host is not a crossing (delegation, not an exchange)', async () => {
+    // `ctl.sub` resolves to `Ctl::sub`, owned by the definition typing `ctl`: inside it, read through typing.
+    const inside = `package P {
+  item def Cmd; item def Rep;
+  port def CmdPort { out item c : Cmd; }
+  part def Ctl { out port o : CmdPort; part sub : Sub; }
+  part def Sub;
+  part def Act { in port i : ~CmdPort; }
+  action def Send { out c : Cmd; }
+  action def Recv { in c : Cmd; }
+  part sys {
+    part ctl : Ctl; part act : Act; part act2 : Act;
+    connection link connect ctl.o to act.i;
+    action send : Send; action recv : Recv; action recv2 : Recv; action other : Recv;
+    flow f1 of Cmd from send.c to recv.c;
+    flow f3 of Cmd from send.c to other.c; allocate f1 to link;
+    allocate send to ctl; allocate recv to act; allocate recv2 to act2; allocate other to ctl.sub;
+  }
+}`;
+    expect(exchangeUnallocated.run(await bound(inside)).map((x) => x.message)).toEqual([]);
+    const across = `package P {
+  item def Cmd; item def Rep;
+  port def CmdPort { out item c : Cmd; }
+  part def Ctl { out port o : CmdPort; part sub : Sub; }
+  part def Sub;
+  part def Act { in port i : ~CmdPort; }
+  action def Send { out c : Cmd; }
+  action def Recv { in c : Cmd; }
+  part sys {
+    part ctl : Ctl; part act : Act; part act2 : Act;
+    connection link connect ctl.o to act.i;
+    action send : Send; action recv : Recv; action recv2 : Recv; action other : Recv;
+    flow f1 of Cmd from send.c to recv.c;
+    allocate f1 to link; flow f2 of Cmd from send.c to recv2.c;
+    allocate send to ctl; allocate recv to act; allocate recv2 to act2; allocate other to ctl;
+  }
+}`;
+    expect(exchangeUnallocated.run(await bound(across)).map((x) => x.message)).toHaveLength(1);
+  });
+
   it('I1: a flow with an unhosted end is silent', async () => {
     expect(await runR(exchangeUnallocated, 'allocate cmdFlow to cmdLink; allocate reportFlow to reportLink; action loose : Show; flow lf of Report from execute.report to loose.report;')).toEqual([]);
   });
