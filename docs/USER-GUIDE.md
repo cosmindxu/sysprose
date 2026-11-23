@@ -4814,6 +4814,15 @@ active leaf, which is how you name a `done` node), `trigger t` (the event
 offered on this step), `fires T` (a named transition fired), or an **expression**
 — read by the same parser your guards are read with, over the same store.
 
+**Combining `state` atoms**: `state A and state B`, `state A or state B`,
+`not state A` and parentheses (`not` over `and` over `or`) are read at one
+observation, over the same active stack a plain `state X` reads. On a parallel
+machine `absence of state a2 and state b2` is the mutual-exclusion claim for two
+regions. `state r1::a2` names a state by the tail of its qualified name. A name
+that matches no state, or several, refuses the whole property
+(`verification/unknown-atom`); a leaf that is a trigger, a transition or an
+expression is not mixed in.
+
 **A property lives in the model, as §7.27 metadata.** `--pattern` is for trying
 one out; the carrier is how a claim stays with the machine it is about, and it
 is checked *beside* whatever you type, never instead of it:

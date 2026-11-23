@@ -58,7 +58,34 @@ export const UNKNOWN_ATOM_CODE = 'verification/unknown-atom';
 export const MALFORMED_PROPERTY_CODE = 'verification/malformed-property';
 
 /** How an atom is spelled, which is also how it is observed. */
-export type AtomKind = 'state' | 'trigger' | 'fires' | 'node' | 'expression';
+export type AtomKind = 'state' | 'trigger' | 'fires' | 'node' | 'expression' | 'formula';
+
+/**
+ * A Boolean combination of state-occupancy atoms: `state A and state B`, `state A or state B`, `not state A`.
+ *
+ * Over the ACTIVE STATES of one configuration, the same set a plain `state X` reads (`activeStatesOf`), so on a
+ * parallel machine `state a2 and state b2` asks whether two regions are in those states in ONE configuration.
+ * Leaves are `state` atoms only: a leaf that is a trigger, a transition or a store expression is a different kind of
+ * observation (a step, a value) and is refused rather than mixed in.
+ */
+export type StateFormula =
+  | { readonly op: 'state'; readonly id: ElementId }
+  | { readonly op: 'not'; readonly a: StateFormula }
+  | { readonly op: 'and' | 'or'; readonly a: StateFormula; readonly b: StateFormula };
+
+/** Does the formula hold where exactly these states are active? */
+export function formulaHolds(f: StateFormula, active: readonly ElementId[]): boolean {
+  switch (f.op) {
+    case 'state':
+      return active.includes(f.id);
+    case 'not':
+      return !formulaHolds(f.a, active);
+    case 'and':
+      return formulaHolds(f.a, active) && formulaHolds(f.b, active);
+    case 'or':
+      return formulaHolds(f.a, active) || formulaHolds(f.b, active);
+  }
+}
 
 /** One resolved atom: what it observes, and what it was written as. */
 export interface Atom {
@@ -77,6 +104,8 @@ export interface Atom {
   readonly elementId?: ElementId;
   /** The qualified name of {@link elementId}, so a report never prints a raw id. */
   readonly qualifiedName?: string;
+  /** For kind `formula`: the combination over state occupancy. */
+  readonly formula?: StateFormula;
 }
 
 /** Why an atom was refused, in the words the row prints. */
@@ -207,7 +236,13 @@ function resolveNamed(
   text: string,
 ): AtomResult {
   const hits = candidates.filter(
-    (c) => c.declaredName === name || model.qualifiedName(c.id) === name,
+    (c) => {
+      if (c.declaredName === name) return true;
+      const qn = model.qualifiedName(c.id);
+      // `r1::a2` names the state by the tail of its qualified name, on a segment boundary — a name a reader can
+      // write to tell two same-named states of different regions apart. Still refused when it names several.
+      return qn === name || (name.includes('::') && qn.endsWith(`::${name}`));
+    },
   );
   if (hits.length === 1) {
     return {
@@ -252,6 +287,128 @@ function resolveNamed(
   };
 }
 
+/** Tokens of a state-occupancy formula: parentheses, and words (a quoted name keeps its spaces). */
+function formulaTokens(text: string): string[] | null {
+  const out: string[] = [];
+  let cur = '';
+  let quoted = false;
+  const flush = (): void => {
+    if (cur !== '') out.push(cur);
+    cur = '';
+  };
+  for (const ch of text) {
+    if (ch === "'") {
+      quoted = !quoted;
+      cur += ch;
+    } else if (quoted) cur += ch;
+    else if (ch === '(' || ch === ')') {
+      flush();
+      out.push(ch);
+    } else if (/\s/.test(ch)) flush();
+    else cur += ch;
+  }
+  if (quoted) return null;
+  flush();
+  return out;
+}
+
+type FormulaTree =
+  | { readonly op: 'name'; readonly name: string }
+  | { readonly op: 'not'; readonly a: FormulaTree }
+  | { readonly op: 'and' | 'or'; readonly a: FormulaTree; readonly b: FormulaTree };
+
+/**
+ * Parse `state X`, `not F`, `F and F`, `F or F`, `( F )`; `not` binds tighter than `and`, `and` tighter than `or`.
+ * Returns null where the text is not that grammar, so the caller falls back to the reading it had before.
+ */
+function parseFormula(tokens: readonly string[]): { tree: FormulaTree; connectives: number } | null {
+  let i = 0;
+  let connectives = 0;
+  const atom = (): FormulaTree | null => {
+    const t = tokens[i];
+    if (t === undefined) return null;
+    if (t === 'not') {
+      i++;
+      connectives++;
+      const a = atom();
+      return a === null ? null : { op: 'not', a };
+    }
+    if (t === '(') {
+      i++;
+      const e = or();
+      if (e === null || tokens[i] !== ')') return null;
+      i++;
+      connectives++;
+      return e;
+    }
+    if (t === 'state') {
+      const n = tokens[i + 1];
+      if (n === undefined || n === '(' || n === ')') return null;
+      i += 2;
+      return { op: 'name', name: n };
+    }
+    return null;
+  };
+  const and = (): FormulaTree | null => {
+    let a = atom();
+    while (a !== null && tokens[i] === 'and') {
+      i++;
+      connectives++;
+      const b = atom();
+      if (b === null) return null;
+      a = { op: 'and', a, b };
+    }
+    return a;
+  };
+  const or = (): FormulaTree | null => {
+    let a = and();
+    while (a !== null && tokens[i] === 'or') {
+      i++;
+      connectives++;
+      const b = and();
+      if (b === null) return null;
+      a = { op: 'or', a, b };
+    }
+    return a;
+  };
+  const tree = or();
+  return tree === null || i !== tokens.length ? null : { tree, connectives };
+}
+
+/**
+ * `state A and state B`, `state A or state B`, `not state A`, resolved against the machine. A leaf that names no state,
+ * or several, refuses the WHOLE property (`resolveNamed`): an unresolved leaf is never read as false.
+ */
+function readFormula(model: Model, machineId: ElementId, text: string): AtomResult | null {
+  const tokens = formulaTokens(text);
+  if (tokens === null) return null;
+  const parsed = parseFormula(tokens);
+  if (parsed === null || parsed.connectives === 0) return null;
+  const pool = statesOf(model, machineId);
+  let refusal: AtomRefusal | null = null;
+  const build = (t: FormulaTree): StateFormula | null => {
+    if (t.op === 'not') {
+      const a = build(t.a);
+      return a === null ? null : { op: 'not', a };
+    }
+    if (t.op === 'name') {
+      const name = t.name.includes("'") ? refSegments(t.name).join('::') : t.name;
+      const r = resolveNamed(model, pool, name, 'state', `state ${t.name}`);
+      if (!r.ok) {
+        refusal ??= r.refusal;
+        return null;
+      }
+      return { op: 'state', id: r.atom.elementId! };
+    }
+    const a = build(t.a);
+    const b = build(t.b);
+    return a === null || b === null ? null : { op: t.op, a, b };
+  };
+  const formula = build(parsed.tree);
+  if (formula === null) return { ok: false, refusal: refusal! };
+  return { ok: true, atom: { kind: 'formula', text, argument: text, formula } };
+}
+
 /**
  * Read one atom, resolved against the machine it is about.
  *
@@ -274,6 +431,11 @@ export function readAtom(model: Model, machineId: ElementId, raw: string): AtomR
         candidates: [],
       },
     };
+  }
+  // A Boolean combination of `state` atoms; any other text that is not one reads as it did before.
+  if (text.startsWith('state ') || text.startsWith('not ') || text.startsWith('(')) {
+    const combined = readFormula(model, machineId, text);
+    if (combined !== null) return combined;
   }
   for (const kw of KEYWORDS) {
     if (!text.startsWith(`${kw} `)) continue;
@@ -365,6 +527,8 @@ export function atomHolds(model: Model, atom: Atom, obs: Observation): boolean |
       return obs.input?.kind === 'trigger' && obs.input.trigger === atom.argument;
     case 'fires':
       return obs.fired !== undefined ? obs.fired.includes(atom.elementId!) : obs.transition?.id === atom.elementId;
+    case 'formula':
+      return formulaHolds(atom.formula!, activeStatesOf(obs.config));
     case 'expression': {
       const scope = regionScope(model, obs.config.regionId);
       const value = evalStr(atom.argument, obs.config.store, scope);
