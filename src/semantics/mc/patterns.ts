@@ -3322,12 +3322,8 @@ function recoveryRow(
   const id = atom.elementId!;
   const targets: number[] = [];
   for (let i = 0; i < walk.configs; i++) {
-    const holds =
-      atom.kind === 'formula'
-        ? formulaHolds(atom.formula!, walk.configStates[i])
-        : atom.kind === 'state'
-          ? walk.configStates[i].includes(id)
-          : leafHolds(walk, i, id);
+    // prettier-ignore
+    const holds = atom.kind === 'formula' ? formulaHolds(atom.formula!, walk.configStates[i]) : atom.kind === 'state' ? walk.configStates[i].includes(id) : leafHolds(walk, i, id);
     if (holds) targets.push(i);
   }
   const withheld = {

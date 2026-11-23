@@ -3958,7 +3958,14 @@ neither. The line names the gap only where there is one, and a `never fired`
 row under the `dead` rows names each transition in it (`t65 (c65 -> c66) —
 enabled where a run reaches, and taken by no run: …`); the row has no code,
 since a step the budget or the priority rule keeps a run from taking is the
-interpreter doing what the profile says, not a defect. Both are withheld with
+interpreter doing what the profile says, not a defect.
+
+`reach` also prints one `events` line per machine that names a trigger: how many
+of its reachable states ignore at least one event of the alphabet (neither they
+nor a state around them accept it; there is no event pool, so it is dropped
+there), with the first few named. It is a reading, not a defect: no code, no
+verdict, no exit code, and states inside parallel regions are not read (a sibling
+region may take the event). `--json` carries it as `eventCompleteness`. Both are withheld with
 the `dead` rows, over a walk that did not finish. `--json` carries the same
 count as `transitions.fired`, and the transitions in the gap as
 `transitions.enabledNeverFired`.

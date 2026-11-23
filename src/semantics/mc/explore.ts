@@ -115,6 +115,7 @@ import {
   seedStore,
   defaultsReadBy,
   stepOutsideStates,
+  isParallelState,
   triggerLabelOf,
   type EnabledTransition,
   type MachineConfig,
@@ -3163,6 +3164,67 @@ export function livelockWithheldFinding(
 
 /* ─────────────────────────────── the report ─────────────────────────────── */
 
+/** The event-completeness reading of one machine ({@link eventCompletenessOf}). */
+export interface EventCompleteness {
+  /** The events of the machine's alphabet. */
+  readonly alphabet: readonly string[];
+  /** Reachable states read: not inside a region of a parallel state (an event a sibling region takes is not this state's). */
+  readonly statesRead: number;
+  /** States inside a region of a parallel state, left unread. */
+  readonly statesSkipped: number;
+  /** The states (a state counts under its own and its enclosing states' transitions) with at least one ignored event. */
+  readonly states: readonly { readonly state: StateRef; readonly ignored: readonly string[] }[];
+}
+
+/**
+ * Per reachable state, the alphabet events no transition from it or from an enclosing state accepts. A guard does not
+ * make a transition stop accepting its event for this reading: it is about what the model SAYS it handles. There is no
+ * deferral in this semantics (`triggerEquals` is exact, no event pool), so handled is the only way to not ignore one.
+ */
+function eventCompletenessOf(
+  model: Model,
+  machineId: ElementId,
+  walk: ExploreResult,
+  transitions: readonly ElementRecord[],
+  states: readonly ElementRecord[],
+): EventCompleteness | null {
+  const alphabet = walk.bounds.alphabet;
+  if (alphabet.length === 0) return null;
+  const accepted = new Map<ElementId, Set<string>>();
+  for (const t of transitions) {
+    const label = triggerLabelOf(t);
+    if (label === '' || t.source === undefined || t.source === null) continue;
+    const from = t.source[0];
+    const set = accepted.get(from) ?? new Set<string>();
+    set.add(label);
+    accepted.set(from, set);
+  }
+  const out: { state: StateRef; ignored: string[] }[] = [];
+  let read = 0;
+  let skipped = 0;
+  for (const st of states) {
+    if (!walk.reachable.has(st.id)) continue;
+    const handled = new Set<string>();
+    let inRegion = false;
+    for (let p: ElementId | null = st.id; p != null; p = model.get(p)?.ownerId ?? null) {
+      for (const e of accepted.get(p) ?? []) handled.add(e);
+      if (p !== st.id && p !== machineId && isParallelState(model, p)) inRegion = true;
+      if (p === machineId) break;
+    }
+    // The machine itself is a parallel state: its states are its regions' too.
+    if (st.id !== machineId && isParallelState(model, machineId)) inRegion = true;
+    if (inRegion) {
+      skipped++;
+      continue;
+    }
+    read++;
+    const ignored = alphabet.filter((e) => !handled.has(e));
+    if (ignored.length > 0) out.push({ state: stateRef(model, st.id), ignored });
+  }
+  if (read === 0) return null;
+  return { alphabet, statesRead: read, statesSkipped: skipped, states: out };
+}
+
 /** One machine's answer. */
 export interface MachineReach {
   machine: StateRef & { eClass: string };
@@ -3207,6 +3269,13 @@ export interface MachineReach {
      */
     enabledNeverFired: readonly TransitionRef[];
   };
+  /**
+   * Event completeness, as a READING and never a finding: per reachable state, the events of the machine's alphabet
+   * that neither it nor a state around it accepts. The interpreter has no event pool, so such an event is dropped
+   * there (`docs/06`); the standard has no completeness rule, so nothing here is a defect, a diagnostic or a
+   * verdict. `null` where the machine names no trigger or no state was read.
+   */
+  eventCompleteness: EventCompleteness | null;
   nondeterminism: readonly NondeterministicChoice[];
   /**
    * The rows that MAY be stated — one per reached configuration with no enabled
@@ -3686,6 +3755,7 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
       walkIsExact: gate.walkIsExact,
       failedClause: gate.failedClause,
     },
+    eventCompleteness: eventCompletenessOf(model, machine.id, walk, transitions, states),
     nondeterminism: walk.nondeterminism,
     // Gated on the guards ALONE, not on `publishable`. A deadlock row says one
     // configuration the walk REACHED had no enabled edge out, and a bound
