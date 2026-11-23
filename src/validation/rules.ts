@@ -56,7 +56,16 @@ import {
 } from '../semantics/units-eval';
 import type { Diagnostic, Severity, ValidationRule } from './types';
 import { directedFeaturesOf } from '../semantics/port-conformance';
-import { bindingConformance, multiplicityConformance } from './rules-structure';
+import {
+  bindingConformance,
+  disjointSumExceeds,
+  enumValueNotMember,
+  multiplicityConformance,
+  specializationKindIncompatible,
+  subsetTypeConformance,
+  unresolvedValueChain,
+  valueMultiplicityMismatch,
+} from './rules-structure';
 import { connectionCompatibility, flowEndCompatibility, interfaceEndConformance, portTyping } from './rules-connection';
 import { exchangeAllocation } from './rules-allocation';
 // The one import this layer makes of `src/api`, and it is deliberate rather
@@ -1971,6 +1980,12 @@ export const RULES: ValidationRule[] = [
   exchangeAllocation,
   multiplicityConformance,
   bindingConformance,
+  subsetTypeConformance,
+  disjointSumExceeds,
+  enumValueNotMember,
+  valueMultiplicityMismatch,
+  specializationKindIncompatible,
+  unresolvedValueChain,
 ];
 
 /** Rule lookup by id. */

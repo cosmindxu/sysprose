@@ -561,6 +561,48 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** The two ends of a `bind a = b` are typed by types that neither specialises the other (`x : Real` bound to `y : String`), or declare multiplicities with no cardinality in common (`[1]` against `[2..3]`).
 - **Hint given:** Bind features of compatible types (the same type or one specialising the other), or fix the type or multiplicity of one end.
 
+### `validation/subset-type-conformance`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A feature that declares a type and subsets another feature whose type it does not specialise (`part b : B subsets a` over `part a : A`, neither of A and B specialising the other): its values are not values of the subsetted feature (§7.6.1).
+- **Hint given:** Type the subsetting feature with the subsetted feature’s type or a specialization of it, or subset a feature of its own type.
+
+### `validation/disjoint-sum-exceeds`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset’s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`).
+- **Hint given:** Lower a lower bound, raise the superset’s upper bound, or drop the disjoint declaration.
+
+### `validation/enum-value-not-member`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A feature typed by an enumeration definition is bound to `Color::blue` where `Color` has no `blue`, to a literal of another enumeration definition, or to a number, Boolean or string where the enumeration definition specialises no attribute definition (§7.8.2).
+- **Hint given:** Bind the feature to one of the enumeration definition’s literals, or add the literal to the definition.
+
+### `validation/value-multiplicity-mismatch`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals with fewer values than its lower bound (`attribute a : Real [2] = 3.0`). A default or initial value is read only for the upper bound (§7.13.4).
+- **Hint given:** Make the multiplicity and the number of values written agree.
+
+### `validation/specialization-kind-incompatible`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A definition specialises a definition of another line of the metaclass hierarchy (`item def C :> attribute def V`, `part def B :> port def Q`), or an enumeration definition specialises another enumeration definition (§7.7.2, §7.8.2).
+- **Hint given:** Specialise a definition of the same kind, or of a kind your definition is a kind of (an item def may specialise an occurrence def; a part def, an item def).
+
+### `validation/unresolved-value-chain`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A value that is exactly a feature chain (`attribute bad : Real = e.nosuch`) whose head resolves to a usage with a resolved type that has no feature of the next name (§7.6.6).
+- **Hint given:** Name a feature the type of the previous name has, or add it to that type.
+
 ### `validation/redefinition-own-sibling`
 
 - **Severity:** warning
@@ -1181,4 +1223,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*155 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*161 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

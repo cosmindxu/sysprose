@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 43 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(43);
+  it('exposes all 49 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(49);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -862,6 +862,79 @@ describe('multiplicity-conformance and binding-conformance (BD2, BD4)', () => {
     expect(m).toHaveLength(1);
     expect(m[0]).toContain('no cardinality in common');
     expect(await run('part def D; part a : D [1..2]; part b : D [2..3]; bind a = b;', 'binding-conformance')).toEqual([]);
+  });
+});
+
+describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
+  const run = async (body: string, rule: string) => {
+    const r = await loadModelText(`package P { ${body} }`);
+    return runRule(r.model!, rule).map((d) => d.message);
+  };
+
+  it('BD3 subset-type-conformance: flags a subsetter whose type does not specialise the subsetted type', async () => {
+    const w = await run('part def A; part def B; part def X { part a : A [2]; part b : B subsets a; }', 'subset-type-conformance');
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('subsets');
+  });
+  it('BD3: silent on a specialising type, the same type and an untyped subsetter', async () => {
+    expect(await run('part def A; part def B :> A; part def X { part a : A [2]; part b : B subsets a; part c : A subsets a; part d subsets a; }', 'subset-type-conformance')).toEqual([]);
+  });
+
+  it('BD6 disjoint-sum-exceeds: flags disjoint subsets whose lower bounds exceed the superset', async () => {
+    const w = await run('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; part rear : W [3] subsets wheels; disjoint front from rear; }', 'disjoint-sum-exceeds');
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('add up to 6');
+  });
+  it('BD6: silent when not declared disjoint, when the sum fits, or when the lower bounds are below', async () => {
+    const car = (extra: string, fl: string, rl: string) => `part def W; part def Car { part wheels : W [4]; part front : W ${fl} subsets wheels; part rear : W ${rl} subsets wheels; ${extra} }`;
+    expect(await run(car('', '[3]', '[3]'), 'disjoint-sum-exceeds')).toEqual([]);
+    expect(await run(car('disjoint front from rear;', '[2]', '[2]'), 'disjoint-sum-exceeds')).toEqual([]);
+    expect(await run(car('disjoint front from rear;', '[0..3]', '[0..3]'), 'disjoint-sum-exceeds')).toEqual([]);
+  });
+
+  it('BD7 enum-value-not-member: flags a literal the enum lacks, another enum literal, a number', async () => {
+    const enums = 'enum def Color { red; green; } enum def Size { big; }';
+    expect(await run(`${enums} part def X { attribute c : Color = Color::blue; }`, 'enum-value-not-member')).toHaveLength(1);
+    expect(await run(`${enums} part def X { attribute d : Color = 3; }`, 'enum-value-not-member')).toHaveLength(1);
+    expect(await run(`${enums} part def X { attribute e : Color = Size::big; }`, 'enum-value-not-member')).toHaveLength(1);
+  });
+  it('BD7: silent on a member, an untyped attribute and an enum over an attribute def', async () => {
+    const enums = 'enum def Color { red; green; }';
+    expect(await run(`${enums} part def X { attribute c : Color = Color::red; attribute d = Color::blue; attribute e : Color; }`, 'enum-value-not-member')).toEqual([]);
+    expect(await run('attribute def Len :> Real; enum def Dia :> Len { small = 60.0; } part def X { attribute c : Dia = 60.0; }', 'enum-value-not-member')).toEqual([]);
+  });
+
+  it('BD8 value-multiplicity-mismatch: flags a list over a [1], and a literal below the lower bound', async () => {
+    expect(await run('part def X { attribute c : Real [1] = (1.0, 2.0); }', 'value-multiplicity-mismatch')).toHaveLength(1);
+    expect(await run('part def X { attribute b : Real [0..1] = (1, 2); }', 'value-multiplicity-mismatch')).toHaveLength(1);
+    const w = await run('part def X { attribute a : Real [2] = 3.0; }', 'value-multiplicity-mismatch');
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('below its lower bound');
+  });
+  it('BD8: silent on fitting counts, a default, a parenthesised expression and a non-literal', async () => {
+    expect(
+      await run('part def X { attribute a : Real [2] = (1.0, 2.0); attribute b : Real [2] default 3.0; attribute c : Real [1] = (1.0 + 2.0); attribute d : Real [2] = other; attribute e [1..*] = (1, 2, 3); attribute f : Real [1] = 4.0; }', 'value-multiplicity-mismatch'),
+    ).toEqual([]);
+  });
+
+  it('BD9 specialization-kind-incompatible: flags item def :> attribute def, part def :> port def, enum :> enum', async () => {
+    expect(await run('attribute def V; item def C :> V;', 'specialization-kind-incompatible')).toHaveLength(1);
+    expect(await run('port def Q; part def B :> Q;', 'specialization-kind-incompatible')).toHaveLength(1);
+    expect(await run('enum def E { a; } enum def F :> E { b; }', 'specialization-kind-incompatible')).toHaveLength(1);
+  });
+  it('BD9: silent on one line of the hierarchy and on attribute :> enum', async () => {
+    expect(await run('item def I; part def B :> I; part def C :> B; occurrence def O; item def D :> O; attribute def V; attribute def W :> V; enum def E { a; } attribute def Z :> E;', 'specialization-kind-incompatible')).toEqual([]);
+  });
+
+  it('BD11 unresolved-value-chain: flags a chain whose later name is not a feature', async () => {
+    const w = await run('part def E { attribute mass : Real; } part def Car { part e : E; attribute m : Real = e.mass; attribute bad : Real = e.nosuch; }', 'unresolved-value-chain');
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('nosuch');
+  });
+  it('BD11: silent on resolving chains, inherited features, an untyped head and an unresolved head', async () => {
+    expect(
+      await run('part def E { attribute mass : Real; } part def E2 :> E; part def Car { part e : E2; attribute m : Real = e.mass; part u; attribute x = u.anything; attribute y = nothere.mass; }', 'unresolved-value-chain'),
+    ).toEqual([]);
   });
 });
 
