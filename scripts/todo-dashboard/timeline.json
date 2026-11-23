@@ -4200,9 +4200,9 @@
   "open_raw": 75,
   "open": 75,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 40,
-   "POLISH": 33,
+   "FALSE": 5,
+   "WEAKER": 38,
+   "POLISH": 30,
    "HELD": 2
   },
   "new": 7,
@@ -4221,6 +4221,102 @@
    "HELD": 0
   },
   "cum_new": 341,
+  "cum_closed": 264
+ },
+ {
+  "idx": 132,
+  "sha": "e098343",
+  "when": "2026-11-22T22:11:26+01:00",
+  "day": "2026-11-22",
+  "subject": "Merge if-param: action parameters are not ports; a keyword-less item counts in a port definition",
+  "open_raw": 76,
+  "open": 76,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 38,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 1,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 342,
+  "cum_closed": 264
+ },
+ {
+  "idx": 133,
+  "sha": "d9def7b",
+  "when": "2026-11-23T14:04:35+01:00",
+  "day": "2026-11-23",
+  "subject": "Merge xalloc: exchange allocation \u2014 FE to CE (Arcadia \u00a720.4), items on the ports (\u00a721.9), CE to physical link (\u00a719.10\u201319.11)",
+  "open_raw": 78,
+  "open": 78,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 38,
+   "POLISH": 33,
+   "HELD": 2
+  },
+  "new": 2,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 2,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 344,
+  "cum_closed": 264
+ },
+ {
+  "idx": 134,
+  "sha": "eec8e9d",
+  "when": "2026-11-23T15:34:11+01:00",
+  "day": "2026-11-23",
+  "subject": "Merge combine-cov: liveness over whole graphs (sm-live), variability spec fences and per-configuration connections (var-fence), multiplicity",
+  "open_raw": 79,
+  "open": 79,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 41,
+   "POLISH": 36,
+   "HELD": 2
+  },
+  "new": 1,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 1,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 345,
   "cum_closed": 264
  }
 ]
