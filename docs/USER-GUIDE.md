@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (36 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (40 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -4899,6 +4899,10 @@ and changes nothing else — including the exit code.
 and the bad-prefix search), `src/semantics/mc/atoms.ts` (the five atom
 spellings), and `src/semantics/mc/explore.ts` for the walk they both stand on.
 
+### Variation rules the checker fences
+
+Beside the errors for a variant outside a variation, a non-variant member, a variation specializing a variation and a variant of the wrong kind, `sysml-check` warns (`validation/variation-*`) on four spec departures: `abstract` written with `variation` (§7.6.7: a variation is always abstract); `abstract`/`variation` on an `enum def` or `variant` on an enumerated value (§7.8.2); a variant whose type does not specialize its variation's type (§8.4.2.3); and a variation usage typed by a variation definition (`variation part tr : TransmissionChoices`). The last one follows the normative text of §8.4.2.3 (validateUsageVariationSpecialization: a variation usage may not specialize any variation definition or usage) although Annex A.12 writes the form: the annex example contradicts the text, and `sysprose variability` still reads such a usage.
+
 ### Variability: which configurations a family admits
 
 `sysprose variability <file> [--json]` reads the variation points of a model and
@@ -4908,8 +4912,8 @@ the `--json` payload (`verification/variability-*`) and a top-level `verdict`.
 **It judges, and an agent can act on the exit code alone:** **0** the model loaded
 clean, every configuration HOLDS its selection constraints, every family has a
 valid configuration and nothing was refused (`not read`, `not established`);
-**1** a decided negative: an INVALID selection, a VIOLATED selection constraint
-or a VOID family (it outranks a 2); **2** a usage/IO error, a degraded model, a
+**1** a decided negative: an INVALID selection, a VIOLATED selection constraint,
+a connection that breaks in a configuration or a VOID family (it outranks a 2); **2** a usage/IO error, a degraded model, a
 model with no variation point it reads, or anything undecided: a PARTIAL
 configuration, a refused selection or constraint, an owner not read, a variation
 with no variants, a HOLDS only over the constraints read, or a family past the
@@ -4951,6 +4955,18 @@ profile; in short:
 - **Per configuration:** complete (every active non-optional point selected):
   selection constraints HOLD or are VIOLATED, naming the constraint. Partial:
   whether it completes, one completion, and the variants the constraints FORCE.
+- **Connections per configuration.** The owner's connectors between ports
+  (`connect eng.p to ecu.q;`) are checked again with each chosen variant's
+  redefined port in place of the superset's (a variant writing `port :>> p : Sg;`).
+  A connector well-typed in the superset but ill-typed in a configuration
+  (SysML v2 §7.12.1 conformance, or port definitions that do not conform) is
+  `verification/variability-connection-broken`, an error and a decided negative.
+  It is reported for each valid family configuration and for each complete
+  configuration usage. The figure `valid` keeps its meaning (structure and
+  selection constraints); the configurations whose connection breaks are listed
+  separately under it, not subtracted. A connector already ill-typed in the
+  superset is `connection-compatibility`'s finding, and an end that is not a
+  feature owned directly by the point is not re-read.
 - **Per family:** void, the number of valid configurations, core variants (in every
   valid configuration), dead variants (in none) and false-optional points.
 

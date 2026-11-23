@@ -1886,3 +1886,5 @@ and §21.4–21.11.
       link through the SMT engine and link degradation fed to the fault tree; across: units and
       quantity kinds along flows and bindings.
 
+
+- Variability (var-fence): the per-configuration connection check re-reads only a connector end that is a feature owned directly by the point (`eng.p`); an end nested deeper under a variant (`eng.sub.p`), flows, and requirement/constraint checks per configuration are still superset-only (audit rows 17, 19; steps V4, V6). `variation-variant-not-specializing` skips a variant with an unresolved type and a reference-form variant.

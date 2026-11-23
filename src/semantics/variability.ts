@@ -70,6 +70,11 @@
  * (core/dead), and false-optional are the exact answers of the questions
  * AO10-AO15 (P4). A solver would be the way past the cap, and is not used.
  *
+ * CONNECTIONS. A connector of the owner between two ports is re-typed per configuration: an end that is a feature
+ * owned directly by a point is replaced by the chosen variant's feature that redefines it, and §7.12.1 conformance
+ * (portMismatches) or declared port-definition conformance decides. Newly broken connectors are
+ * `variability-connection-broken` (error, exit 1); `valid` is NOT reduced, the broken configurations are listed apart.
+ *
  * VERDICT AND EXIT CODE. `exitCode` and `verdict` follow VARIABILITY_EXIT_CODES
  * (scripts/lib/sysprose-spec.ts): 1 for a decided negative (INVALID, VIOLATED,
  * VOID), 2 for anything undecided or refused, 0 only when nothing is either. A
@@ -79,6 +84,9 @@
  * configuration where it is active, and active in at least one.
  */
 import type { ElementRecord, Model } from '@core/index';
+import { generalizationsOf } from './inheritance';
+import { connectorEndsOf } from './connectors';
+import { declaredDefinitions, definitionsConform, portMismatches } from './port-conformance';
 
 /** Diagnostic codes of this module (catalogued by the integrator). */
 export const VARIABILITY_CODES = {
@@ -94,6 +102,7 @@ export const VARIABILITY_CODES = {
   falseOptional: 'verification/variability-false-optional',
   notEstablished: 'verification/variability-not-established',
   family: 'verification/variability-family',
+  connectionBroken: 'verification/variability-connection-broken',
 } as const;
 
 /** The most structural configurations enumerated before the analyses are withheld. */
@@ -155,6 +164,19 @@ export interface FamilyAnalysis {
   excludedPoints: string[];
   /** The valid configurations, as `point = variant` lists (only when few). */
   configurations: string[][];
+  /**
+   * Valid configurations (they satisfy the structure and the constraints read) in which a connector of the owner
+   * is ill-typed once the chosen variants' redefined ports replace the superset's. `valid` still counts them
+   * (it answers the constraint question); they are listed here and make the verdict a decided negative.
+   */
+  connectionBroken: ConnectionBreak[];
+}
+
+export interface ConnectionBreak {
+  /** The configuration as `point = variant` text (family) or its name (a configuration usage). */
+  configuration: string;
+  connector: string;
+  why: string;
 }
 
 export type SelectionStatus = 'valid' | 'invalid' | 'not-read';
@@ -187,6 +209,8 @@ export interface ConfigurationReport {
   /** The ids of the violated constraints (names may repeat: `<anonymous>`). */
   violatedIds?: string[];
   blockedBy?: string[];
+  /** Connectors of the owner that are ill-typed under this (complete) selection. */
+  connectionBroken?: ConnectionBreak[];
   note?: string;
 }
 
@@ -207,6 +231,8 @@ export interface VariabilityVerdictCounts {
   /** Decided negatives: an INVALID selection, a VIOLATED constraint, a VOID family. */
   invalid: number;
   violated: number;
+  /** Configurations (family or usage) in which a connector breaks under the chosen variants. */
+  connectionBroken: number;
   voidFamilies: number;
   /** Undecided: PARTIAL, not evaluated, holds only over read constraints, constraints/owners not read, families not established. */
   undecided: number;
@@ -566,7 +592,7 @@ function buildFormula(points: VariabilityPoint[], read: Formula['read'], unread:
 
 function analyse(f: Formula, excluded: string[]): FamilyAnalysis {
   if (f.valid === null) {
-    return { established: false, reason: f.capReason, structural: 0, valid: 0, exact: false, void: false, core: [], dead: [], falseOptional: [], excludedPoints: excluded, configurations: [] };
+    return { established: false, reason: f.capReason, structural: 0, valid: 0, exact: false, void: false, core: [], dead: [], falseOptional: [], excludedPoints: excluded, configurations: [], connectionBroken: [] };
   }
   const valid = f.valid;
   const core: string[] = [];
@@ -593,6 +619,77 @@ function analyse(f: Formula, excluded: string[]): FamilyAnalysis {
     falseOptional,
     excludedPoints: excluded,
     configurations: valid.length <= 50 ? valid.map((s) => selText(f.points, s)) : [],
+    connectionBroken: [],
+  };
+}
+
+/* ──────────────────── per-configuration connection typing ─────────────────── */
+
+const CONNECTOR_KINDS = new Set(['ConnectionUsage', 'InterfaceUsage', 'Connector']);
+
+/**
+ * The feature a connector end denotes once the point it passes through is bound to its chosen variant: the end is
+ * a feature owned by the point (`connect eng.p to ...`), and the variant may redefine it (`port :>> p : Sg`).
+ * Anything else (the end is not under a chosen point, or the variant redefines nothing there) is the end itself.
+ */
+function endUnder(model: Model, endId: string, sel: Sel): string {
+  const end = model.get(endId);
+  if (!end || end.ownerId === null || !sel.has(end.ownerId)) return endId;
+  const key = sel.get(end.ownerId);
+  if (!key) return endId;
+  const variant = model.get(key.slice(key.indexOf('/') + 1));
+  if (!variant) return endId;
+  const mine = new Set([endId, ...generalizationsOf(model, endId).map((g) => g.id)]);
+  for (const f of members(model, variant.id)) {
+    if (f.id === endId || mine.has(f.id)) continue;
+    if (generalizationsOf(model, f.id).some((g) => mine.has(g.id))) return f.id;
+  }
+  return endId;
+}
+
+/** Why two port ends do not join (`undefined` when they do, or when there is no basis to judge): §7.12.1 conformance, else a shared port definition. */
+function pairBreak(model: Model, a: string, b: string): string | undefined {
+  const label = (id: string): string => model.qualifiedName(id) || model.get(id)?.declaredName || id;
+  const pa = model.get(a);
+  const pb = model.get(b);
+  if (pa?.eClass !== 'PortUsage' || pb?.eClass !== 'PortUsage') return undefined;
+  const mm = portMismatches(model, a, b);
+  if (mm !== undefined) {
+    if (mm.length === 0) return undefined;
+    const m = mm[0];
+    return `${label(m.port)}: \`${m.feature.direction} ${m.feature.name}\` ${m.reason === 'direction' ? 'meets a feature that is not its conjugate' : 'has no feature of a conforming definition on the other end'} (SysML v2 §7.12.1)`;
+  }
+  // The DECLARED definitions (a redefining port typed Sg is an Sg, whatever the port it redefines was typed).
+  const da = declaredDefinitions(model, a).filter((d) => d.eClass === 'PortDefinition');
+  const db = declaredDefinitions(model, b).filter((d) => d.eClass === 'PortDefinition');
+  if (da.length === 0 || db.length === 0 || definitionsConform(model, a, b)) return undefined;
+  const nm = (ds: ElementRecord[]): string => ds.map((x) => x.declaredName ?? x.id).join('/');
+  return `${label(a)} : ${nm(da)} and ${label(b)} : ${nm(db)} do not conform (neither port definition specializes the other)`;
+}
+
+/** The connectors of `owner` that are well-typed in the superset but ill-typed under a selection; memoised on the selections the connector ends pass through. */
+function connectionChecker(model: Model, owner: ElementRecord): (sel: Sel) => Array<{ connector: string; why: string }> {
+  const connectors = members(model, owner.id)
+    .filter((c) => CONNECTOR_KINDS.has(c.eClass))
+    .map((c) => ({ c, ends: connectorEndsOf(model, c.id) }))
+    .filter((x) => x.ends.length === 2 && x.ends.every((e) => model.get(e)?.eClass === 'PortUsage'))
+    .filter((x) => pairBreak(model, x.ends[0], x.ends[1]) === undefined); // ill-typed already in the superset: connection-compatibility's finding
+  const relevant = [...new Set(connectors.flatMap((x) => x.ends.map((e) => model.get(e)?.ownerId).filter((o): o is string => typeof o === 'string')))];
+  const cache = new Map<string, Array<{ connector: string; why: string }>>();
+  return (sel) => {
+    if (connectors.length === 0) return [];
+    const key = relevant.map((id) => sel.get(id) ?? '-').join('|');
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const out: Array<{ connector: string; why: string }> = [];
+    for (const { c, ends } of connectors) {
+      const under = ends.map((e) => endUnder(model, e, sel));
+      if (under[0] === ends[0] && under[1] === ends[1]) continue;
+      const why = pairBreak(model, under[0], under[1]);
+      if (why !== undefined) out.push({ connector: model.qualifiedName(c.id) || c.declaredName || c.id, why });
+    }
+    cache.set(key, out);
+    return out;
   };
 }
 
@@ -692,7 +789,7 @@ function selectionsOf(model: Model, cfg: ElementRecord, points: VariabilityPoint
   return { rows, chosen };
 }
 
-function configurations(model: Model, owner: ElementRecord, f: Formula, diags: VariabilityDiagnostic[]): ConfigurationReport[] {
+function configurations(model: Model, owner: ElementRecord, f: Formula, diags: VariabilityDiagnostic[], breaksOf: (sel: Sel) => Array<{ connector: string; why: string }>): ConfigurationReport[] {
   const out: ConfigurationReport[] = [];
   const cfgs = model
     .all()
@@ -771,7 +868,14 @@ function configurations(model: Model, owner: ElementRecord, f: Formula, diags: V
         rep.violated = bad.map((c) => c.row.name);
         rep.violatedIds = bad.map((c) => c.row.id);
         for (const c of bad) diags.push({ code: VARIABILITY_CODES.constraintViolated, severity: 'error', message: `${name}: the selection constraint ${c.row.name} is VIOLATED by ${selText(f.points, sel).join(', ')}`, elementId: cfg.id });
-      } else rep.status = f.unread === 0 ? 'holds' : 'holds-over-read-constraints';
+      } else {
+        const broken = breaksOf(sel);
+        if (broken.length > 0) {
+          rep.connectionBroken = broken.map((b) => ({ configuration: name, ...b }));
+          for (const b of rep.connectionBroken) diags.push({ code: VARIABILITY_CODES.connectionBroken, severity: 'error', message: `${name}: the connection ${b.connector} breaks under ${selText(f.points, sel).join(', ')} — ${b.why}`, elementId: cfg.id });
+        }
+        rep.status = f.unread === 0 ? 'holds' : 'holds-over-read-constraints';
+      }
     }
     out.push(rep);
   }
@@ -876,6 +980,13 @@ export function variabilityReport(model: Model): VariabilityReport {
     }
     const f = buildFormula(points, read, rows.filter((x) => !x.read).length);
     const analysis = analyse(f, excluded.map((p) => p.name));
+    const breaksOf = connectionChecker(model, e);
+    if (analysis.established && f.valid !== null) {
+      for (const sel of f.valid) {
+        for (const b of breaksOf(sel)) analysis.connectionBroken.push({ configuration: selText(f.points, sel).join(', '), ...b });
+      }
+      for (const b of analysis.connectionBroken.slice(0, 50)) diagnostics.push({ code: VARIABILITY_CODES.connectionBroken, severity: 'error', message: `${name}: in the configuration ${b.configuration} the connection ${b.connector} breaks — ${b.why}`, elementId: e.id });
+    }
     if (!analysis.established) {
       diagnostics.push({ code: VARIABILITY_CODES.notEstablished, severity: 'warning', message: `${name}: family analyses not established — ${analysis.reason}`, elementId: e.id });
     } else {
@@ -884,7 +995,7 @@ export function variabilityReport(model: Model): VariabilityReport {
       for (const p of analysis.falseOptional) diagnostics.push({ code: VARIABILITY_CODES.falseOptional, severity: 'warning', message: `${name}: the optional point ${p} is selected in every valid configuration (AO15)`, elementId: e.id });
       diagnostics.push({ code: VARIABILITY_CODES.family, severity: 'info', message: `${name}: ${analysis.exact ? '' : 'at most '}${analysis.valid} valid configuration(s) of ${analysis.structural} structural (AO12)`, elementId: e.id });
     }
-    owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: configurations(model, e, f, diagnostics) });
+    owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: configurations(model, e, f, diagnostics, breaksOf) });
   }
   const count = (s: VariabilitySeverity): number => diagnostics.filter((d) => d.severity === s).length;
   const verdict = verdictOf(owners);
@@ -898,18 +1009,20 @@ export function variabilityReport(model: Model): VariabilityReport {
  * the exit code.
  */
 function verdictOf(owners: OwnerReport[]): VariabilityVerdictCounts {
-  const v: VariabilityVerdictCounts = { holds: 0, invalid: 0, violated: 0, voidFamilies: 0, undecided: 0 };
+  const v: VariabilityVerdictCounts = { holds: 0, invalid: 0, violated: 0, connectionBroken: 0, voidFamilies: 0, undecided: 0 };
   for (const o of owners) {
     if (o.status === 'not-read' || o.analysis === null) {
       v.undecided++;
       continue;
     }
+    v.connectionBroken += o.analysis.connectionBroken.length;
     if (!o.analysis.established) v.undecided++;
     else if (o.analysis.void) v.voidFamilies++;
     if (!o.points.some((p) => p.configurable)) v.undecided++;
     v.undecided += o.constraints.filter((c) => !c.read).length;
     for (const c of o.configurations) {
-      if (c.status === 'holds') v.holds++;
+      if (c.connectionBroken !== undefined) v.connectionBroken++;
+      else if (c.status === 'holds') v.holds++;
       else if (c.status === 'invalid') v.invalid++;
       else if (c.status === 'violated') v.violated++;
       else v.undecided++; // partial, not-evaluated, holds-over-read-constraints
@@ -921,7 +1034,7 @@ function verdictOf(owners: OwnerReport[]): VariabilityVerdictCounts {
 /** 1 (a decided negative) outranks 2 (something undecided), as in the other judging contracts. */
 function exitCodeOf(owners: OwnerReport[], v: VariabilityVerdictCounts): 0 | 1 | 2 {
   if (owners.length === 0) return 2;
-  if (v.invalid + v.violated + v.voidFamilies > 0) return 1;
+  if (v.invalid + v.violated + v.connectionBroken + v.voidFamilies > 0) return 1;
   return v.undecided > 0 ? 2 : 0;
 }
 
@@ -960,6 +1073,10 @@ export function variabilityLines(r: VariabilityReport, name: string): string[] {
       out.push(`  family: ${a.void ? 'VOID (no valid configuration)' : `${a.exact ? '' : 'at most '}${a.valid} valid of ${a.structural} structural`}`);
       if (a.excludedPoints.length > 0) out.push(`    ranging over the points that can be configured; left out: ${a.excludedPoints.join(', ')}`);
       out.push(`    core variants: ${a.core.join(', ') || 'none'}`, `    dead variants: ${a.dead.join(', ') || 'none'}`, `    false-optional: ${a.falseOptional.join(', ') || 'none'}`);
+      if (a.connectionBroken.length > 0) {
+        out.push(`    CONNECTION BROKEN in ${a.connectionBroken.length} valid configuration(s) (counted in \`valid\`: that figure answers the constraint question only):`);
+        for (const b of a.connectionBroken.slice(0, 20)) out.push(`      ${b.configuration}: ${b.connector} — ${b.why}`);
+      }
       if (!a.exact) out.push('    (constraints not read: the count is an upper bound; dead, core and void remain sound)');
       for (const c of a.configurations) out.push(`    - ${c.join(', ')}`);
     }
@@ -970,6 +1087,7 @@ export function variabilityLines(r: VariabilityReport, name: string): string[] {
       if (c.completes !== undefined) out.push(`    completes: ${c.completes ? `yes, e.g. ${c.completion!.join(', ')}` : `NO (${c.blockedBy!.join(', ')})`}`);
       if (c.forced) out.push(`    forced: ${c.forced.join(', ') || 'nothing'}`);
       if (c.violated) out.push(`    violated: ${c.violated.join(', ')}`);
+      for (const b of c.connectionBroken ?? []) out.push(`    CONNECTION BROKEN: ${b.connector} — ${b.why}`);
       if (c.note) out.push(`    ${c.note}`);
     }
   }

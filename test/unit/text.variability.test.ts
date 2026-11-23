@@ -39,8 +39,12 @@ describe('probe models load clean', () => {
   // warning is that verdict, which `sysprose variability` decides and the checker names.
   it('a12.sysml', async () => {
     const d = diags((await load(probe('a12.sysml'))).report);
-    expect(d.map((x: any) => [x.code, x.severity])).toEqual([['validation/constraint-violation', 'warning']]);
-    expect(d[0].message).toContain('decided per configuration by `sysprose variability`: myCar VIOLATED');
+    // Plus the §8.4.2.3 fence on `variation part transmission : TransmissionChoices` (the annex writes it, the text forbids it).
+    expect(d.map((x: any) => [x.code, x.severity]).sort()).toEqual([
+      ['validation/constraint-violation', 'warning'],
+      ['validation/variation-usage-typed-by-variation', 'warning'],
+    ]);
+    expect(d.find((x: any) => x.code === 'validation/constraint-violation').message).toContain('decided per configuration by `sysprose variability`: myCar VIOLATED');
   });
 });
 
