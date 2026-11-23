@@ -271,7 +271,7 @@ wired relationship.
 | Interaction | Covered by | Result | Screenshot |
 |---|---|---|---|
 | Validate flags duplicate name → navigable row | `E validation`; `E panels-problems-text` | PASS | `06b-problem-selected` |
-| Validation engine — all 36 rules (pos/neg) | `U validation.rules` (90 cases); `I pipeline.validate` | PASS | — |
+| Validation engine — all 38 rules (pos/neg) | `U validation.rules` (94 cases); `I pipeline.validate` | PASS | — |
 | Check → constraint-check rows (satisfied/violated) | `E simulate-check`, `E toolbar-lifecycle`; `U semantics.constraints` | PASS | `simcheck-check` |
 | Simulate action flow → ordered trace in Problems | `E simulate`, `E simulate-check` (`ignite`→`accelerate`) | PASS | `simcheck-action` |
 | Simulate state machine → state trace in Problems | `E simulate-check` (`idle`→`running`) | PASS | `simcheck-state` |
@@ -328,7 +328,7 @@ The deep engine coverage that underpins the UI. (Condensed; full per-file counts
 | Interop client — self round-trip over HTTP + live pilot exchange | `X self-roundtrip`; `docs/CONFORMANCE.md` §6 | PASS |
 | Standard libraries — full 38.8k elements / 98 packages + resolution | `U library.load`; `I full-library.load`/`full-library.resolve` | PASS |
 | Persistence — store round-trip + export/import equivalence | `U persistence.io`; `I persist-api.persistence` | PASS |
-| Validation — 36 rules incl. the KerML semantic ones (value conformance, redefinition conformance, units and dimensions) | `U validation.rules`; `I pipeline.validate` | PASS |
+| Validation — 38 rules incl. the KerML semantic ones (value conformance, redefinition conformance, units and dimensions) | `U validation.rules`; `I pipeline.validate` | PASS |
 
 ### 2.13 Real-time collaboration (Yjs CRDT + presence)
 
@@ -541,7 +541,7 @@ rows are `docs/TEST-SUMMARY.md`'s.]*
 | Standard library | `library.load` (13) | 13 | 13 | 0 |
 | Semantics (KerML) | `semantics.inheritance` (5), `.conformance` (9), `.expr` (13), `.constraints` (9), `.connectors` (13), `.units` (28), `.execute` (22), `.execute-full` (11), `.execution-full` (19), `.solver` (10), `.featuring` (11), `.metaclasses` (10), `.metamodel-complete` (9), `.resolve` (18) | 187 | 187 | 0 |
 | Persistence | `persistence.io` (23) | 23 | 23 | 0 |
-| Validation | `validation.rules` (36) | 36 | 36 | 0 |
+| Validation | `validation.rules` (38) | 38 | 38 | 0 |
 | API — SDK/Query/Analytics/REST | `api.sdk` (11), `api.query` (12), `api.query2` (9), `api.analytics` (9), `api.rest` (7), `api.rest2` (9) | 57 | 57 | 0 |
 | API — Versioning | `api.versioning` (10) | 10 | 10 | 0 |
 | API — OSLC | `api.oslc` (10) | 10 | 10 | 0 |

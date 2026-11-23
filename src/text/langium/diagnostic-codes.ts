@@ -530,6 +530,20 @@ const CODES = [
     hint: 'Type the redefining feature with the redefined type or a specialization of it.',
   },
   {
+    code: 'validation/multiplicity-conformance',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A multiplicity whose lower bound is above its upper bound (`part q [3..1]`), a subsetting feature whose upper bound is above the subsetted feature\u2019s (`part x : D [5] :> fleet` over `fleet [4]`), or a redefinition that widens the redefined feature\u2019s bounds (`:>> r [0..5]` over `r [1..2]`). Only bounds written as number literals (or `*`) are read.',
+    hint: 'Write the lower bound at or below the upper; keep a subsetting feature\u2019s upper bound within its superset\u2019s; make a redefinition\u2019s range lie inside the redefined feature\u2019s.',
+  },
+  {
+    code: 'validation/binding-conformance',
+    source: 'validation',
+    severity: 'warning',
+    when: 'The two ends of a `bind a = b` are typed by types that neither specialises the other (`x : Real` bound to `y : String`), or declare multiplicities with no cardinality in common (`[1]` against `[2..3]`).',
+    hint: 'Bind features of compatible types (the same type or one specialising the other), or fix the type or multiplicity of one end.',
+  },
+  {
     code: 'validation/redefinition-own-sibling',
     source: 'validation',
     severity: 'warning',

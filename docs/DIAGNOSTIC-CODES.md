@@ -512,6 +512,20 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A redefining feature’s type does not conform to the redefined feature’s type.
 - **Hint given:** Type the redefining feature with the redefined type or a specialization of it.
 
+### `validation/multiplicity-conformance`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A multiplicity whose lower bound is above its upper bound (`part q [3..1]`), a subsetting feature whose upper bound is above the subsetted feature’s (`part x : D [5] :> fleet` over `fleet [4]`), or a redefinition that widens the redefined feature’s bounds (`:>> r [0..5]` over `r [1..2]`). Only bounds written as number literals (or `*`) are read.
+- **Hint given:** Write the lower bound at or below the upper; keep a subsetting feature’s upper bound within its superset’s; make a redefinition’s range lie inside the redefined feature’s.
+
+### `validation/binding-conformance`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** The two ends of a `bind a = b` are typed by types that neither specialises the other (`x : Real` bound to `y : String`), or declare multiplicities with no cardinality in common (`[1]` against `[2..3]`).
+- **Hint given:** Bind features of compatible types (the same type or one specialising the other), or fix the type or multiplicity of one end.
+
 ### `validation/redefinition-own-sibling`
 
 - **Severity:** warning
@@ -1125,4 +1139,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*147 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*149 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

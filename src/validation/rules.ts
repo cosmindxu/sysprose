@@ -56,6 +56,7 @@ import {
 } from '../semantics/units-eval';
 import type { Diagnostic, Severity, ValidationRule } from './types';
 import { directedFeaturesOf } from '../semantics/port-conformance';
+import { bindingConformance, multiplicityConformance } from './rules-structure';
 import { connectionCompatibility, flowEndCompatibility, interfaceEndConformance, portTyping } from './rules-connection';
 // The one import this layer makes of `src/api`, and it is deliberate rather
 // than accidental. The evidence carrier and the canonical model digest are
@@ -1845,6 +1846,8 @@ export const RULES: ValidationRule[] = [
   interfaceEndConformance,
   flowEndCompatibility,
   portTyping,
+  multiplicityConformance,
+  bindingConformance,
 ];
 
 /** Rule lookup by id. */

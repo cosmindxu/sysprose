@@ -1886,3 +1886,4 @@ and §21.4–21.11.
       link through the SMT engine and link degradation fed to the fault tree; across: units and
       quantity kinds along flows and bindings.
 
+- BD2/BD4 follow-ups: promote multiplicity-conformance and binding-conformance from warning to error (user ruling: later); subset-type-conformance (BD3) and connector end multiplicity (BD5) are separate items.

@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (36 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (38 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -5002,6 +5002,17 @@ any of these at the language level:
   (`in port taskingIn : TaskingOrder;`) is not a port in SysML v2 terms
   (§7.12.2: a port usage is defined only by port definitions). Declare a port
   definition whose directed features carry the item, and type the port by it.
+- **`multiplicity-conformance`.** `part q [3..1]` (lower above upper) has no
+  cardinality that satisfies it; `part x : D [5] :> fleet` over `fleet [4]` is a
+  subset that can hold more values than its set (§7.6.1; a subsetter's lower
+  bound may be below the superset's); `attribute :>> r [0..5]` over `r [1..2]`
+  widens what it redefines (§7.6.3: a redefinition only narrows). Only bounds
+  written as number literals are read; a warning.
+- **`binding-conformance`.** `bind x = y` with `x : Real` and `y : String`: a
+  binding makes its two features equivalent, so neither type specialising the
+  other is reported (§7.13.3, §8.2.3.13). Ends whose declared multiplicities have
+  no cardinality in common (`[1]` bound to `[2..3]`) are reported too; ranges that
+  merely differ are not. A warning.
 
 `port-direction` no longer asks for `in`/`out` on a port whose features are
 directed: it reports only a port that says nothing about direction anywhere. A

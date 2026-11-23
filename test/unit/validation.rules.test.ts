@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 36 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(36);
+  it('exposes all 38 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(38);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -828,6 +828,40 @@ describe('rule 12b — connector-end-not-feature', () => {
     expect(diags).toHaveLength(1);
     expect(diags[0].severity).toBe('error');
     expect(diags[0].message).toContain('is not a Feature');
+  });
+});
+
+describe('multiplicity-conformance and binding-conformance (BD2, BD4)', () => {
+  const run = async (body: string, rule: string) => {
+    const r = await loadModelText(`package P { ${body} }`);
+    return runRule(r.model!, rule).map((d) => d.message);
+  };
+
+  it('flags lower above upper, a subset above its superset, a widening redefinition', async () => {
+    expect(await run('part q [3..1];', 'multiplicity-conformance')).toHaveLength(1);
+    expect(await run('part def D; part fleet : D [4]; part extra : D [5] :> fleet;', 'multiplicity-conformance')).toHaveLength(1);
+    const w = await run('part def A { attribute r [1..2]; } part def B :> A { attribute :>> r [0..5]; }', 'multiplicity-conformance');
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('widens');
+  });
+
+  it('stays silent on legal bounds: a subsetter with a lower bound below the superset, a narrowing redefinition, unbounded, inherited', async () => {
+    expect(await run('part def D; part fleet : D [4..8]; part a : D [1] :> fleet; part b : D [0..1] :> fleet; part c : D [3] :> fleet;', 'multiplicity-conformance')).toEqual([]);
+    expect(await run('part def A { attribute r [1..2]; } part def B :> A { attribute :>> r [2]; }', 'multiplicity-conformance')).toEqual([]);
+    expect(await run('part def D; part fleet : D [1..*]; part s : D [2..*] :> fleet; part t : D [*]; part u : D [0..*] :> t; part v : D :> fleet;', 'multiplicity-conformance')).toEqual([]);
+  });
+
+  it('flags a bind between types that do not conform, not one that does either way', async () => {
+    expect(await run('attribute x : Real; attribute y : String; bind x = y;', 'binding-conformance')).toHaveLength(1);
+    expect(await run('attribute x : Real; attribute y : Integer; bind x = y; bind y = x;', 'binding-conformance')).toEqual([]);
+    expect(await run('attribute x : Real; attribute y; bind x = y;', 'binding-conformance')).toEqual([]);
+  });
+
+  it('flags bound features whose multiplicities share no cardinality, not overlapping ones', async () => {
+    const m = await run('part def D; part a : D [1]; part b : D [2..3]; bind a = b;', 'binding-conformance');
+    expect(m).toHaveLength(1);
+    expect(m[0]).toContain('no cardinality in common');
+    expect(await run('part def D; part a : D [1..2]; part b : D [2..3]; bind a = b;', 'binding-conformance')).toEqual([]);
   });
 });
 
