@@ -616,7 +616,7 @@ describe('the field is required and `null` on every claim but `fail`', () => {
       [
         'liveness',
         'inconclusive',
-        checkProperty(model, machineId, prop({ pattern: 'existence', scope: 'globally', p: 'state failsafe' })),
+        checkProperty(model, machineId, prop({ pattern: 'existence', scope: 'globally', p: 'state failsafe' }), { maxConfigs: 1 }),
       ],
       ['unreadable', 'inconclusive', checkProperty(model, machineId, absence('state nowhere'))],
     ];

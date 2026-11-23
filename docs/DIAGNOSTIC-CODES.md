@@ -456,6 +456,34 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A variant usage has a kind (part, action, ...) inconsistent with its owning variation (SysML v2 §7.6.7). A variant naming a separately declared usage carries no kind and is not checked.
 - **Hint given:** Use the same kind keyword as the variation, e.g. `variant part` inside a `variation part def`.
 
+### `validation/variation-abstract-keyword`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A definition or usage is written with both `abstract` and `variation` (SysML v2 §7.6.7: a variation is always abstract, so the keyword is not used on it).
+- **Hint given:** Drop `abstract`; `variation` already makes it abstract.
+
+### `validation/variation-enum-keyword`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** An enumeration definition is written with `abstract` or `variation`, or an enumerated value with `variant` (SysML v2 §7.8.2: an enumeration definition is always a variation and its values are its variants).
+- **Hint given:** Remove the keyword; write `enum def Color { enum red; enum green; }`.
+
+### `validation/variation-variant-not-specializing`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A variant's declared type does not specialize anything its variation is declared against (SysML v2 §8.4.2.3: a variant specializes its variation). Skipped when a type is unresolved or a variant names a separate usage.
+- **Hint given:** Type the variant by the variation's type or one of its specializations.
+
+### `validation/variation-usage-typed-by-variation`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A variation usage is typed by a variation definition (`variation part e : EngineChoices`). SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.
+- **Hint given:** Type the usage by a non-variation definition and list the variants in the usage, or make it a plain usage typed by the variation definition.
+
 ### `validation/requirement-subject`
 
 - **Severity:** warning
@@ -518,6 +546,20 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Source:** validation
 - **Fires when:** A redefining feature’s type does not conform to the redefined feature’s type.
 - **Hint given:** Type the redefining feature with the redefined type or a specialization of it.
+
+### `validation/multiplicity-conformance`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A multiplicity whose lower bound is above its upper bound (`part q [3..1]`), a subsetting feature whose upper bound is above the subsetted feature’s (`part x : D [5] :> fleet` over `fleet [4]`), or a redefinition that widens the redefined feature’s bounds (`:>> r [0..5]` over `r [1..2]`). Only bounds written as number literals (or `*`) are read.
+- **Hint given:** Write the lower bound at or below the upper; keep a subsetting feature’s upper bound within its superset’s; make a redefinition’s range lie inside the redefined feature’s.
+
+### `validation/binding-conformance`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** The two ends of a `bind a = b` are typed by types that neither specialises the other (`x : Real` bound to `y : String`), or declare multiplicities with no cardinality in common (`[1]` against `[2..3]`).
+- **Hint given:** Bind features of compatible types (the same type or one specialising the other), or fix the type or multiplicity of one end.
 
 ### `validation/redefinition-own-sibling`
 
@@ -1013,6 +1055,13 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** The number of valid configurations of a superset owner (AO12), exact unless constraints were not read (then an upper bound), with core and dead variants.
 - **Hint given:** This is a fact about the model, not a finding.
 
+### `verification/variability-connection-broken`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A connector of a superset owner is ill-typed (SysML v2 §7.12.1 port conformance, or no shared port definition) once the chosen variants of a valid configuration, or of a configuration usage, redefine the ports it joins. A connector already ill-typed in the superset is `connection-compatibility`'s finding and is not repeated.
+- **Hint given:** Make the variant keep the port type (or a conforming one), or choose a different variant for that configuration.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -1132,4 +1181,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*148 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*155 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

@@ -217,8 +217,8 @@ describe('the dispatch: a branching-time question never reaches the bad-prefix s
   });
 
   it("the arm sits after the unsupported refusal and before `const found = search(` in `checkProperty`'s source", () => {
-    const body = /export function checkProperty\([\s\S]*?\n}\n/.exec(src);
-    expect(body, 'patterns.ts no longer declares checkProperty').not.toBeNull();
+    const body = /\nfunction checkPropertyRow\([\s\S]*?\n}\n/.exec(src);
+    expect(body, 'patterns.ts no longer declares checkPropertyRow (the body of checkProperty)').not.toBeNull();
     const fn = body![0];
     const walk = fn.indexOf('const walk = exploreMachine(');
     const unsupported = fn.indexOf('if (walk.unsupported.length > 0) {');

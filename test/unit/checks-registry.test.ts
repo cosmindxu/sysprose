@@ -2229,6 +2229,8 @@ const mission = (pattern: string, p: string): string =>
   `package MissionDag { part def Mission { state def Modes { ${carrier(pattern, p)} state takeoff; state cruise; state landed; transition takeoff then cruise; transition cruise then landed; } } }`;
 const MISSION_RESP =
   'package MissionDag { part def Mission { state def Modes { @SysproseVerification::PropertyPattern { attribute pattern = "response"; attribute scope = "globally"; attribute p = "state takeoff"; attribute s = "state landed"; } state takeoff; state cruise; state landed; transition takeoff then cruise; transition cruise then landed; } } }';
+/** The same machine with a guard nothing decides on the way to `landed`: liveness stays inconclusive. */
+const MISSION_RESP_UNDECIDED = MISSION_RESP.replace('transition cruise then landed;', 'transition cruise then landed if k > 0;');
 /** `a_b` is a completion transition beside `a accept e then c`: the `cover`/`absence` witness takes a gap. */
 const a15 = (pattern: string): string =>
   `package P { state def M { ${carrier(pattern, 'state c')} state a; state b; state c; transition a_b first a then b; transition a_c first a accept e then c; transition b_a first b accept back then a; } }`;
@@ -2411,9 +2413,14 @@ describe('the check-behaviour verdicts', () => {
     expect(covered.verdict).toBe('holds');
     expect(covered.summary).toContain('1 covered');
 
+    // `response` over a graph the walk saw whole is decided (a lasso search, docs/04 non-goal 4);
+    // over a guard nothing decides it stays undecided.
     const resp = inline(MISSION_RESP);
     const respMachine = machine(resp, 'MissionDag::Mission::Modes');
-    expect(behaviourOf(resp, respMachine.id, respMachine.name, healthy).verdict).toBe('undecided');
+    expect(behaviourOf(resp, respMachine.id, respMachine.name, healthy).verdict).toBe('holds');
+    const respOpen = inline(MISSION_RESP_UNDECIDED);
+    const respOpenMachine = machine(respOpen, 'MissionDag::Mission::Modes');
+    expect(behaviourOf(respOpen, respOpenMachine.id, respOpenMachine.name, healthy).verdict).toBe('undecided');
   });
 
   it('reads undecided for a machine that states no property', () => {
@@ -3040,7 +3047,7 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
   });
 
   it('shows an inconclusive block\u2019s detail and never reads PASS or holds', () => {
-    const model = inline(MISSION_RESP);
+    const model = inline(MISSION_RESP_UNDECIDED);
     const m = singleMachine(model);
     const result = runCheck(
       behSpec,

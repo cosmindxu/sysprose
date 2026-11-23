@@ -755,13 +755,21 @@ export function propertyVerdictLines(
     out.push(
       line('witness-head', `    witness — ${v.detail.includes(WALK_ADMITS) ? WALK_ADMITS : SEMANTICS_ADMITS}:`),
     );
+    let cycleMarked = false;
     for (const step of v.witness) {
+      if (step.cycle === true && !cycleMarked) {
+        cycleMarked = true;
+        out.push(line('witness-head', '      ↻ the steps below are a cycle the run repeats forever:'));
+      }
       out.push(
         line('witness-step', `      ${traceLine(step)}`, {
           elementId: step.leaf?.id ?? null,
           step: step.index,
         }),
       );
+    }
+    if (v.lasso?.stutter === true) {
+      out.push(line('witness-head', '      ↻ the run stays in the last configuration forever: nothing is enabled there'));
     }
   }
   return out;
@@ -799,7 +807,7 @@ export function behaviourLines(
     ),
     line(
       'remit',
-      '  liveness (`existence`, `response`) is NOT decided here: a bad-prefix search finds no bad prefix for either, so both report inconclusive',
+      '  liveness (`existence`, `response`) is decided only over a graph the walk saw whole, by a lasso search under no fairness and a live environment (a run goes on while anything is enabled); on any other walk both report inconclusive',
     ),
     ...(r.properties.length === 0
       ? [

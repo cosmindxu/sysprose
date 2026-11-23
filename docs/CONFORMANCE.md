@@ -1173,9 +1173,10 @@ wherever the interpreter's chase budget stops a run of a trigger-less machine
 somewhere that does not hold `p`; it reads `state` and `node` atoms only,
 through the same selection `absence` reads them with, and refuses the other
 three kinds rather than earning a refutation from an empty target set. Two — `existence`, `response` — are liveness,
-and a bad-prefix search finds no bad prefix for either on any graph; both report
-`inconclusive: liveness not checked in-process` until a lasso search lands and a
-fairness assumption is named. A `pass` is emitted only when the walk saw the
+and a bad-prefix search finds no bad prefix for either on any graph; both are
+decided by a lasso search over a graph the walk saw whole, under no fairness and
+a live environment (a run goes on while anything is enabled), and report
+`inconclusive: liveness not checked in-process` over any other walk. A `pass` is emitted only when the walk saw the
 graph **whole**: the four conditions §3.8 states, computed from
 `exploreMachine`'s walk, **and** the fifth this tool added afterwards — every
 guard the walk consulted decided something. A bound hit, a parallel machine or a parallel state of a shape not performed (more than 4 coupled regions) or a history

@@ -283,7 +283,7 @@ Develop block below, and every flag is in
 - **A requirement discharged by a false assumption is `vacuous`, not a pass** — a declared
   deviation from the specification's own `RequirementCheck` semantics, recorded as one in
   [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md) §8.
-- **No liveness, no reactive synthesis, no in-browser solver on the hosted site (the local servers run one), no kernel-checked proof.** z3 is trusted
+- **Liveness only over a graph the walk saw whole (a lasso search, no fairness assumed), no reactive synthesis, no in-browser solver on the hosted site (the local servers run one), no kernel-checked proof.** z3 is trusted
   as a solver; nothing here is machine-checked in a proof kernel. The limits are listed, each with
   what it costs you, in [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) §9 and
   [`docs/04-formal-verification-plan.md`](docs/04-formal-verification-plan.md) §6.
