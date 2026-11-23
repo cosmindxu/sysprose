@@ -4015,6 +4015,8 @@ describe('what a line says about itself', () => {
           trap: m.traps.map((t): [string, string] => [t.entry[0].id, UNRECOVERABLE_MODE_CODE]),
           'trap-refused': gate ? [[id, null]] : [],
           livelock: m.livelocks.map((l): [string, string] => [l.states[0].id, COMPLETION_LIVELOCK_CODE]),
+          // The event-completeness reading: one line per machine that names a trigger, no code, never withheld.
+          events: m.eventCompleteness === null ? [] : [[id, null]],
           choice: m.nondeterminism.map((n): [string, string] => [n.state.id, NONDETERMINISTIC_CHOICE_CODE]),
           suppressed: m.suppressed ? [[id, null]] : [],
         };
@@ -4044,6 +4046,7 @@ describe('what a line says about itself', () => {
         'choice',
         'counts',
         'dead',
+        'events',
         'figures',
         'livelock',
         'machine',
@@ -4375,5 +4378,67 @@ describe('the initial state named by the entry succession (SysML v2 §7.18.2)', 
     expect(row.states.unreachable).toEqual([]);
     expect(row.states.reachable.map((s) => s.name)).toEqual(['a', 'b']);
     expect(model.qualifiedName(run.visited[0])).toBe('P::M::a');
+  });
+});
+
+describe('event completeness is a reading: one info line, never a finding', () => {
+  const run = async (src: string, name: string): Promise<any> => {
+    const { model } = await loadModelText(src, { fileName: 'ec.sysml' });
+    const r = reachReport(model!);
+    return r.machines.find((m: any) => m.machine.name === name)!;
+  };
+  const src = `package P { item def go; item def stop; item def ping;
+    state def M { entry; then idle; state idle; state busy;
+      transition t1 first idle accept go then busy;
+      transition t2 first busy accept stop then idle; } }`;
+
+  it('names the states that ignore an alphabet event, on one line, with no code and no withholding', async () => {
+    const m = await run(src, 'M');
+    expect(m.eventCompleteness.alphabet).toEqual(['go', 'stop']);
+    expect(m.eventCompleteness.states.map((s: any) => [s.state.name, s.ignored])).toEqual([
+      ['idle', ['stop']],
+      ['busy', ['go']],
+    ]);
+    const lines = reachMachineLines(m, 1).filter((l) => l.kind === 'events');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].code).toBeNull();
+    expect(lines[0].withholds).toBe(false);
+    expect(lines[0].text).toContain('2 of 2 reachable state(s) ignore');
+    expect(lines[0].text).toContain('a reading, not a defect');
+    // No verdict moves: the machine is as exhaustive and as clean as it was.
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+  });
+
+  it('an enclosing state accepting the event counts for its substates', async () => {
+    const m = await run(
+      `package P { item def go; item def stop; state def M { entry; then top;
+        state top { entry; then a; state a; state b; transition x first a accept go then b; }
+        state off; transition off1 first top accept stop then off; transition off2 first off accept go then top; } }`,
+      'M',
+    );
+    const ig = Object.fromEntries(m.eventCompleteness.states.map((s: any) => [s.state.name, s.ignored]));
+    expect(ig.a).toBeUndefined(); // go by x, stop by the enclosing top
+    expect(ig.b).toEqual(['go']);
+    expect(ig.off).toEqual(['stop']);
+  });
+
+  it('a machine that names no trigger has no reading; a complete machine says so', async () => {
+    const none = await run(`package P { state def M { entry; then a; state a; state b; transition t first a then b; } }`, 'M');
+    expect(none.eventCompleteness).toBeNull();
+    const complete = await run(`package P { item def go; state def M { entry; then a; state a; transition t first a accept go then a; } }`, 'M');
+    expect(complete.eventCompleteness.states).toEqual([]);
+    expect(reachMachineLines(complete, 1).find((l) => l.kind === 'events')!.text).toContain('every one of the 1 event(s) is accepted');
+  });
+
+  it('states inside parallel regions are not read (a sibling region may take the event)', async () => {
+    const m = await run(
+      `package P { item def e1; item def e2; state def M { entry; then run; state run parallel {
+        state r1 { entry; then a1; state a1; state a2; transition x first a1 accept e1 then a2; }
+        state r2 { entry; then b1; state b1; state b2; transition y first b1 accept e2 then b2; } } } }`,
+      'run',
+    );
+    expect(m.eventCompleteness === null || m.eventCompleteness.states.length === 0).toBe(true);
   });
 });

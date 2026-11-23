@@ -1857,11 +1857,13 @@ and §21.4–21.11.
       (SysML v2 §7.17: the performed action is the usage's referenced feature, a ReferenceSubsetting).
       `exchange-allocation` resolves the name from the performer's scope until it is mapped; every
       other reader of `perform` sees a fresh action. [xalloc]
-- [ ] **Exchange allocation — completeness and the views.** `exchange-allocation` judges the
-      allocations a model writes (Arcadia §19.10–19.11, §20.4, §21.9). Still open: a flow between
-      functions on two components with no allocation at all (§20.4 "doit être implémenté"), a
-      functional port realised by no port (§20.3), the ICD table (one row per exchange: functional,
-      logical, physical) and the Interconnection overlay. [xalloc]
+- [ ] **Exchange allocation — the views.** `exchange-allocation` judges the allocations a model
+      writes (Arcadia §19.10–19.11, §20.4, §21.9); `exchange-unallocated` flags a flow between
+      functions on two components that no connection carries, in a scope that allocates flows (§20.4);
+      `function-port-allocation` judges `allocate fn.p to comp.q` (§20.3). Still open: the ICD
+      table (one row per exchange: functional, logical, physical), the Interconnection overlay, and
+      a function parameter with no port realisation at all (not judged: opt-in only where written).
+      [xalloc]
 - [ ] **Read the cross multiplicity on a connector end.** `connect [2] a.p to [1] b.q` parses
       (`connSrcMult`/`connTgtMult`) and the multiplicity is dropped without a note (SysML v2
       §8.2.2.13 `OwnedCrossMultiplicityMember`). Store it, write it back on Save, and read it where
@@ -1911,3 +1913,5 @@ and §21.4–21.11.
       acyclic graph, fair-SCC) still describe the earlier plan and name no producer.
 - Variability (var-fence): the per-configuration connection check re-reads only a connector end that is a feature owned directly by the point (`eng.p`); an end nested deeper under a variant (`eng.sub.p`), flows, and requirement/constraint checks per configuration are still superset-only (audit rows 17, 19; steps V4, V6). `variation-variant-not-specializing` skips a variant with an unresolved type and a reference-form variant.
 - BD2/BD4 follow-ups: promote multiplicity-conformance and binding-conformance from warning to error (user ruling: later); subset-type-conformance (BD3) and connector end multiplicity (BD5) are separate items.
+- State machines (sm-par): `check-behaviour` reads Boolean combinations of `state` atoms only; a combination with a trigger, a transition or an expression leaf is refused (`verification/unknown-atom`), not mixed in. The `events` reading skips states inside parallel regions and has no `--strict-events` switch (nothing consumes it as a finding).
+- bd-struct2 follow-ups: the six wave-2 rules (subset-type-conformance, disjoint-sum-exceeds, enum-value-not-member, value-multiplicity-mismatch, specialization-kind-incompatible, unresolved-value-chain) are warnings; promote to errors later (user ruling). Not read: disjoint through `variation` variants (BD6), a value expression other than a literal, list or single chain (BD8, BD11), chains with quoted or `::` names (BD11), subsetting of an inherited-only type (BD3), usage-level specialisation kinds (BD9).

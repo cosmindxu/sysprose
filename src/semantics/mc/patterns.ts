@@ -84,6 +84,7 @@ import {
   MALFORMED_PROPERTY_CODE,
   UNKNOWN_ATOM_CODE,
   atomHolds,
+  formulaHolds,
   expressionRefusal,
   readAtom,
   type Atom,
@@ -143,7 +144,7 @@ import {
   type UnsupportedConstruct,
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
-import { advanceConfig, candidatesOf, firesApplied, hasNestedParallel, openConfig, transitionsOf, type ParCandidates } from './parallel';
+import { advanceConfig, candidatesOf, firesApplied, hasNestedParallel, isParallelRoot, openConfig, transitionsOf, type ParCandidates } from './parallel';
 import { carriersOn } from '../keywords';
 // The interpreter, for ONE reader: every witness this file publishes is replayed
 // through it first (`replayWitness`). A copy of its driving rules would be a
@@ -1860,7 +1861,9 @@ export function replayWitness(
   maxCompletion: number,
 ): WitnessReplay {
   if (witness.length === 0) return { replays: true, step: null, reason: '' };
-  if (hasNestedParallel(model, machineId)) return replayParallelWitness(model, machineId, witness, maxCompletion);
+  // A machine that IS a parallel state opens at its composite with every region entered (`rootConfig` then `enterRegions`),
+  // so its witness carries one leaf per region and is replayed region by region, as a nested parallel state's is.
+  if (hasNestedParallel(model, machineId) || isParallelRoot(model, machineId)) return replayParallelWitness(model, machineId, witness, maxCompletion);
   const steps = witness.slice(1);
   // Where the interpreter opens: its first entries, before any chase.
   const opened = runStateMachine(model, machineId, [], { maxCompletion: 0 }).visited;
@@ -3028,7 +3031,11 @@ function modalityOf(
 
   const target = atom.elementId!;
   const holdsAt = (i: number): boolean =>
-    atom.kind === 'state' ? walk.configStates[i].includes(target) : leafHolds(walk, i, target);
+    atom.kind === 'formula'
+      ? formulaHolds(atom.formula!, walk.configStates[i])
+      : atom.kind === 'state'
+        ? walk.configStates[i].includes(target)
+        : leafHolds(walk, i, target);
   const violates = (i: number): boolean =>
     property.pattern.name === 'absence' ? holdsAt(i) : !holdsAt(i);
   const g0 = avoidingReach(walk.successors, violates);
@@ -3315,7 +3322,8 @@ function recoveryRow(
   const id = atom.elementId!;
   const targets: number[] = [];
   for (let i = 0; i < walk.configs; i++) {
-    const holds = atom.kind === 'state' ? walk.configStates[i].includes(id) : leafHolds(walk, i, id);
+    // prettier-ignore
+    const holds = atom.kind === 'formula' ? formulaHolds(atom.formula!, walk.configStates[i]) : atom.kind === 'state' ? walk.configStates[i].includes(id) : leafHolds(walk, i, id);
     if (holds) targets.push(i);
   }
   const withheld = {

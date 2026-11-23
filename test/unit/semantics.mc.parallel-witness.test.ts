@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { loadModelText } from '@text/load';
 import { runStateMachine } from '../../src/semantics/execute';
 import { checkProperty, WITNESS_NOT_REPLAYED_CODE, type PropertyText } from '../../src/semantics/mc/patterns';
+import { readAtom, UNKNOWN_ATOM_CODE } from '../../src/semantics/mc/atoms';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
 
 const find = (m: any, n: string): any => m.all().find((e: any) => m.qualifiedName(e.id) === n);
@@ -63,5 +64,121 @@ describe('a witness on a parallel machine is replayed through the interpreter', 
   it('the profile no longer says a witness is withheld on every parallel machine', () => {
     const f = SEMANTIC_PROFILE.find((x) => x.field === 'regions')!;
     expect(f.reading).toContain('replayed');
+  });
+});
+
+// A machine that IS a parallel state: it opens at the composite with every region entered, so the witness's first
+// configuration is the composite and the interpreter's is the regions' leaves.
+const root = `package P { item def e1; item def e2; state def M { entry; then run;
+  state run parallel {
+    state r1 { entry; then a1; state a1; state a2; transition x first a1 accept e1 then a2; }
+    state r2 { entry; then b1; state b1; state b2; transition y first b1 accept e2 then b2; }
+  } } }`;
+const rootId = async (src: string): Promise<[any, string]> => {
+  const model = await load(src);
+  return [model, find(model, 'P::M::run').id];
+};
+
+describe('a witness that opens at the parallel composite is replayed region by region', () => {
+  it('absence of a region state: fail with the witness published; cover: covered', async () => {
+    const [model, id] = await rootId(root);
+    const f = checkProperty(model, id, prop({ pattern: 'absence', p: 'state a2' }));
+    expect(f.claim).toBe('fail');
+    expect(f.code).not.toBe(WITNESS_NOT_REPLAYED_CODE);
+    expect(f.witness.length).toBe(2);
+    const c = checkProperty(model, id, prop({ pattern: 'cover', p: 'state b2' }));
+    expect(c.claim).toBe('covered');
+  });
+
+  it('a state no run enters: the absence passes (a replayed witness is not needed, none is invented)', async () => {
+    const [model, id] = await rootId(root.replace('state b2;', 'state b2; state never;'));
+    expect(checkProperty(model, id, prop({ pattern: 'absence', p: 'state never' })).claim).toBe('pass');
+  });
+
+  it('the coupled-order refusal still holds at a parallel root', async () => {
+    const src = `package P { item def f; state def M { attribute n : Integer = 0; entry; then p;
+      state p parallel {
+        state r2 { entry; then b1; state b1; state b2; transition t2 first b1 accept f if n == 1 then b2; }
+        state r1 { entry; then a1; state a1; state a2 { entry assign n := 1; } transition t1 first a1 accept f then a2; }
+      } } }`;
+    const model = await load(src);
+    const id = find(model, 'P::M::p').id;
+    const v = checkProperty(model, id, prop({ pattern: 'absence', p: 'state b2' }));
+    expect(v.claim).toBe('inconclusive');
+    expect(v.code).toBe(WITNESS_NOT_REPLAYED_CODE);
+    expect(v.detail).toContain('declaration order');
+  });
+});
+
+describe('Boolean atoms over state occupancy', () => {
+  // r1 and r2 share n: each region takes its step only while n == 0 and sets it, so a2 and b2 are never both held.
+  const excl = `package P { item def e1; item def e2; state def M { entry; then run; attribute n : Integer = 0;
+    state run parallel {
+      state r1 { entry; then a1; state a1; state a2 { entry assign n := 1; } transition x first a1 accept e1 if n == 0 then a2; }
+      state r2 { entry; then b1; state b1; state b2 { entry assign n := 1; } transition y first b1 accept e2 if n == 0 then b2; }
+    } } }`;
+
+  it('`and`: reachable in the independent machine, unreachable in the exclusive one', async () => {
+    const [m1, id1] = await rootId(root);
+    expect(checkProperty(m1, id1, prop({ pattern: 'absence', p: 'state a2 and state b2' })).claim).toBe('fail');
+    expect(checkProperty(m1, id1, prop({ pattern: 'cover', p: 'state a2 and state b2' })).claim).toBe('covered');
+    const [m2, id2] = await rootId(excl);
+    const v = checkProperty(m2, id2, prop({ pattern: 'absence', p: 'state a2 and state b2' }));
+    expect(v.claim).toBe('pass');
+    expect(checkProperty(m2, id2, prop({ pattern: 'absence', p: 'state a2' })).claim).toBe('fail');
+    expect(checkProperty(m2, id2, prop({ pattern: 'cover', p: 'state a2 and state b2' })).claim).not.toBe('covered');
+  });
+
+  it('`or`, `not` and parentheses', async () => {
+    const [m, id] = await rootId(excl);
+    expect(checkProperty(m, id, prop({ pattern: 'universality', p: 'state a1 or state a2' })).claim).toBe('pass');
+    expect(checkProperty(m, id, prop({ pattern: 'universality', p: 'state a1 or state b1' })).claim).toBe('pass');
+    expect(checkProperty(m, id, prop({ pattern: 'universality', p: 'not state a2' })).claim).toBe('fail');
+    expect(checkProperty(m, id, prop({ pattern: 'universality', p: 'not (state a2 and state b2)' })).claim).toBe('pass');
+    expect(checkProperty(m, id, prop({ pattern: 'universality', p: 'state a1 and state b1' })).claim).toBe('fail');
+    // precedence: `not` over `and` over `or`
+    expect(checkProperty(m, id, prop({ pattern: 'absence', p: 'state a2 and state b2 or state a2 and not state a2' })).claim).toBe('pass');
+  });
+
+  it('the qualified `state r1::a2` resolves; an ambiguous or unknown name stays a refusal', async () => {
+    const [m, id] = await rootId(excl);
+    const q: any = readAtom(m, id, 'state r1::a2');
+    expect(q.ok).toBe(true);
+    expect(checkProperty(m, id, prop({ pattern: 'absence', p: 'state r1::a2' })).claim).toBe('fail');
+    const dup = excl.replace('state b1; state b2', 'state b1; state a2');
+    const [m3, id3] = await rootId(dup);
+    const amb: any = readAtom(m3, id3, 'state a2 and state b1');
+    expect(amb.ok).toBe(false);
+    expect(amb.refusal.code).toBe(UNKNOWN_ATOM_CODE);
+    expect((readAtom(m3, id3, 'state r1::a2') as any).ok).toBe(true);
+    for (const bad of ['state a2 and state zz', 'state a2 and', 'not state zz', 'state a2 or (state b2', 'state r9::a2 or state a1']) {
+      const v = checkProperty(m, id, prop({ pattern: 'absence', p: bad }));
+      expect(v.claim, bad).toBe('inconclusive');
+    }
+    // a leaf of another kind is not mixed in
+    const mixed = checkProperty(m, id, prop({ pattern: 'absence', p: 'state a2 and n == 1' }));
+    expect(mixed.claim).toBe('inconclusive');
+  });
+
+  it('works under a scope and in a plain (non-parallel) machine, and a feature called `not` still reads as an expression', async () => {
+    const [m, id] = await rootId(excl);
+    const v = checkProperty(m, id, prop({ pattern: 'absence', scope: 'after', q: 'state a2', p: 'state b2 and state a2' } as any));
+    expect(['pass', 'fail']).toContain(v.claim);
+    const flat = await load(`package P { item def go; state def F { attribute k : Boolean = false; entry; then s1; state s1; state s2; transition t first s1 accept go then s2; } }`);
+    const fid = find(flat, 'P::F').id;
+    expect(checkProperty(flat, fid, prop({ pattern: 'absence', p: 'state s1 and state s2' })).claim).toBe('pass');
+    expect(checkProperty(flat, fid, prop({ pattern: 'cover', p: 'not state s1' })).claim).toBe('covered');
+    expect(checkProperty(flat, fid, prop({ pattern: 'universality', p: 'not k' })).claim).toBe('pass');
+  });
+
+  it('a formula is read by `recovery` as the plain atom is: the same census on a trigger-less machine', async () => {
+    const m = await load(`package P { state def R { entry; then s1; state s1; state s2; state s3; transition a first s1 then s2; transition b first s2 then s3; } }`);
+    const id = find(m, 'P::R').id;
+    for (const [plain, formula] of [['state s3', 'state s3 or state s3'], ['state s1', 'not (not state s1)'], ['state s2', 'state s2 and not state s3']]) {
+      const a = checkProperty(m, id, prop({ pattern: 'recovery', p: plain }));
+      const b = checkProperty(m, id, prop({ pattern: 'recovery', p: formula }));
+      expect(b.claim, formula).toBe(a.claim);
+      expect(b.recovery?.targetConfigs, formula).toBe(a.recovery?.targetConfigs);
+    }
   });
 });

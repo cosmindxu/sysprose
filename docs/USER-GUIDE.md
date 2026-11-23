@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (43 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (51 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -5013,6 +5013,27 @@ any of these at the language level:
   other is reported (§7.13.3, §8.2.3.13). Ends whose declared multiplicities have
   no cardinality in common (`[1]` bound to `[2..3]`) are reported too; ranges that
   merely differ are not. A warning.
+- **`subset-type-conformance`.** `part b : B subsets a` over `part a : A`, where
+  neither of A and B specialises the other, holds values that are not values of
+  `a` (§7.6.1). A subsetter that declares no type is not judged. A warning.
+- **`disjoint-sum-exceeds`.** `front [3]` and `rear [3]` both subset `wheels [4]`
+  and `disjoint front from rear;`: six values cannot fit in four (§7.6.1, KerML
+  disjoining). Only lower bounds written as literals are summed. A warning.
+- **`enum-value-not-member`.** `attribute c : Color = Color::blue` where `Color`
+  has no `blue`, a literal of another enumeration, or a bare number where the
+  enumeration specialises no attribute definition (§7.8.2). A warning.
+- **`value-multiplicity-mismatch`.** `attribute c : Real [1] = (1.0, 2.0)` holds
+  two values in a `[1]`; `attribute a : Real [2] = 3.0` holds one in a `[2]`
+  (§7.13.4, §7.6.3). Only literals and parenthesised lists are counted; any other
+  expression may give any number of values. A warning.
+- **`specialization-kind-incompatible`.** `item def C :> V` over `attribute def V`
+  and `part def B :> Q` over `port def Q` cross lines of the metaclass hierarchy
+  (§7.7.2); an `enum def` may not specialise another `enum def` (§7.8.2). A
+  definition may specialise one of its own kind, or a kind it is a kind of. A
+  warning.
+- **`unresolved-value-chain`.** `attribute bad : Real = e.nosuch` where `e` is a
+  typed usage with no `nosuch` (§7.6.6). Only a value that is one dotted chain of
+  plain names is read, and only where the types are resolved. A warning.
 
 `port-direction` no longer asks for `in`/`out` on a port whose features are
 directed: it reports only a port that says nothing about direction anywhere. A
@@ -5429,7 +5450,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:575-592`, `1139-1169` (the two rules that ask),
+`src/validation/rules.ts:584-601`, `1148-1178` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 
