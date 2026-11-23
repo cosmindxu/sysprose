@@ -341,8 +341,8 @@ export const exchangeUnallocated: ValidationRule = {
 };
 
 /**
- * `functional-port-realisation` — a function's parameter allocated to a port
- * (Arcadia §20.3: each functional port is realised by a component port).
+ * `function-port-allocation` — a function's parameter allocated to a port
+ * (Arcadia §20.3: each functional port is carried by a component port).
  * Judged only where `allocate fn.p to comp.q;` is written, with `q` a port:
  *  - the port belongs to a host of the function (or a part it contains, or that
  *    subsets it);
@@ -350,8 +350,8 @@ export const exchangeUnallocated: ValidationRule = {
  *    (`out` by `out`, `in` by `in`, `inout` either), read through conjugation;
  *  - the item conforms (as for `exchange-allocation`, §21.9).
  */
-export const functionalPortRealisation: ValidationRule = {
-  id: 'functional-port-realisation',
+export const functionPortAllocation: ValidationRule = {
+  id: 'function-port-allocation',
   description:
     'A function parameter is allocated to a port that is not on a component hosting the function, or that does not carry its item in its direction (Arcadia §20.3, §21.9).',
   severity: 'warning',
@@ -371,7 +371,7 @@ export const functionalPortRealisation: ValidationRule = {
     };
     let n = 0;
     const mk = (message: string, elementId: ElementId) =>
-      out.push({ id: `functional-port-realisation#${n++}`, ruleId: 'functional-port-realisation', severity: 'warning', message, elementId });
+      out.push({ id: `function-port-allocation#${n++}`, ruleId: 'function-port-allocation', severity: 'warning', message, elementId });
     for (const al of model.all()) {
       if (al.attrs.isLibrary === true || !ALLOCATION_KINDS.has(al.eClass)) continue;
       const p = al.source?.[0] ? model.get(al.source[0]) : undefined;
@@ -394,7 +394,7 @@ export const functionalPortRealisation: ValidationRule = {
           (owner.eClass.endsWith('Definition') &&
             declaredDefinitions(model, h).some((d) => d.id === owner.id || generalizationsOf(model, d.id).some((g) => g.id === owner.id))));
       if (hosts.length > 0 && owner && !hosts.some(onOwner)) {
-        mk(`${what}: the port is on ${label(model, owner.id)}, but the function runs on ${[...new Set(hosts)].map((h) => label(model, h)).join(' or ')}; a functional port is realised by a port of the component that hosts the function (Arcadia §20.3).`, al.id);
+        mk(`${what}: the port is on ${label(model, owner.id)}, but the function runs on ${[...new Set(hosts)].map((h) => label(model, h)).join(' or ')}; a functional port is carried by a port of the component that hosts the function (Arcadia §20.3).`, al.id);
         continue;
       }
       const feats = directedFeaturesOf(model, q.id);
@@ -403,9 +403,9 @@ export const functionalPortRealisation: ValidationRule = {
       if (feats.length === 0 || !def || dir === undefined) continue;
       const conforming = feats.filter((f) => conformsTo(model, f.el, def));
       if (conforming.length === 0) {
-        mk(`${what}: the parameter carries ${def.declaredName}, but the port has no feature of that kind (it carries ${feats.map((f) => `${f.direction} ${f.name}`).join(', ')}); a functional port is realised by a port carrying the same item (Arcadia §20.3, §21.9).`, al.id);
+        mk(`${what}: the parameter carries ${def.declaredName}, but the port has no feature of that kind (it carries ${feats.map((f) => `${f.direction} ${f.name}`).join(', ')}); a functional port is carried by a port carrying the same item (Arcadia §20.3, §21.9).`, al.id);
       } else if (dir !== 'inout' && !conforming.some((f) => f.direction === dir || f.direction === 'inout')) {
-        mk(`${what}: the parameter is \`${dir}\` but ${conforming[0]!.name} is \`${conforming[0]!.direction}\` on the port; an \`${dir}\` parameter is realised by a port that carries the item ${dir === 'out' ? 'out' : 'in'} (Arcadia §20.3, SysML v2 §7.12.1).`, al.id);
+        mk(`${what}: the parameter is \`${dir}\` but ${conforming[0]!.name} is \`${conforming[0]!.direction}\` on the port; an \`${dir}\` parameter is carried by a port that carries the item ${dir === 'out' ? 'out' : 'in'} (Arcadia §20.3, SysML v2 §7.12.1).`, al.id);
       }
     }
     return out;

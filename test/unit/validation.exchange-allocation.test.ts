@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { parseModel, resolveConnectorFeatureChains } from '@text/index';
 import { preloadFullLibrary, loadFullStandardLibrary } from '../../src/library/full-library';
 import { resolveTypeReferences } from '../../src/library/resolve';
-import { exchangeAllocation, exchangeUnallocated, functionalPortRealisation } from '../../src/validation/rules-allocation';
+import { exchangeAllocation, exchangeUnallocated, functionPortAllocation } from '../../src/validation/rules-allocation';
 import { RULES_BY_ID } from '@validation/index';
 import type { Model } from '@core/index';
 
@@ -112,13 +112,13 @@ describe('exchange-allocation', () => {
   });
 });
 
-describe('exchange-unallocated and functional-port-realisation', () => {
+describe('exchange-unallocated and function-port-allocation', () => {
   const runR = async (rule: typeof exchangeUnallocated, body: string) =>
     rule.run(await bound(`package P { ${DEFS} part sys { ${SYS} ${body} } }`)).map((d) => d.message);
 
   it('are registered as warnings', () => {
     expect(RULES_BY_ID.get('exchange-unallocated')?.severity).toBe('warning');
-    expect(RULES_BY_ID.get('functional-port-realisation')?.severity).toBe('warning');
+    expect(RULES_BY_ID.get('function-port-allocation')?.severity).toBe('warning');
   });
 
   it('I1: silent when no flow is allocated anywhere (opt-in)', async () => {
@@ -146,27 +146,27 @@ describe('exchange-unallocated and functional-port-realisation', () => {
   });
 
   it('I2: a parameter allocated to the right port is silent', async () => {
-    expect(await runR(functionalPortRealisation, 'allocate command.cmd to ground.cmdOut; allocate execute.cmd to drone.cmdIn; allocate execute.report to drone.reportOut;')).toEqual([]);
+    expect(await runR(functionPortAllocation, 'allocate command.cmd to ground.cmdOut; allocate execute.cmd to drone.cmdIn; allocate execute.report to drone.reportOut;')).toEqual([]);
   });
 
   it('I2: a port on another component is flagged', async () => {
-    const m = await runR(functionalPortRealisation, 'allocate execute.cmd to ground.cmdOut;');
+    const m = await runR(functionPortAllocation, 'allocate execute.cmd to ground.cmdOut;');
     expect(m).toHaveLength(1);
     expect(m[0]).toMatch(/port is on .*ground, but the function runs on .*drone.*§20\.3/);
   });
 
   it('I2: wrong direction and wrong item are flagged', async () => {
-    const d = await runR(functionalPortRealisation, 'allocate execute.cmd to drone.reportOut;');
+    const d = await runR(functionPortAllocation, 'allocate execute.cmd to drone.reportOut;');
     expect(d).toHaveLength(1);
     expect(d[0]).toMatch(/has no feature of that kind/);
-    const dir = await runR(functionalPortRealisation, 'allocate execute.report to drone.reportOut; allocate command.cmd to ground.cmdOut; action sink : Show; allocate sink to ground; allocate sink.report to ground.cmdOut;');
+    const dir = await runR(functionPortAllocation, 'allocate execute.report to drone.reportOut; allocate command.cmd to ground.cmdOut; action sink : Show; allocate sink to ground; allocate sink.report to ground.cmdOut;');
     expect(dir.length).toBeGreaterThan(0);
-    const o = await runR(functionalPortRealisation, 'allocate execute.cmd to drone.cmdIn;');
+    const o = await runR(functionPortAllocation, 'allocate execute.cmd to drone.cmdIn;');
     expect(o).toEqual([]);
   });
 
   it('I2: an out parameter on an in port is flagged', async () => {
-    const m = await runR(functionalPortRealisation, 'action cmdIn2 : Command; allocate cmdIn2 to drone; allocate cmdIn2.cmd to drone.cmdIn;');
+    const m = await runR(functionPortAllocation, 'action cmdIn2 : Command; allocate cmdIn2 to drone; allocate cmdIn2.cmd to drone.cmdIn;');
     expect(m).toHaveLength(1);
     expect(m[0]).toMatch(/parameter is `out` but cmd is `in`/);
   });

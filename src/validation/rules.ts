@@ -58,7 +58,7 @@ import type { Diagnostic, Severity, ValidationRule } from './types';
 import { directedFeaturesOf } from '../semantics/port-conformance';
 import { bindingConformance, multiplicityConformance } from './rules-structure';
 import { connectionCompatibility, flowEndCompatibility, interfaceEndConformance, portTyping } from './rules-connection';
-import { exchangeAllocation, exchangeUnallocated, functionalPortRealisation } from './rules-allocation';
+import { exchangeAllocation, exchangeUnallocated, functionPortAllocation } from './rules-allocation';
 // The one import this layer makes of `src/api`, and it is deliberate rather
 // than accidental. The evidence carrier and the canonical model digest are
 // declared once, in `src/api/evidence.ts`, because that is where the RECORD is
@@ -1970,7 +1970,7 @@ export const RULES: ValidationRule[] = [
   portTyping,
   exchangeAllocation,
   exchangeUnallocated,
-  functionalPortRealisation,
+  functionPortAllocation,
   multiplicityConformance,
   bindingConformance,
 ];

@@ -365,7 +365,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** In a scope that already allocates flows to connections, a flow between functions hosted on two different components is allocated to no connection (Arcadia §20.4: a functional exchange between functions on two components is implemented by one and only one exchange between them).
 - **Hint given:** Allocate the flow to the connection between the two components: `allocate cmdFlow to cmdLink;`, or add the connection `connection cmdLink connect ground.cmdOut to drone.cmdIn;` first.
 
-### `validation/functional-port-realisation`
+### `validation/function-port-allocation`
 
 - **Severity:** warning
 - **Source:** validation

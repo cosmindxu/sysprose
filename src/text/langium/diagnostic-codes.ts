@@ -383,7 +383,7 @@ const CODES = [
     hint: 'Allocate the flow to the connection between the two components: `allocate cmdFlow to cmdLink;`, or add the connection `connection cmdLink connect ground.cmdOut to drone.cmdIn;` first.',
   },
   {
-    code: 'validation/functional-port-realisation',
+    code: 'validation/function-port-allocation',
     source: 'validation',
     severity: 'warning',
     when: 'A function parameter is allocated to a port that is not on a component hosting the function, or whose directed features do not carry the parameter\'s item in its direction (Arcadia §20.3, §21.9; SysML v2 §7.12.1).',
