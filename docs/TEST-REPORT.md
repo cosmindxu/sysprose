@@ -38,15 +38,15 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
 | **Date** | 2026-10-15 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **6113 passed / 0 failed / 0 skipped** across **191 files** |
-| &nbsp;&nbsp;— unit | 4979 passed across 152 files |
+| **Vitest checks** | **6138 passed / 0 failed / 0 skipped** across **191 files** |
+| &nbsp;&nbsp;— unit | 5004 passed across 152 files |
 | &nbsp;&nbsp;— integration | 481 passed across 22 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
 | &nbsp;&nbsp;— interop | 10 passed across 1 file |
 | &nbsp;&nbsp;— campaign (L6–L8) | 521 passed across 5 files |
 | **E2E scenarios** | **238 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
-| **Grand total** | **6351 automated checks passed / 0 failed** |
+| **Grand total** | **6376 automated checks passed / 0 failed** |
 
 > **Previously the one failure**, now fixed: `conformance › Systems Library/
 > Actions.sysml › parses with 0 errors`. The OMG corpus (an *external,
@@ -271,7 +271,7 @@ wired relationship.
 | Interaction | Covered by | Result | Screenshot |
 |---|---|---|---|
 | Validate flags duplicate name → navigable row | `E validation`; `E panels-problems-text` | PASS | `06b-problem-selected` |
-| Validation engine — all 37 rules (pos/neg) | `U validation.rules` (90 cases); `I pipeline.validate` | PASS | — |
+| Validation engine — all 43 rules (pos/neg) | `U validation.rules` (94 cases); `I pipeline.validate` | PASS | — |
 | Check → constraint-check rows (satisfied/violated) | `E simulate-check`, `E toolbar-lifecycle`; `U semantics.constraints` | PASS | `simcheck-check` |
 | Simulate action flow → ordered trace in Problems | `E simulate`, `E simulate-check` (`ignite`→`accelerate`) | PASS | `simcheck-action` |
 | Simulate state machine → state trace in Problems | `E simulate-check` (`idle`→`running`) | PASS | `simcheck-state` |
@@ -328,7 +328,7 @@ The deep engine coverage that underpins the UI. (Condensed; full per-file counts
 | Interop client — self round-trip over HTTP + live pilot exchange | `X self-roundtrip`; `docs/CONFORMANCE.md` §6 | PASS |
 | Standard libraries — full 38.8k elements / 98 packages + resolution | `U library.load`; `I full-library.load`/`full-library.resolve` | PASS |
 | Persistence — store round-trip + export/import equivalence | `U persistence.io`; `I persist-api.persistence` | PASS |
-| Validation — 37 rules incl. the KerML semantic ones (value conformance, redefinition conformance, units and dimensions) | `U validation.rules`; `I pipeline.validate` | PASS |
+| Validation — 43 rules incl. the KerML semantic ones (value conformance, redefinition conformance, units and dimensions) | `U validation.rules`; `I pipeline.validate` | PASS |
 
 ### 2.13 Real-time collaboration (Yjs CRDT + presence)
 
@@ -1009,8 +1009,8 @@ narrowed subset.
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **6351 green automated
-checks** (**6113** unit/integration/conformance/server/interop/campaign across **191 files**,
+SysML v2 standard family — all six read **Covered** — with **6376 green automated
+checks** (**6138** unit/integration/conformance/server/interop/campaign across **191 files**,
 **0 skips**, + **238 E2E** across **84 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
@@ -1029,7 +1029,7 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (6113 passed /
+*End of report. Counts and verdicts derived from a live `vitest run` (6138 passed /
 0 skipped across 191 files) and Playwright (231/231 across 84 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
