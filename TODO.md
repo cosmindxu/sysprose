@@ -1852,6 +1852,16 @@ and §21.4–21.11.
       marks it `keywordless` so that port-typing skips it and a port definition's `out x : T;` counts as
       a directed feature; the metaclass itself is still the departure. Changing it reaches the flow
       ends, connectivity, the diagrams and the FMI import, which all read `PortUsage`. [if-param]
+- [ ] **Map `perform x;` with a reference to the performed action.** `part ops { perform command; }`
+      reaches the model as a `PerformActionUsage` named `command` with no relationship to the action
+      (SysML v2 §7.17: the performed action is the usage's referenced feature, a ReferenceSubsetting).
+      `exchange-allocation` resolves the name from the performer's scope until it is mapped; every
+      other reader of `perform` sees a fresh action. [xalloc]
+- [ ] **Exchange allocation — completeness and the views.** `exchange-allocation` judges the
+      allocations a model writes (Arcadia §19.10–19.11, §20.4, §21.9). Still open: a flow between
+      functions on two components with no allocation at all (§20.4 "doit être implémenté"), a
+      functional port realised by no port (§20.3), the ICD table (one row per exchange: functional,
+      logical, physical) and the Interconnection overlay. [xalloc]
 - [ ] **Read the cross multiplicity on a connector end.** `connect [2] a.p to [1] b.q` parses
       (`connSrcMult`/`connTgtMult`) and the multiplicity is dropped without a note (SysML v2
       §8.2.2.13 `OwnedCrossMultiplicityMember`). Store it, write it back on Save, and read it where

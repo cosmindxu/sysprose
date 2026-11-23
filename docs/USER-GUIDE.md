@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (36 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (37 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -5002,6 +5002,17 @@ any of these at the language level:
   (`in port taskingIn : TaskingOrder;`) is not a port in SysML v2 terms
   (§7.12.2: a port usage is defined only by port definitions). Declare a port
   definition whose directed features carry the item, and type the port by it.
+- **`exchange-allocation`.** An allocation between exchanges is legal SysML
+  v2 between any two elements (§7.15); the consistency rules are Arcadia's
+  (Voirin 2018). `allocate cmdFlow to cmdLink` is reported when the flow's two
+  functions are not allocated to (or performed by) the components the link
+  joins (§20.4), when the link's ports do not carry the flow's item `out` of
+  the sender and `in` to the receiver (§21.9, directions read through `~`), and
+  when a flow is allocated to more than one link (one and only one, §20.4).
+  `allocate cmdLink to rfLink` is reported when the link's components are not
+  deployed on the nodes the physical connection joins, in either order
+  (§19.10–19.11). A member that subsets its fleet counts as the fleet; an end
+  whose function is allocated nowhere is not judged.
 
 `port-direction` no longer asks for `in`/`out` on a port whose features are
 directed: it reports only a port that says nothing about direction anywhere. A
