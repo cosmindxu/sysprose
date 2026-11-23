@@ -22,13 +22,17 @@
  * publishes `recoverable` or `not recoverable` only where `walkIsExact` holds.
  * Two of them are LIVENESS: `existence` and `response` are violated only by an
  * INFINITE run that never delivers what was promised, and a bad-prefix search
- * finds no bad prefix for either. Under a naive "no violation found ⇒ pass"
+ * finds no bad prefix for either. Under a naive "no violation found => pass"
  * rule that would print the strongest verdict this command has for exactly the
- * two properties it cannot decide, so both report `inconclusive: liveness not
- * checked in-process` until a lasso search lands and a fairness assumption is
- * named. `vogel-2022`, this lane's own citation for the catalogue, is explicit
- * that response is the path-formula exception; that is why it needs observer
- * automata for it at all.
+ * two properties it cannot decide, so the bad-prefix search never runs for them:
+ * {@link livenessRow} is a LASSO search over the product of the configuration
+ * graph and a scope monitor ({@link liveStep}, {@link lassoOf}), and it decides
+ * only where the walk saw its graph whole — the gate a safety `pass` stands on.
+ * Everywhere else both report `inconclusive: liveness not checked in-process`,
+ * as they always did (docs/04 non-goal 4, lifted for that case alone). The
+ * fairness assumption is {@link LIVENESS_FAIRNESS}, printed on every verdict.
+ * `vogel-2022`, this lane's own citation for the catalogue, is explicit that
+ * response is the path-formula exception; that is why it needs a lasso at all.
  *
  * THREE SENTENCES THIS FILE MUST NEVER PRODUCE, and where each is stopped:
  *
@@ -95,6 +99,7 @@ import {
   machineRegion,
   resumesHistory,
   seedStore,
+  defaultsReadBy,
   triggerLabelOf,
   type MachineConfig,
   type StepInput,
@@ -460,6 +465,22 @@ export interface TraceStep {
   declaration?: boolean;
   /** On a parallel machine: every active leaf here (one per region). */
   leaves?: readonly ElementId[];
+  /**
+   * On a LASSO witness (a violated liveness property): this step is part of the
+   * cycle the run repeats forever. The steps before the first one are the prefix.
+   */
+  cycle?: boolean;
+}
+
+/**
+ * The shape of a lasso counterexample: a prefix, then a cycle repeated forever —
+ * or, where the prefix ends in a configuration nothing is enabled in, no cycle
+ * at all and the run stays there (`stutter`).
+ */
+export interface Lasso {
+  readonly prefixSteps: number;
+  readonly cycleSteps: number;
+  readonly stutter: boolean;
 }
 
 /** The three answers the modality can give about a refutation (plan §3.R). */
@@ -563,6 +584,14 @@ export interface PropertyVerdict {
    * contract is unchanged).
    */
   modality: Modality | null;
+  /** Present on a `fail` row of a liveness pattern: the shape of its lasso. */
+  lasso?: Lasso;
+  /**
+   * The attributes this DECIDED verdict reads that the walk seeded from a
+   * `default` (a start value a specialisation may redefine), as `n = 0
+   * (default, redefinable)`. Present only when there are some; `=` never is.
+   */
+  defaults?: readonly string[];
   /** Present on a `cover` row that reached the walk, and on no other. */
   cover?: CoverCensus;
   /** Present on a `recovery` row that reached the walk, and on no other. */
@@ -1299,7 +1328,9 @@ function search(
   bounds: ExploreBounds,
   chaseKeyed: boolean,
   budgetEndsRun: boolean,
+  live?: LiveGraph,
 ): SearchResult {
+  const stepMonitor = live === undefined ? monitorStep : liveStep;
   const COMPLETION: StepInput = { kind: 'completion' };
   const triggers: StepInput[] = bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger }));
   const inputs: StepInput[] = [COMPLETION, ...triggers];
@@ -1327,7 +1358,7 @@ function search(
   const root: ProductNode = {
     config: opening.config,
     hash: hashConfig(opening.config, history),
-    monitor: monitorStep(property, OPENING, first.value),
+    monitor: stepMonitor(property, OPENING, first.value),
     depth: 0,
     events: 0,
     completionRun: 0,
@@ -1362,7 +1393,12 @@ function search(
       ? `${hash}|${monitorKey(monitor)}#${run}`
       : `${hash}|${monitorKey(monitor)}`;
 
-  const seen = new Set<string>([keyOf(root.config, root.hash, root.monitor, 0)]);
+  const rootKey = keyOf(root.config, root.hash, root.monitor, 0);
+  const seen = new Set<string>([rootKey]);
+  if (live !== undefined) {
+    live.nodes.set(rootKey, root);
+    live.order.push(rootKey);
+  }
   const queue: ProductNode[] = [root];
   let boundHit: BoundHit = 'none';
 
@@ -1379,6 +1415,8 @@ function search(
     const completion = completionAt(here.config, here.hash);
     const due = completion.enabled.length > 0;
     const stopped = chaseKeyed && due && here.completionRun >= bounds.maxCompletion;
+    // A chase the budget stopped: the interpreter takes the next EVENT here, and a run with none ends.
+    if (live !== undefined && stopped) live.budgetCut = true;
     const offeredInputs: StepInput[] = stopped
       ? triggers
       : due || completion.undetermined.length > 0
@@ -1410,9 +1448,32 @@ function search(
             refusal: valued.refusal,
           };
         }
-        const monitor = monitorStep(property, here.monitor, valued.value);
+        const monitor = stepMonitor(property, here.monitor, valued.value);
         const hash = hashConfig(next.config, history);
         const key = keyOf(next.config, hash, monitor, run);
+        // THE LASSO SEARCH NEEDS THE EDGES, the ones into keys already seen
+        // above all: a cycle is an edge back. The node built here is the one
+        // admitted below when the key is new, so a node and the edge that first
+        // met it are one object and the prefix of a lasso is its parent chain.
+        const edgeNode: ProductNode | null =
+          live === undefined
+            ? null
+            : {
+                config: next.config,
+                hash,
+                monitor,
+                depth: here.depth + 1,
+                events: here.events + (input.kind === 'completion' ? 0 : 1),
+                completionRun: chaseKeyed && completionAt(next.config, hash).enabled.length === 0 ? 0 : run,
+                parent: here,
+                input,
+                transition: choice.transition,
+                ...(choice.macro === undefined ? {} : { macro: firesApplied(choice) }),
+                holds: valued.holds,
+              };
+        if (live !== undefined && edgeNode !== null && !(!chaseKeyed && run > bounds.maxCompletion)) {
+          live.edges.push({ from: keyOf(here.config, here.hash, here.monitor, here.completionRun), to: key, node: edgeNode });
+        }
         // A key already seen is never a violation: the monitor is in the key,
         // `violated` is in the monitor, and a violated node returns below the
         // first time it is met instead of being admitted.
@@ -1435,6 +1496,7 @@ function search(
         // run ends where the budget stopped it, and that is no bound.
         if (!chaseKeyed && run > bounds.maxCompletion) {
           if (!budgetEndsRun) boundHit = 'completion';
+          if (live !== undefined) live.budgetCut = true;
           continue;
         }
         // THE VACUITY FLAGS FOLD ONLY WHAT THE SEARCH ADMITS, so AFTER the gate
@@ -1456,7 +1518,7 @@ function search(
         // there: no pass and no vacuity stands on such a walk.)
         activated = activated || monitor.activated;
         pSeen = pSeen || monitor.pSeen;
-        const node: ProductNode = {
+        const node: ProductNode = edgeNode ?? {
           config: next.config,
           hash,
           monitor,
@@ -1491,11 +1553,226 @@ function search(
           continue;
         }
         seen.add(key);
+        if (live !== undefined) {
+          live.nodes.set(key, node);
+          live.order.push(key);
+        }
         queue.push(node);
       }
     }
   }
   return { violation: null, activated, pSeen, configs: seen.size, boundHit, refusal: null };
+}
+
+/* ───────────────────────────── liveness: the lasso ───────────────────────── */
+
+/**
+ * THE FAIRNESS ASSUMPTION LIVENESS IS DECIDED UNDER, stated once and printed on
+ * every liveness verdict this engine publishes (docs/04 non-goal 4).
+ *
+ * Dwyer's `existence` and `response` are plain LTL over the runs of the system,
+ * so the reading the catalogue supports is the plain one: NO FAIRNESS. A run
+ * that loops forever while a transition out of the loop stays enabled is a run
+ * of the machine, and it counts against the property. The one thing assumed on
+ * top is that the environment is LIVE — the same cooperative environment
+ * `recovery` and the modality read — so that a run goes on while any transition
+ * is enabled, and a configuration where none is repeats forever (the standard
+ * stutter extension of a finite maximal run). Both halves are uniform across
+ * every liveness property; neither is chosen per model.
+ */
+export const LIVENESS_FAIRNESS =
+  'no fairness among the enabled transitions (a run may loop forever while a way out of the loop stays enabled) ' +
+  'and a live environment (a run goes on while any transition is enabled, and a configuration where none is ' +
+  'enabled repeats forever)';
+
+/** One edge of the product graph a liveness search collects. */
+interface LiveEdge {
+  readonly from: string;
+  readonly to: string;
+  /** The observation the edge took, parented at the node it left. */
+  readonly node: ProductNode;
+}
+
+/** The product graph a liveness search collects: nodes by key, in discovery order, and every edge. */
+interface LiveGraph {
+  readonly nodes: Map<string, ProductNode>;
+  readonly order: string[];
+  readonly edges: LiveEdge[];
+  /** Did the interpreter's chase budget end a run the search would have gone on with? */
+  budgetCut: boolean;
+}
+
+/**
+ * One step of the LIVENESS monitor — {@link monitorStep}'s sibling, over the
+ * same scopes and the same `Monitor` record. `pending` is read as OWED: an
+ * obligation of the pattern is open and not yet met. `violated` is only the
+ * FINITE half of a liveness violation, the one a scope with a closing atom
+ * produces: the segment closes with the obligation still owed, which no
+ * continuation repairs. The infinite half is found afterwards, as a cycle of
+ * owed nodes ({@link lassoOf}).
+ *
+ * Dwyer's formulas, per scope, with `R` taken STRICTLY (the discharging atom
+ * must hold at an observation where R does not, and the closing test runs
+ * first, as in {@link monitorStep}):
+ *  - `existence P`: owed from the segment's start until a P; `before R` and
+ *    `between` and `after … until` are violated by an R met while owed;
+ *    `after … until` and `between` re-arm at every Q that is not an R.
+ *  - `response P -> S`: every P owes an S at or after it; one S clears every
+ *    owed P; an R met while owed violates `before`, `between`, `after … until`.
+ *  - `between` and `before` say nothing about a run that never closes, so only
+ *    `globally`, `after` and `after … until` can be violated by a cycle.
+ */
+function liveStep(p: ResolvedProperty, m: Monitor, v: Valuation): Monitor {
+  if (m.violated) return m;
+  const scope = p.scope.name;
+  const exist = p.pattern.name === 'existence';
+  const hasR = scope === 'before' || scope === 'between' || scope === 'after-until';
+  const rHolds = v.r === true;
+  let { open, activated, closed, pending: owed, pSeen } = m;
+
+  // `before R` is open from the first observation, with its obligation owed
+  // already, so an R at that very observation closes a segment that owed.
+  if (scope === 'before' && !closed && !open) {
+    open = true;
+    owed = exist;
+  }
+  // ── closing ──
+  if (open && rHolds && hasR) {
+    open = false;
+    closed = true;
+    if (scope === 'before' || scope === 'between') activated = true;
+    if (owed) return { ...m, open, activated, closed, pending: false, violated: true };
+    owed = false;
+  }
+  // ── opening, and the re-arming of the two repeating scopes ──
+  if (!open) {
+    if (scope === 'globally') {
+      open = true;
+      activated = true;
+      owed = exist;
+    } else if (scope !== 'before' && v.q === true && !(rHolds && (scope === 'between' || scope === 'after-until'))) {
+      open = true;
+      owed = exist;
+      if (scope === 'after' || scope === 'after-until') activated = true;
+    }
+  } else if (exist && v.q === true && !rHolds && (scope === 'between' || scope === 'after-until')) {
+    owed = true;
+  }
+  if (!open) {
+    return { open, activated, closed, count: 0, pHeld: false, sSeen: false, pSeen, pending: false, violated: false };
+  }
+  // ── the pattern, inside an open segment ──
+  if (exist) {
+    if (v.p === true) owed = false;
+  } else {
+    if (v.p === true) {
+      pSeen = true;
+      owed = true;
+    }
+    if (v.s === true) owed = false;
+  }
+  return { open, activated, closed, count: 0, pHeld: false, sSeen: false, pSeen, pending: owed, violated: false };
+}
+
+/** Is there a cycle of completion steps alone in the product graph — a run the interpreter's chase budget ends? */
+function completionCycle(g: LiveGraph): boolean {
+  const index = new Map<string, number>();
+  g.order.forEach((k, i) => index.set(k, i));
+  const out: number[][] = g.order.map(() => []);
+  for (const e of g.edges) {
+    if (e.node.input?.kind !== 'completion') continue;
+    const a = index.get(e.from);
+    const b = index.get(e.to);
+    if (a !== undefined && b !== undefined) out[a].push(b);
+  }
+  return tarjanComponents(out).members.some((m) => m.length > 1 || out[m[0]].includes(m[0]));
+}
+
+/** What the lasso search found: the node a counterexample leaves its prefix at, and the cycle (empty = stutter). */
+interface LassoFound {
+  readonly entry: string;
+  readonly cycle: readonly LiveEdge[];
+}
+
+/**
+ * The lasso of a violated liveness property, or `null` where none exists.
+ *
+ * Over the product graph a search collected WHOLE (the caller has checked that),
+ * an infinite run that owes forever is exactly one of two shapes: a cycle every
+ * node of which is OWED (found as a strongly connected component of the owed
+ * subgraph — `./scc`'s Tarjan — with at least one edge), or a node with no
+ * successor at all that is owed (the run stays there: the stutter extension
+ * {@link LIVENESS_FAIRNESS} names). Only `globally`, `after` and
+ * `after … until` are violated this way; a scope that needs its R to arrive
+ * (`before`, `between`) is violated by the finite prefix the search returns.
+ *
+ * The counterexample chosen is the one entered earliest in discovery order,
+ * which is the one with the shortest prefix, and the cycle through its entry is
+ * the shortest the owed subgraph offers. Both are deterministic.
+ */
+function lassoOf(p: ResolvedProperty, g: LiveGraph): LassoFound | null {
+  const scope = p.scope.name;
+  if (scope === 'before' || scope === 'between') return null;
+  const index = new Map<string, number>();
+  g.order.forEach((k, i) => index.set(k, i));
+  const owed = g.order.map((k) => g.nodes.get(k)!.monitor.pending);
+  const out: number[][] = g.order.map(() => []);
+  const hasEdge: boolean[] = g.order.map(() => false);
+  const edgesOf: LiveEdge[][] = g.order.map(() => []);
+  for (const e of g.edges) {
+    const a = index.get(e.from);
+    const b = index.get(e.to);
+    if (a === undefined || b === undefined) continue;
+    hasEdge[a] = true;
+    if (owed[a] && owed[b]) {
+      out[a].push(b);
+      edgesOf[a].push(e);
+    }
+  }
+  let best: { at: number; found: LassoFound } | null = null;
+  // The stutter: an owed node nothing leaves.
+  for (let i = 0; i < g.order.length; i++) {
+    if (owed[i] && !hasEdge[i]) {
+      best = { at: i, found: { entry: g.order[i], cycle: [] } };
+      break;
+    }
+  }
+  const comps = tarjanComponents(out);
+  for (const members of comps.members) {
+    const hasCycle = members.length > 1 || out[members[0]].includes(members[0]);
+    if (!hasCycle || !owed[members[0]]) continue;
+    const entry = members[0];
+    if (best !== null && best.at <= entry) continue;
+    // The shortest cycle through `entry`, inside its component.
+    const comp = comps.componentOf[entry];
+    const prev = new Map<number, LiveEdge & { fromIdx: number }>();
+    const queue: number[] = [entry];
+    let closing: (LiveEdge & { fromIdx: number }) | null = null;
+    for (let qi = 0; qi < queue.length && closing === null; qi++) {
+      const a = queue[qi];
+      for (const e of edgesOf[a]) {
+        const b = index.get(e.to)!;
+        if (comps.componentOf[b] !== comp) continue;
+        if (b === entry) {
+          closing = { ...e, fromIdx: a };
+          break;
+        }
+        if (!prev.has(b)) {
+          prev.set(b, { ...e, fromIdx: a });
+          queue.push(b);
+        }
+      }
+    }
+    if (closing === null) continue;
+    const cycle: LiveEdge[] = [closing];
+    for (let at = closing.fromIdx; at !== entry; ) {
+      const e = prev.get(at)!;
+      cycle.unshift(e);
+      at = e.fromIdx;
+    }
+    best = { at: entry, found: { entry: g.order[entry], cycle } };
+  }
+  return best === null ? null : best.found;
 }
 
 /* ─────────────────────────── rows and rendering ─────────────────────────── */
@@ -1857,6 +2134,26 @@ export function checkProperty(
   text: PropertyText,
   opts: ExploreOptions = {},
 ): PropertyVerdict {
+  const verdict = checkPropertyRow(model, machineId, text, opts);
+  // A DECIDED verdict that reads an attribute the walk seeded from a `default`
+  // says so, by name: it holds for that start value, which a specialisation may
+  // redefine. The note moves no verdict, and `=` never earns one.
+  const decided = verdict.claim === 'pass' || verdict.claim === 'fail' || verdict.claim === 'covered' || verdict.claim === 'not-covered';
+  if (!decided) return verdict;
+  const defaults = defaultsReadBy(model, machineId, [text.p, text.q, text.r, text.s]);
+  if (defaults.length === 0) return verdict;
+  const lead = { pass: 'Holds for', fail: 'Refuted for', covered: 'Covered for', 'not-covered': 'Not covered for' }[
+    verdict.claim as 'pass' | 'fail' | 'covered' | 'not-covered'
+  ];
+  return { ...verdict, defaults, detail: `${verdict.detail} ${lead} ${defaults.join(', ')}.` };
+}
+
+function checkPropertyRow(
+  model: Model,
+  machineId: ElementId,
+  text: PropertyText,
+  opts: ExploreOptions = {},
+): PropertyVerdict {
   const machineEl = model.get(machineId);
   const machine: StateRef & { eClass: string } = {
     ...stateRef(model, machineId),
@@ -1946,43 +2243,16 @@ export function checkProperty(
     bounds,
   };
 
-  // LIVENESS, refused before a walk. A bad-prefix search returns no bad prefix
-  // for `existence` or `response` on ANY graph, so a walk would answer "no
-  // violation found" every time and a pass drawn from that would be the
-  // strongest verdict this command has, printed for the two properties it
-  // cannot decide.
-  if (property.pattern.kind === 'liveness') {
-    return {
-      ...row,
-      claim: 'inconclusive',
-      // THE BEHAVIOUR LANE'S OWN CODE, and not the SMT lane's
-      // `verification/unsupported-construct`. That code's published entry says
-      // it is one of the two `--allow-inconclusive` may lower to exit 0 and
-      // sends the reader to `obligations --missing`; filing a liveness refusal
-      // under it would print, in the catalogue a reader checks, that the one
-      // row this command must never lower is lowerable.
-      code: BEHAVIOUR_UNSUPPORTED_CODE,
-      detail:
-        `inconclusive: liveness not checked in-process. \`${property.pattern.name}\` is violated ` +
-        'only by an infinite run that never delivers what it promised, and this engine searches ' +
-        'for finite bad prefixes — of which such a run has none. It stays inconclusive until a ' +
-        'lasso search lands and a fairness assumption is named; there is no flag that lowers it.',
-      activated: false,
-      configs: 0,
-      machineConfigs: 0,
-      exhaustive: false,
-      boundHit: 'none',
-      qualification: 'not decided: this engine decides safety and guarantee patterns only',
-      unsupported: [],
-      witness: [],
-      modality: null,
-    };
-  }
-
   // The one authority on whether the graph was seen whole. It also owns the
   // unsupported-construct refusal, which is why it is asked first: a machine
   // this engine does not explore has no answer, not a partial one.
   const walk = exploreMachine(model, machineId, opts);
+  // LIVENESS, decided only over a graph the walk saw whole (docs/04 non-goal 4,
+  // lifted for exactly that case). A bad-prefix search returns no bad prefix for
+  // `existence` or `response` on ANY graph, so it never runs for them: the arm
+  // is a lasso search, and it sits before the unsupported refusal below because
+  // its own refusal for an unwalked machine is the liveness one.
+  if (property.pattern.kind === 'liveness') return livenessRow(model, machineId, walk, property, row, bounds);
   if (walk.unsupported.length > 0) {
     return {
       ...row,
@@ -2288,6 +2558,212 @@ export function checkProperty(
     detail:
       `pass — holds on every reachable configuration: ${sentence}. ${qualification}, over ` +
       `${found.configs} product state(s).`,
+    witness: [],
+  };
+}
+
+
+/** The refusal a liveness property keeps wherever its walk is not whole: inconclusive, exit 2, no flag lowers it. */
+function livenessRefusal(
+  row: Pick<PropertyVerdict, 'machine' | 'property' | 'pattern' | 'patternClass' | 'scope' | 'sentence' | 'bounds'>,
+  name: string,
+  why: string,
+  boundHit: BoundHit,
+  unsupported: readonly UnsupportedConstruct[],
+): PropertyVerdict {
+  return {
+    ...row,
+    claim: 'inconclusive',
+    // THE BEHAVIOUR LANE'S OWN CODE, and not the SMT lane's
+    // `verification/unsupported-construct`. That code's published entry says
+    // it is one of the two `--allow-inconclusive` may lower to exit 0 and
+    // sends the reader to `obligations --missing`; filing a liveness refusal
+    // under it would print, in the catalogue a reader checks, that the one
+    // row this command must never lower is lowerable.
+    code: BEHAVIOUR_UNSUPPORTED_CODE,
+    detail:
+      `inconclusive: liveness not checked in-process on this walk. \`${name}\` is violated ` +
+      'only by an infinite run that never delivers what it promised, and this engine decides that ' +
+      'only over a configuration graph the walk saw WHOLE — no bound hit, no guard it could not ' +
+      'evaluate, no construct it does not explore — by a lasso search under ' +
+      `${LIVENESS_FAIRNESS}. ${why} It stays inconclusive until the walk is whole; there is no flag that lowers it.`,
+    activated: false,
+    configs: 0,
+    machineConfigs: 0,
+    exhaustive: false,
+    boundHit,
+    qualification: 'not decided: this walk is not a whole graph, and liveness is decided over a whole one only',
+    unsupported,
+    witness: [],
+    modality: null,
+  };
+}
+
+/**
+ * A `existence` or `response` property, decided by a lasso search over the
+ * product of the configuration graph and the liveness monitor — and only where
+ * the walk saw its graph whole ({@link publishabilityOf}`.decreasingOk`, the
+ * same gate a `pass` on a safety pattern stands on). Everywhere else it is
+ * {@link livenessRefusal}.
+ *
+ * A violation is a LASSO: a prefix and a cycle repeated forever, or a prefix
+ * ending where nothing is enabled. The witness carries both, with the cycle's
+ * steps marked, and is replayed through the interpreter like a safety witness
+ * (the cycle once). The fairness assumption rides on every verdict row.
+ */
+function livenessRow(
+  model: Model,
+  machineId: ElementId,
+  walk: ExploreResult,
+  property: ResolvedProperty,
+  row: Pick<PropertyVerdict, 'machine' | 'property' | 'pattern' | 'patternClass' | 'scope' | 'sentence' | 'bounds'>,
+  bounds: ExploreBounds,
+): PropertyVerdict {
+  const name = property.pattern.name;
+  const gate = publishabilityOf(walk);
+  const refuse = (why: string): PropertyVerdict =>
+    livenessRefusal(row, name, why, walk.boundHit, walk.unsupported);
+  if (!gate.decreasingOk) return refuse(`${gate.sentence[0].toUpperCase()}${gate.sentence.slice(1)}.`);
+  const budgetEndsRun = bounds.alphabet.length === 0 && walk.timedTransitions.size === 0;
+  const graph: LiveGraph = { nodes: new Map(), order: [], edges: [], budgetCut: false };
+  const found = search(model, machineId, property, bounds, walk.chaseKeyed, budgetEndsRun, graph);
+  const exhaustive = publishabilityOf(walk, found).decreasingOk;
+  const qualification = `exhaustive under ${boundsSentence(bounds)}`;
+  const base = {
+    ...row,
+    configs: found.configs,
+    machineConfigs: walk.configs,
+    exhaustive,
+    boundHit: found.boundHit !== 'none' ? found.boundHit : walk.boundHit,
+    qualification,
+    unsupported: [] as readonly UnsupportedConstruct[],
+    activated: found.activated,
+    modality: null as Modality | null,
+  };
+  if (found.refusal !== null) {
+    return {
+      ...base,
+      claim: 'inconclusive',
+      code: found.refusal.code,
+      detail: found.refusal.detail,
+      exhaustive: false,
+      qualification: 'nothing was decided: an atom could not be evaluated where the walk offered it',
+      witness: [],
+    };
+  }
+  if (!exhaustive) {
+    return refuse(
+      `The product search did not finish — ${boundSentence(found.boundHit) || 'a bound was hit'}.`,
+    );
+  }
+  // THE CHASE BUDGET IS NOT A FAIR END OF A RUN. A run that goes round a cycle of
+  // trigger-less transitions never comes to rest in the specification's reading,
+  // and the interpreter ends it where its budget stops the chase; a step the
+  // search dropped at the budget is the same difference. The two readings agree
+  // on a property only by accident, so neither verdict is claimed over a machine
+  // where they can part — in either direction, because the stuck configuration
+  // the budget makes is one the machine does not have, and the cycle it hides is
+  // one a bounded run does not take.
+  // Where nothing is ever OWED — the first observation already delivers it —
+  // neither reading can violate, and the verdict stands.
+  const anyOwed = graph.order.some((k) => graph.nodes.get(k)!.monitor.pending);
+  if (anyOwed && (graph.budgetCut || completionCycle(graph))) {
+    return refuse(
+      'A run of this machine goes round a cycle of trigger-less transitions (a completion livelock) or is cut by the interpreter’s chase budget, ' +
+        'so the infinite run the specification reads and the run the interpreter takes can part, and neither verdict is claimed.',
+    );
+  }
+  const sentence = row.sentence;
+  const notReplayed = (witness: readonly TraceStep[], what: string, reason: string): PropertyVerdict => ({
+    ...base,
+    claim: 'inconclusive',
+    code: WITNESS_NOT_REPLAYED_CODE,
+    detail:
+      `inconclusive: the ${what} this search found (${witness.length - 1} step(s)) does not replay through ` +
+      `the interpreter — ${reason}. Nothing is claimed about this property: a run the interpreter does not take refutes nothing.`,
+    exhaustive: false,
+    qualification: 'nothing was decided: the run the search found is not one the interpreter takes',
+    witness: [],
+  });
+  // A finite violation: a scope with a closing atom closed while the property
+  // still owed. No continuation repairs it, so it needs no fairness at all.
+  if (found.violation !== null) {
+    const witness = traceOf(model, found.violation);
+    const replay = replayWitness(model, machineId, witness, bounds.maxCompletion);
+    if (!replay.replays) return notReplayed(witness, 'violating prefix', replay.reason);
+    return {
+      ...base,
+      claim: 'fail',
+      code: 'verification/refuted',
+      detail:
+        `fail — witness trace of ${witness.length - 1} step(s): ${sentence}. The scope closes at the last step ` +
+        `with the property still owing what it promised, and no continuation repairs that, so no fairness assumption is needed. ` +
+        'The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
+      witness,
+    };
+  }
+  // The infinite half: a lasso over the whole product graph.
+  const lasso = lassoOf(property, graph);
+  if (lasso !== null) {
+    const entry = graph.nodes.get(lasso.entry)!;
+    let leaf: ProductNode = entry;
+    for (const e of lasso.cycle) leaf = { ...e.node, parent: leaf };
+    const trace = traceOf(model, leaf);
+    const prefixSteps = trace.length - 1 - lasso.cycle.length;
+    const witness = trace.map((t) => (t.index > prefixSteps ? { ...t, cycle: true } : t));
+    const replay = replayWitness(model, machineId, witness, bounds.maxCompletion);
+    if (!replay.replays) return notReplayed(witness, 'lasso', replay.reason);
+    const stutter = lasso.cycle.length === 0;
+    const shape = stutter
+      ? `a prefix of ${prefixSteps} step(s), after which the run stays in \`${witness[witness.length - 1].leaf?.qualifiedName ?? 'its last configuration'}\` forever — nothing is enabled there`
+      : `a prefix of ${prefixSteps} step(s), then a cycle of ${lasso.cycle.length} step(s) repeated forever`;
+    return {
+      ...base,
+      claim: 'fail',
+      code: 'verification/refuted',
+      lasso: { prefixSteps, cycleSteps: lasso.cycle.length, stutter },
+      detail:
+        `fail — lasso counterexample: ${shape}, and nothing on it delivers what the property asks (${sentence}). ` +
+        `Decided over a graph the walk saw whole, under ${LIVENESS_FAIRNESS}. ` +
+        'The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.',
+      witness,
+    };
+  }
+  // Vacuity, in the two forms the safety patterns detect.
+  if (!found.activated) {
+    return {
+      ...base,
+      claim: 'vacuous',
+      code: null,
+      detail:
+        `vacuous: no explored run opens the \`${property.scope.name}\` scope — its antecedent ` +
+        `(${property.scope.antecedent.map((f) => `\`${property.atoms[f]!.text}\``).join(', ')}) is ` +
+        'never met, so the property is true of this machine for a reason that has nothing to do ' +
+        'with it. It is inconclusive and exits 2; `--strict-vacuity` raises it to an error and ' +
+        'changes no exit code.',
+      witness: [],
+    };
+  }
+  if (name === 'response' && !found.pSeen) {
+    return {
+      ...base,
+      claim: 'vacuous',
+      code: null,
+      detail:
+        `vacuous: \`${property.atoms.p!.text}\` holds on no explored run inside an open scope segment, so "${sentence}" is ` +
+        'true of this machine without anything being owed. It is inconclusive and exits 2; ' +
+        '`--strict-vacuity` raises it to an error and changes no exit code.',
+      witness: [],
+    };
+  }
+  return {
+    ...base,
+    claim: 'pass',
+    code: null,
+    detail:
+      `pass — holds on every maximal run: ${sentence}. Decided by a lasso search over ${found.configs} product ` +
+      `state(s) of a graph the walk saw whole — no cycle and no stuck configuration owes it — under ${LIVENESS_FAIRNESS}; ` +
+      `${qualification}.`,
     witness: [],
   };
 }

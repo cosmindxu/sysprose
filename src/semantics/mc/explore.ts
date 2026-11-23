@@ -113,6 +113,7 @@ import {
   outsideStatesSentence,
   resumesHistory,
   seedStore,
+  defaultsReadBy,
   stepOutsideStates,
   triggerLabelOf,
   type EnabledTransition,
@@ -3606,7 +3607,8 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
   // The word `exhaustive` appears in exactly one branch, and an undetermined
   // guard is not it: the walk finished, so "partial" would be false too, and
   // saying either would be the report answering a question it declined.
-  const qualification = publishable
+  const defaults = defaultsReadBy(model, machine.id);
+  const qualification0 = publishable
     ? `exhaustive under ${boundsSentence(walk.bounds)}`
     : walk.unsupported.length > 0
       ? `not explored — ${constructsOf(walk.unsupported)}; no figure below is a claim of absence`
@@ -3633,6 +3635,10 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
               ? 'a trigger the machine names was never offered'
               : boundSentence(walk.boundHit)
           }; the unreachable and dead lists are lower bounds and are NOT reported as findings`;
+  // A guard that reads an attribute the walk seeded from a `default`: every
+  // figure above holds for that start value, which a specialisation may redefine.
+  const qualification =
+    defaults.length === 0 ? qualification0 : `${qualification0}; the guards read ${defaults.join(', ')}`;
 
   return {
     machine: {

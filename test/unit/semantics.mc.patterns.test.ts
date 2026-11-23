@@ -440,42 +440,29 @@ describe('each safety pattern × scope, on a machine whose truth is known', () =
 });
 
 describe('the three sentences this engine refuses to produce', () => {
-  it('never passes a liveness pattern, on a graph with no bad prefix in it', () => {
-    // `Chain` has no bad prefix for `response` — no finite prefix of any run
-    // refutes "every B is followed by a D" — so a bad-prefix search finds
-    // nothing, and "found nothing" must not become the strongest verdict this
-    // command has.
+  it('keeps a liveness pattern inconclusive wherever its walk is not whole — never a bare pass', () => {
+    // A bad-prefix search returns no bad prefix for `existence` or `response` on
+    // any graph, so "found nothing" must never become the strongest verdict. The
+    // lasso search decides it ONLY over a graph the walk saw whole; here the
+    // walk is cut at two configurations, so both stay inconclusive, under the
+    // behaviour lane's own code, with no flag that lowers them.
     const { model, machineId } = buildChain();
     for (const pattern of PATTERNS.filter((p) => p.kind === 'liveness')) {
       const v = checkProperty(
         model,
         machineId,
         prop({ pattern: pattern.name, scope: 'globally', p: 'state B', s: 'state D' }),
+        { maxConfigs: 2 },
       );
-      expect(v.claim, `${pattern.name} must never pass`).toBe('inconclusive');
-      // THE BEHAVIOUR LANE'S OWN CODE. `verification/unsupported-construct` is
-      // the SMT lane's, and its published catalogue entry says it is one of the
-      // two codes `--allow-inconclusive` may lower to exit 0 and sends the
-      // reader to `obligations --missing`. Filing a liveness refusal under it
-      // would print, in the catalogue a reader checks, that the one row this
-      // command must never lower is lowerable.
+      expect(v.claim, `${pattern.name} must not be decided on a cut walk`).toBe('inconclusive');
       expect(v.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
       expect(v.code).not.toBe('verification/unsupported-construct');
       expect(v.detail).toContain('liveness not checked in-process');
       expect(v.detail).toContain('fairness');
       expect(v.patternClass).toBe('liveness');
-      // And the row says nothing about the machine at all: no walk was paid for.
-      expect(v.configs).toBe(0);
+      expect(v.witness).toEqual([]);
       expect(v.exhaustive).toBe(false);
     }
-    // The positive control: the same shape as a SAFETY pattern is decided.
-    expect(
-      checkProperty(
-        model,
-        machineId,
-        prop({ pattern: 'absence', scope: 'globally', p: 'state E' }),
-      ).claim,
-    ).toBe('pass');
   });
 
   it('never passes on a partial walk, and still refutes on one', () => {
@@ -1687,9 +1674,26 @@ describe('a property in the file, and a run with nothing to decide', () => {
     const r = behaviourReport(loaded.model!, { machineId });
     expect(r.properties).toHaveLength(1);
     expect(r.properties[0].property.source).toBe('model');
+    // `standby` and `manual` alternate forever by trigger-less transitions — a
+    // completion livelock the interpreter's chase budget ends — so the infinite
+    // run and the interpreter's run can part, and neither verdict is claimed.
     expect(r.properties[0].claim, 'a liveness carrier must never pass').toBe('inconclusive');
     expect(r.properties[0].detail).toContain('liveness not checked in-process');
+    expect(r.properties[0].detail).toContain('completion livelock');
     expect(r.exitCode).toBe(2);
+    // The same machine with the alternation driven by events is decided: a cycle, no pass.
+    const driven = await loadModelText(
+      src.replace('transition standby -> manual;', 'transition standby -> manual;').replace(
+        /transition standby -> manual;\s*transition manual -> standby;/,
+        'transition s1 first standby accept go then manual;\n        transition s2 first manual accept back then standby;',
+      ),
+      { fileName: 'p.sysml', library: 'none' },
+    );
+    expect(driven.report.diagnostics).toEqual([]);
+    const r2 = behaviourReport(driven.model!, { machineId: stateMachinesIn(driven.model!)[0].id });
+    expect(r2.properties[0].claim).toBe('fail');
+    expect(r2.properties[0].lasso?.cycleSteps).toBe(2);
+    expect(r2.exitCode).toBe(1);
   });
 
   it('exits 2 on a machine that states no property at all', async () => {
@@ -3003,3 +3007,204 @@ describe('`check-behaviour` prints the lines the composer returns, byte for byte
   });
 });
 
+
+
+describe('liveness: `existence` and `response` over a graph the walk saw whole (docs/04 non-goal 4)', () => {
+  const { model, machineId } = buildChain();
+  const row = (fields: Partial<PropertyText> & { pattern: string; scope: string }, opts = {}) =>
+    checkProperty(model, machineId, prop(fields), opts);
+
+  it('decides existence and response on the chain, in both directions, under a stated fairness', () => {
+    const holds = row({ pattern: 'existence', scope: 'globally', p: 'state D' });
+    expect(holds.claim).toBe('pass');
+    expect(holds.detail).toContain('no fairness');
+    expect(holds.exhaustive).toBe(true);
+    expect(row({ pattern: 'response', scope: 'globally', p: 'state B', s: 'state D' }).claim).toBe('pass');
+    // E is an orphan: every run stays in D forever without it.
+    const miss = row({ pattern: 'existence', scope: 'globally', p: 'state E' });
+    expect(miss.claim).toBe('fail');
+    expect(miss.code).toBe('verification/refuted');
+    expect(miss.detail).toContain('no fairness');
+    expect(miss.lasso).toEqual({ prefixSteps: 3, cycleSteps: 0, stutter: true });
+    // D never gets a B after it.
+    const late = row({ pattern: 'response', scope: 'globally', p: 'state D', s: 'state B' });
+    expect(late.claim).toBe('fail');
+    expect(late.lasso?.stutter).toBe(true);
+  });
+
+  it('the lasso witness is replayed through the interpreter, like a safety witness', () => {
+    const v = row({ pattern: 'existence', scope: 'globally', p: 'state E' });
+    expect(replayWitness(model, machineId, v.witness, MAX_COMPLETION).replays).toBe(true);
+    expect(v.witness.every((t) => t.cycle !== true)).toBe(true);
+  });
+
+  it('after Q, before R: the scopes read Dwyer, strictly', () => {
+    // after C, B never holds again; before C, B holds; before B, C cannot hold.
+    expect(row({ pattern: 'existence', scope: 'after', q: 'state C', p: 'state B' }).claim).toBe('fail');
+    expect(row({ pattern: 'existence', scope: 'after', q: 'state B', p: 'state D' }).claim).toBe('pass');
+    expect(row({ pattern: 'existence', scope: 'before', r: 'state C', p: 'state B' }).claim).toBe('pass');
+    const early = row({ pattern: 'existence', scope: 'before', r: 'state B', p: 'state C' });
+    expect(early.claim).toBe('fail');
+    // A finite violation needs no cycle and no fairness.
+    expect(early.lasso).toBeUndefined();
+    expect(early.detail).toContain('no fairness assumption is needed');
+    // between needs its R: a Q with no R after it says nothing.
+    expect(row({ pattern: 'existence', scope: 'between', q: 'state B', r: 'state E', p: 'state D' }).claim).toBe('vacuous');
+    expect(row({ pattern: 'response', scope: 'after', q: 'state A', p: 'state C', s: 'state B' }).claim).toBe('fail');
+    expect(row({ pattern: 'response', scope: 'after', q: 'state A', p: 'state B', s: 'state C' }).claim).toBe('pass');
+  });
+
+  it('vacuous when nothing is ever owed, never a pass', () => {
+    // E is never reached, so no P ever opens the obligation.
+    expect(row({ pattern: 'response', scope: 'globally', p: 'state E', s: 'state D' }).claim).toBe('vacuous');
+    // An `after` whose Q no run meets.
+    expect(row({ pattern: 'existence', scope: 'after', q: 'state E', p: 'state D' }).claim).toBe('vacuous');
+  });
+
+  it('a cycle with a way out is a violation under no fairness, and the cycle is in the witness', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Ring');
+    const a = f.state('A', sm.id);
+    const b = f.state('B', sm.id);
+    const c = f.state('C', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, trigger: 't' });
+    f.transition(b.id, a.id, { ownerId: sm.id, trigger: 'u' });
+    f.transition(b.id, c.id, { ownerId: sm.id, trigger: 'x' });
+    const v = checkProperty(m, sm.id, prop({ pattern: 'existence', scope: 'globally', p: 'state C' }));
+    expect(v.claim).toBe('fail');
+    expect(v.lasso).toEqual({ prefixSteps: 0, cycleSteps: 2, stutter: false });
+    expect(v.witness.map((t) => t.cycle === true)).toEqual([false, true, true]);
+    expect(replayWitness(m, sm.id, v.witness, MAX_COMPLETION).replays).toBe(true);
+    // The way out being enabled does not rescue it: that is the "no fairness" reading, and the text says so.
+    expect(v.detail).toContain('no fairness');
+    // And the same machine where the cycle is forced out of (a completion exit) is decided the other way.
+    const m2 = new Model();
+    const f2 = new ModelFactory(m2);
+    const sm2 = f2.stateDef('Line');
+    const x = f2.state('X', sm2.id);
+    const y = f2.state('Y', sm2.id);
+    f2.transition(x.id, y.id, { ownerId: sm2.id });
+    const ok = checkProperty(m2, sm2.id, prop({ pattern: 'existence', scope: 'globally', p: 'state Y' }));
+    expect(ok.claim).toBe('pass');
+  });
+
+  it('refuses over a completion livelock and over a chase the budget cuts — both readings of the run must agree', () => {
+    // A trigger-less ring: the specification's run goes round forever, the interpreter's ends at its chase budget.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Ring');
+    const a = f.state('A', sm.id);
+    const b = f.state('B', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id });
+    f.transition(b.id, a.id, { ownerId: sm.id });
+    for (const fields of [
+      { pattern: 'existence', scope: 'globally' as const, p: 'state B' },
+      { pattern: 'response', scope: 'globally' as const, p: 'state A', s: 'state B' },
+    ]) {
+      const v = checkProperty(m, sm.id, prop(fields));
+      expect(v.claim).toBe('inconclusive');
+      expect(v.detail).toContain('completion livelock');
+    }
+    // A trigger-less chain longer than the budget: the interpreter stops at step 64, so "stuck, nothing enabled" would be false.
+    const m2 = new Model();
+    const f2 = new ModelFactory(m2);
+    const chain = f2.stateDef('Long');
+    const states = Array.from({ length: 70 }, (_, i) => f2.state(`s${i}`, chain.id));
+    for (let i = 0; i + 1 < states.length; i++) f2.transition(states[i].id, states[i + 1].id, { ownerId: chain.id });
+    const v2 = checkProperty(m2, chain.id, prop({ pattern: 'existence', scope: 'globally', p: 'state s69' }));
+    expect(v2.claim).toBe('inconclusive');
+  });
+
+  it('a self-loop is a cycle of one step', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Spin');
+    const a = f.state('A', sm.id);
+    const b = f.state('B', sm.id);
+    f.transition(a.id, a.id, { ownerId: sm.id, trigger: 'tick' });
+    f.transition(a.id, b.id, { ownerId: sm.id, trigger: 'go' });
+    const v = checkProperty(m, sm.id, prop({ pattern: 'existence', scope: 'globally', p: 'state B' }));
+    expect(v.claim).toBe('fail');
+    expect(v.lasso?.cycleSteps).toBe(1);
+  });
+
+  it('stays inconclusive on a cut walk, a guard nothing decides, and an unsupported construct — and decides once the walk is whole', () => {
+    const cut = row({ pattern: 'existence', scope: 'globally', p: 'state D' }, { maxConfigs: 2 });
+    expect(cut.claim).toBe('inconclusive');
+    expect(cut.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(row({ pattern: 'existence', scope: 'globally', p: 'state D' }).claim).toBe('pass');
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Modes');
+    const idle = f.state('idle', sm.id);
+    const hazard = f.state('hazard', sm.id);
+    f.transition(idle.id, hazard.id, { ownerId: sm.id, guard: 'mode == 3' });
+    const g = checkProperty(m, sm.id, prop({ pattern: 'existence', scope: 'globally', p: 'state hazard' }));
+    expect(g.claim, 'an undecided guard must not decide liveness').toBe('inconclusive');
+    expect(g.detail).toContain('liveness not checked in-process');
+  });
+});
+
+describe('a verdict that reads a `default` says so, and `=` earns no note', () => {
+  const src = (op: string) => `package P {
+  state def M {
+    attribute n : Integer ${op} 0;
+    entry; then a;
+    state a; state b; state c;
+    transition t1 first a accept go if n > 5 then b;
+    transition t2 first a accept go if n <= 5 then c;
+  }
+}
+`;
+  async function verdict(op: string, fields: Partial<PropertyText> & { pattern: string; scope: string }) {
+    const loaded = await loadModelText(src(op), { fileName: 'd.sysml', library: 'none' });
+    expect(loaded.report.diagnostics).toEqual([]);
+    const id = stateMachinesIn(loaded.model!)[0].id;
+    return checkProperty(loaded.model!, id, prop(fields));
+  }
+
+  it('names the default on a pass, a fail, a cover and an expression atom — and moves none of them', async () => {
+    const absent = await verdict('default', { pattern: 'absence', scope: 'globally', p: 'state b' });
+    expect(absent.claim).toBe('pass');
+    expect(absent.defaults).toEqual(['n = 0 (default, redefinable)']);
+    expect(absent.detail).toContain('Holds for n = 0 (default, redefinable).');
+    const fail = await verdict('default', { pattern: 'absence', scope: 'globally', p: 'state c' });
+    expect(fail.claim).toBe('fail');
+    expect(fail.detail).toContain('Refuted for n = 0 (default, redefinable).');
+    const cov = await verdict('default', { pattern: 'cover', scope: 'globally', p: 'state b' });
+    expect(cov.claim).toBe('not-covered');
+    expect(cov.detail).toContain('Not covered for n = 0 (default, redefinable).');
+    // The expression atom of the property itself counts as a read.
+    const atom = await verdict('default', { pattern: 'absence', scope: 'globally', p: 'n > 5' });
+    expect(atom.claim).toBe('pass');
+    expect(atom.defaults).toEqual(['n = 0 (default, redefinable)']);
+  });
+
+  it('is silent for `=`, and the verdict is the same word', async () => {
+    const fixed = await verdict('=', { pattern: 'absence', scope: 'globally', p: 'state b' });
+    expect(fixed.claim).toBe('pass');
+    expect(fixed.defaults).toBeUndefined();
+    expect(fixed.detail).not.toContain('redefinable');
+  });
+
+  it('is silent where no guard or atom reads the attribute', async () => {
+    const loaded = await loadModelText(
+      'package P { state def M { attribute n : Integer default 0; entry; then a; state a; state b; transition t first a accept go then b; } }',
+      { fileName: 'd.sysml', library: 'none' },
+    );
+    const id = stateMachinesIn(loaded.model!)[0].id;
+    const v = checkProperty(loaded.model!, id, prop({ pattern: 'absence', scope: 'globally', p: 'state b' }));
+    expect(v.claim).toBe('fail');
+    expect(v.defaults).toBeUndefined();
+  });
+
+  it('`reach` qualifies the machine with the default its guards read, and only for `default`', async () => {
+    const lines = async (op: string) => {
+      const loaded = await loadModelText(src(op), { fileName: 'd.sysml', library: 'none' });
+      return reachReport(loaded.model!).machines[0].qualification;
+    };
+    expect(await lines('default')).toContain('the guards read n = 0 (default, redefinable)');
+    expect(await lines('=')).not.toContain('redefinable');
+  });
+});
