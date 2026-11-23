@@ -1910,3 +1910,4 @@ and §21.4–21.11.
       liveness refutation); the publishability register's rows A10, A11, W4 and W5 (liveness on an
       acyclic graph, fair-SCC) still describe the earlier plan and name no producer.
 - Variability (var-fence): the per-configuration connection check re-reads only a connector end that is a feature owned directly by the point (`eng.p`); an end nested deeper under a variant (`eng.sub.p`), flows, and requirement/constraint checks per configuration are still superset-only (audit rows 17, 19; steps V4, V6). `variation-variant-not-specializing` skips a variant with an unresolved type and a reference-form variant.
+- BD2/BD4 follow-ups: promote multiplicity-conformance and binding-conformance from warning to error (user ruling: later); subset-type-conformance (BD3) and connector end multiplicity (BD5) are separate items.
