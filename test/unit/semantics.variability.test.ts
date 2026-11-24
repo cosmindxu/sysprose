@@ -413,3 +413,26 @@ describe('variability: per-configuration evaluation (V4) and void explanation (V
     expect(o.analysis!.voidCore).toBeNull();
   });
 });
+
+describe('a named configuration whose selection violates a constraint says so beside its selection status', () => {
+  it('c1 (big) is marked VIOLATES, c2 (small) is not', () => {
+    const src = `package P {
+  part def Engine { attribute mass : Real; }
+  part def Car {
+    variation part eng : Engine {
+      variant part small : Engine { attribute :>> mass = 100; }
+      variant part big : Engine { attribute :>> mass = 400; }
+    }
+    attribute limit : Real = 200;
+    assert constraint ok { eng.mass <= limit }
+  }
+  part c1 : Car { part :>> eng = eng::big; }
+  part c2 : Car { part :>> eng = eng::small; }
+}`;
+    const text = variabilityLines(variabilityReport(parseModel(src).model), 'x').join('\n');
+    const c1 = text.split('configuration P::c1')[1].split('configuration P::c2')[0];
+    const c2 = text.split('configuration P::c2')[1] ?? '';
+    expect(c1).toContain('VIOLATES constraint ok');
+    expect(c2).not.toContain('VIOLATES');
+  });
+});

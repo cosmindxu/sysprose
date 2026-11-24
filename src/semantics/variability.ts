@@ -1408,6 +1408,17 @@ export function variabilityLines(r: VariabilityReport, name: string): string[] {
     }
     for (const c of o.configurations) {
       out.push(`  configuration ${c.name}: ${STATUS_WORD[c.status]}`);
+      // The status above answers the selection constraints only. When this named configuration's
+      // selection is one the per-configuration evaluation found VIOLATED, say so beside it: a bare
+      // HOLDS next to a violated constraint would read as the configuration satisfying it.
+      const picked = c.selections.map((s) => s.text.replace(/^:>>\s*/, '')).sort().join(', ');
+      for (const ev of o.evaluations) {
+        for (const it of ev.items) {
+          if (it.word !== 'VIOLATED') continue;
+          const cfg = it.configuration.split(', ').sort().join(', ');
+          if (picked !== '' && cfg === picked) out.push(`    VIOLATES ${ev.kind} ${ev.name}${it.values.length > 0 ? ` — ${it.values.join(', ')}` : ''} (its selection is valid; the configuration does not satisfy it)`);
+        }
+      }
       for (const s of c.selections) out.push(`    ${s.status}  ${s.text} — ${s.reason}`);
       if (c.missing.length > 0 && c.status === 'partial') out.push(`    missing: ${c.missing.join(', ')}`);
       if (c.completes !== undefined) out.push(`    completes: ${c.completes ? `yes, e.g. ${c.completion!.join(', ')}` : `NO (${c.blockedBy!.join(', ')})`}`);
