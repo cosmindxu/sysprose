@@ -1125,6 +1125,13 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** A connector of a superset owner is ill-typed (SysML v2 §7.12.1 port conformance, or no shared port definition) once the chosen variants of a valid configuration, or of a configuration usage, redefine the ports it joins. A connector already ill-typed in the superset is `connection-compatibility`'s finding and is not repeated.
 - **Hint given:** Make the variant keep the port type (or a conforming one), or choose a different variant for that configuration.
 
+### `verification/variability-configuration-violates`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A constraint of a superset owner (not a selection constraint), or a requirement satisfied by a part on a path through a variation point, evaluates to false in a configuration, read with the selected variant's attribute values (`eng.mass` is the `mass` the chosen variant states). The message names the configuration, the constraint or requirement and the values read. A warning instead of an error when constraints that are not read might exclude that configuration. A value that cannot be read makes the configuration, and the family verdict, undecided; it is never a pass.
+- **Hint given:** Change the variant's value or the constraint, or exclude the configuration with a selection constraint.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.

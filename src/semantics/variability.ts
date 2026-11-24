@@ -75,6 +75,8 @@
  * (portMismatches) or declared port-definition conformance decides. Newly broken connectors are
  * `variability-connection-broken` (error, exit 1); `valid` is NOT reduced, the broken configurations are listed apart.
  *
+ * PER-CONFIGURATION EVALUATION AND EXPLANATION: see the section "per-configuration evaluation" below (V4) and "explanation" (V3).
+ *
  * VERDICT AND EXIT CODE. `exitCode` and `verdict` follow VARIABILITY_EXIT_CODES
  * (scripts/lib/sysprose-spec.ts): 1 for a decided negative (INVALID, VIOLATED,
  * VOID), 2 for anything undecided or refused, 0 only when nothing is either. A
@@ -86,6 +88,7 @@
 import type { ElementRecord, Model } from '@core/index';
 import { generalizationsOf } from './inheritance';
 import { connectorEndsOf } from './connectors';
+import { evaluate, exprRefusal, parseExpr } from './expr';
 import { declaredDefinitions, definitionsConform, portMismatches } from './port-conformance';
 
 /** Diagnostic codes of this module (catalogued by the integrator). */
@@ -103,6 +106,7 @@ export const VARIABILITY_CODES = {
   notEstablished: 'verification/variability-not-established',
   family: 'verification/variability-family',
   connectionBroken: 'verification/variability-connection-broken',
+  configurationViolates: 'verification/variability-configuration-violates',
 } as const;
 
 /** The most structural configurations enumerated before the analyses are withheld. */
@@ -170,6 +174,38 @@ export interface FamilyAnalysis {
    * (it answers the constraint question); they are listed here and make the verdict a decided negative.
    */
   connectionBroken: ConnectionBreak[];
+  /** When void: a minimal set of the read constraints that conflict (empty: the structure alone), null when not computed. */
+  voidCore: string[] | null;
+  /** Dead variants with a minimal set of the read constraints that kills each, when computed. */
+  deadWhy: Array<{ variant: string; killedBy: string[] }>;
+}
+
+/** One constraint or requirement evaluated in one configuration, with the selected variant's values visible. */
+export interface ConfigurationEvaluation {
+  configuration: string;
+  word: 'HOLDS' | 'VIOLATED' | 'UNDECIDED';
+  /** The values read (`eng.mass = 400`), or why none could be. */
+  values: string[];
+  reason?: string;
+}
+
+/** A constraint of the owner, or a requirement satisfied by a part on a path through a point, over every configuration. */
+export interface FamilyEvaluation {
+  kind: 'constraint' | 'requirement';
+  id: string;
+  name: string;
+  text: string;
+  /** holds only when EVERY enumerated configuration holds; never while one is undecided. */
+  verdict: 'holds' | 'violated' | 'undecided';
+  holds: number;
+  violated: number;
+  undecided: number;
+  /** 'exact: all N enumerated' or 'undecided: K of N enumerated'. */
+  coverage: string;
+  /** Violated and undecided configurations (at most 50 of each); a holding one is counted only. */
+  items: ConfigurationEvaluation[];
+  /** True when constraints this analysis does not read could exclude a violating configuration: no error is raised. */
+  qualified: boolean;
 }
 
 export interface ConnectionBreak {
@@ -223,6 +259,8 @@ export interface OwnerReport {
   constraints: ConstraintRow[];
   analysis: FamilyAnalysis | null;
   configurations: ConfigurationReport[];
+  /** Per-configuration evaluation of the owner's attribute constraints and of the requirements satisfied through a point (V4). */
+  evaluations: FamilyEvaluation[];
 }
 
 export interface VariabilityVerdictCounts {
@@ -234,6 +272,8 @@ export interface VariabilityVerdictCounts {
   /** Configurations (family or usage) in which a connector breaks under the chosen variants. */
   connectionBroken: number;
   voidFamilies: number;
+  /** Families in which a constraint or requirement is VIOLATED by a configuration (decided negative). */
+  configurationViolated: number;
   /** Undecided: PARTIAL, not evaluated, holds only over read constraints, constraints/owners not read, families not established. */
   undecided: number;
 }
@@ -592,7 +632,7 @@ function buildFormula(points: VariabilityPoint[], read: Formula['read'], unread:
 
 function analyse(f: Formula, excluded: string[]): FamilyAnalysis {
   if (f.valid === null) {
-    return { established: false, reason: f.capReason, structural: 0, valid: 0, exact: false, void: false, core: [], dead: [], falseOptional: [], excludedPoints: excluded, configurations: [], connectionBroken: [] };
+    return { established: false, reason: f.capReason, structural: 0, valid: 0, exact: false, void: false, core: [], dead: [], falseOptional: [], excludedPoints: excluded, configurations: [], connectionBroken: [], voidCore: null, deadWhy: [] };
   }
   const valid = f.valid;
   const core: string[] = [];
@@ -620,6 +660,8 @@ function analyse(f: Formula, excluded: string[]): FamilyAnalysis {
     excludedPoints: excluded,
     configurations: valid.length <= 50 ? valid.map((s) => selText(f.points, s)) : [],
     connectionBroken: [],
+    voidCore: null,
+    deadWhy: [],
   };
 }
 
@@ -789,7 +831,7 @@ function selectionsOf(model: Model, cfg: ElementRecord, points: VariabilityPoint
   return { rows, chosen };
 }
 
-function configurations(model: Model, owner: ElementRecord, f: Formula, diags: VariabilityDiagnostic[], breaksOf: (sel: Sel) => Array<{ connector: string; why: string }>): ConfigurationReport[] {
+function configurations(model: Model, owner: ElementRecord, f: Formula, diags: VariabilityDiagnostic[], breaksOf: (sel: Sel) => Array<{ connector: string; why: string }>, completeOut: Map<string, { name: string; sel: Sel }>): ConfigurationReport[] {
   const out: ConfigurationReport[] = [];
   const cfgs = model
     .all()
@@ -863,6 +905,7 @@ function configurations(model: Model, owner: ElementRecord, f: Formula, diags: V
       }
     } else {
       const bad = f.read.filter((c) => !evalAst(c.ast, sel));
+      if (bad.length === 0) completeOut.set(cfg.id, { name, sel: new Map(sel) });
       if (bad.length > 0) {
         rep.status = 'violated';
         rep.violated = bad.map((c) => c.row.name);
@@ -880,6 +923,274 @@ function configurations(model: Model, owner: ElementRecord, f: Formula, diags: V
     out.push(rep);
   }
   return out;
+}
+
+/* ───────────── per-configuration evaluation of attribute constraints and requirements (V4) ─────────────
+ *
+ * PRODUCT-BASED, EXACT UNDER THE ENUMERATION CAP. An owner's `assert constraint` that is not a selection
+ * constraint (`eng.mass <= limit`) and a requirement satisfied by a part on a path through a point
+ * (`satisfy R by c1.eng`) are evaluated in every configuration the family enumerates, with the SELECTED variant's
+ * values visible through the feature chain: `eng.mass` reads the `mass` the chosen variant redefines (or, failing
+ * that, the point's own). The expression evaluator is the one every lane reads (`./expr`); only its scope is
+ * this module's selection overlay. A value the overlay cannot read (no stated number/boolean, a nested chain, an
+ * inactive or unselected point, an arrow, a call, a qualified name) makes THAT configuration UNDECIDED and the
+ * family verdict undecided: `holds` is the conjunction over ALL enumerated configurations, never a pass past one
+ * undecided. A VIOLATED configuration is `variability-configuration-violates` (error); it is only a warning when
+ * constraints this analysis does not read might exclude that configuration.
+ * Spec: SysML v2 §7.6.7 (variation, variant, selection by redefinition); §7.19 (constraint and requirement
+ * evaluation; `satisfy`, subject).
+ */
+
+const KEY_ELEMENT = (key: string): string => key.slice(key.indexOf('/') + 1);
+
+/** The number or Boolean an attribute named `attr` states on `holder` (own redefinition or declaration), or undefined. */
+function statedValue(model: Model, holder: ElementRecord, attr: string): number | boolean | undefined {
+  const hits = members(model, holder.id).filter(
+    (m) => m.eClass === 'AttributeUsage' && (m.declaredName === attr || targets(model, m.id, 'Redefinition').some((t) => t.declaredName === attr)),
+  );
+  if (hits.length !== 1) return undefined;
+  // A `default` or `:=` value is overridable, so it is not the value the configuration has.
+  if (hits[0].attrs.defaultValue === true || hits[0].attrs.initialValue === true) return undefined;
+  const v = hits[0].attrs.value;
+  return typeof v === 'number' || typeof v === 'boolean' ? v : undefined;
+}
+
+/** The value `point.attr` has under `sel`: the chosen variant's, else the point's own. Undefined = not read. */
+function pointValue(model: Model, p: VariabilityPoint, attr: string, sel: Sel): number | boolean | undefined {
+  const key = sel.get(p.id);
+  if (!key) return undefined;
+  const variant = p.variants.find((v) => v.key === key);
+  const vel = model.get(variant?.referenced ?? KEY_ELEMENT(key));
+  if (!vel) return undefined;
+  const own = statedValue(model, vel, attr);
+  if (own !== undefined) return own;
+  const pel = model.get(p.id);
+  return pel ? statedValue(model, pel, attr) : undefined;
+}
+
+interface EvalScope {
+  /** The simple name the expression uses for the point's selected part (`eng`, or a requirement's subject). */
+  alias: Map<string, VariabilityPoint>;
+  /** Where an unqualified name is looked up (the owner, or the requirement). */
+  holder: ElementRecord;
+}
+
+function evaluateText(model: Model, text: string, sc: EvalScope, sel: Sel): ConfigurationEvaluation {
+  const configuration = selText([...sc.alias.values()], sel).join(', ');
+  const read: string[] = [];
+  let node;
+  try {
+    node = parseExpr(text);
+  } catch {
+    return { configuration, word: 'UNDECIDED', values: [], reason: 'the body is not an expression this tool parses' };
+  }
+  const refusal = exprRefusal(node);
+  if (refusal !== undefined) return { configuration, word: 'UNDECIDED', values: [], reason: refusal.detail };
+  const unread: string[] = [];
+  const scope = (name: string): unknown => {
+    const parts = name.split('.');
+    let v: number | boolean | undefined;
+    const p = sc.alias.get(parts[0]);
+    if (p !== undefined) {
+      if (!sel.get(p.id)) unread.push(`${name} (${p.name} has no selected variant here)`);
+      else if (parts.length !== 2) unread.push(`${name} (only point.attribute is read)`);
+      else v = pointValue(model, p, parts[1], sel);
+    } else if (parts.length === 1) v = statedValue(model, sc.holder, parts[0]);
+    if (v === undefined) {
+      if (!unread.some((u) => u.startsWith(name))) unread.push(`${name} (no stated number or Boolean)`);
+      return undefined;
+    }
+    read.push(`${name} = ${String(v)}`);
+    return v;
+  };
+  const r = evaluate(node, scope);
+  const values = [...new Set(read)];
+  if ('value' in r && typeof r.value === 'boolean') return { configuration, word: r.value ? 'HOLDS' : 'VIOLATED', values };
+  return { configuration, word: 'UNDECIDED', values, reason: unread.length > 0 ? `not read: ${[...new Set(unread)].join('; ')}` : 'the body does not evaluate to a Boolean' };
+}
+
+function summarise(
+  kind: FamilyEvaluation['kind'],
+  id: string,
+  name: string,
+  text: string,
+  results: ConfigurationEvaluation[],
+  total: number,
+  qualified: boolean,
+  enumerated: boolean,
+): FamilyEvaluation {
+  const count = (w: ConfigurationEvaluation['word']): number => results.filter((x) => x.word === w).length;
+  const violated = count('VIOLATED');
+  const undecided = count('UNDECIDED');
+  const complete = enumerated && results.length === total;
+  const verdict: FamilyEvaluation['verdict'] = violated > 0 && !qualified ? 'violated' : violated === 0 && undecided === 0 && complete ? 'holds' : 'undecided';
+  return {
+    kind,
+    id,
+    name,
+    text,
+    verdict,
+    holds: count('HOLDS'),
+    violated,
+    undecided,
+    coverage: !enumerated ? 'undecided: 0 enumerated (the enumeration is capped)' : undecided === 0 ? `exact: all ${total} enumerated` : `undecided: ${total - undecided} of ${total} enumerated`,
+    items: [...results.filter((x) => x.word === 'VIOLATED').slice(0, 50), ...results.filter((x) => x.word === 'UNDECIDED').slice(0, 50)],
+    qualified,
+  };
+}
+
+function nameOrText(name: string, text: string): string {
+  return name === '<anonymous>' ? `\`${text.length > 60 ? `${text.slice(0, 57)}...` : text}\`` : name;
+}
+
+/** The point a `satisfy` source chain ends at, when its qualifier names the owner or the configuration. */
+function satisfyPoint(chain: string, points: VariabilityPoint[], allowed: Set<string>): VariabilityPoint | undefined {
+  const parts = chain.split('.').map((x) => x.trim());
+  const last = parts[parts.length - 1];
+  if (parts.slice(0, -1).some((q) => !allowed.has(q))) return undefined;
+  const cands = points.filter((p) => p.name === last && p.activatedBy === null);
+  return cands.length === 1 ? cands[0] : undefined;
+}
+
+function evaluateFamily(
+  model: Model,
+  owner: ElementRecord,
+  f: Formula,
+  rows: ConstraintRow[],
+  completeCfgs: Map<string, { name: string; sel: Sel }>,
+  diags: VariabilityDiagnostic[],
+  ownerName: string,
+): FamilyEvaluation[] {
+  const out: FamilyEvaluation[] = [];
+  const unreadOther = (selfUnread: number): boolean => f.unread - selfUnread > 0;
+  const all: Sel[] | null = f.valid;
+  const alias = new Map(f.points.filter((p) => p.configurable).map((p) => [p.name, p] as const));
+  // Every enumerated configuration is evaluated, over the selection constraints read (`valid`).
+  const emit = (ev: FamilyEvaluation, per: Array<{ cfg: string; r: ConfigurationEvaluation }>, anchor: string): void => {
+    for (const { cfg, r } of per.filter((x) => x.r.word === 'VIOLATED').slice(0, 20)) {
+      diags.push({
+        code: VARIABILITY_CODES.configurationViolates,
+        severity: ev.qualified ? 'warning' : 'error',
+        message: `${ownerName}: in ${cfg} the ${ev.kind} ${ev.name} is VIOLATED (${r.values.join(', ') || 'no value'})${ev.qualified ? ' — unless a constraint that is not read excludes this configuration' : ''}`,
+        elementId: anchor,
+      });
+    }
+  };
+  // 1. attribute constraints of the owner that are not selection constraints.
+  const attrRows = rows.filter((r) => !r.read && f.points.some((p) => r.text.includes(p.name)));
+  for (const row of attrRows) {
+    const sc: EvalScope = { alias, holder: owner };
+    const per = (all ?? []).map((sel) => ({ cfg: `the configuration ${selText(f.points, sel).join(', ')}`, r: evaluateText(model, row.text, sc, sel) }));
+    const ev = summarise('constraint', row.id, nameOrText(row.name, row.text), row.text, per.map((x) => x.r), all?.length ?? 0, unreadOther(1), all !== null);
+    out.push(ev);
+    emit(ev, per, row.id);
+    for (const [cid, c] of completeCfgs) {
+      const r = evaluateText(model, row.text, sc, c.sel);
+      if (r.word === 'VIOLATED') {
+        diags.push({ code: VARIABILITY_CODES.configurationViolates, severity: ev.qualified ? 'warning' : 'error', message: `${c.name}: the constraint ${ev.name} is VIOLATED (${r.values.join(', ')})`, elementId: cid });
+      }
+    }
+  }
+  // 2. requirements satisfied by a part on a path through a point.
+  const cfgNames = new Map([...completeCfgs].map(([id, c]) => [id, c.name.split('::').pop() ?? c.name] as const));
+  const ownerNames = new Set([owner.declaredName ?? '', 'self'].filter((x) => x !== ''));
+  for (const sat of model.all().filter((e) => e.eClass === 'Satisfy' && !isLibrary(e))) {
+    const holderId = sat.ownerId ?? '';
+    const chain = sat.attrs.sourceChain ?? sat.attrs.sourceRef ?? model.get(sat.source?.[0] ?? '')?.declaredName;
+    if (typeof chain !== 'string') continue;
+    const familyLevel = holderId === owner.id;
+    const cfg = completeCfgs.get(holderId);
+    const allCfgs = model.all().some((e) => e.id === holderId && isUsage(e) && ['Subsetting', 'FeatureTyping'].some((c) => targets(model, e.id, c).some((t) => t.id === owner.id)));
+    if (!familyLevel && !allCfgs) continue;
+    const allowed = new Set([...ownerNames, model.get(holderId)?.declaredName ?? '']);
+    const p = satisfyPoint(chain, f.points, allowed);
+    if (p === undefined) continue;
+    const req = model.get(sat.target?.[0] ?? '');
+    if (!req) continue;
+    const name = `${req.declaredName ?? '<anonymous>'} (satisfied by ${chain})`;
+    const subject = members(model, req.id).find((m) => m.attrs.requirementRole === 'subject');
+    const bodies = members(model, req.id).filter((m) => m.eClass === 'ConstraintUsage' && m.attrs.requirementRole === 'require');
+    const assumes = members(model, req.id).filter((m) => m.eClass === 'ConstraintUsage' && m.attrs.requirementRole === 'assume');
+    const texts = bodies.map((b) => (typeof b.attrs.expression === 'string' ? (b.attrs.expression as string).replace(/\s+/g, ' ').trim() : ''));
+    const subjectName = subject?.declaredName;
+    const sc: EvalScope = { alias: new Map(subjectName ? [[subjectName, p]] : []), holder: req };
+    const evalOne = (sel: Sel): ConfigurationEvaluation => {
+      const cfgLabel = selText(f.points, sel).join(', ');
+      if (subjectName === undefined || bodies.length === 0 || texts.some((t) => t === '') || assumes.length > 0) {
+        return { configuration: cfgLabel, word: 'UNDECIDED', values: [], reason: 'the requirement has no subject, no `require constraint` body, or an `assume` (not read)' };
+      }
+      const rs = texts.map((t) => evaluateText(model, t, sc, sel));
+      const bad = rs.find((r) => r.word === 'VIOLATED');
+      const und = rs.find((r) => r.word === 'UNDECIDED');
+      const values = [...new Set(rs.flatMap((r) => r.values))];
+      if (bad) return { configuration: cfgLabel, word: 'VIOLATED', values };
+      if (und) return { configuration: cfgLabel, word: 'UNDECIDED', values, reason: und.reason };
+      return { configuration: cfgLabel, word: 'HOLDS', values };
+    };
+    const sels: Array<{ cfg: string; sel: Sel }> = familyLevel
+      ? (all ?? []).map((sel) => ({ cfg: `the configuration ${selText(f.points, sel).join(', ')}`, sel }))
+      : cfg
+        ? [{ cfg: cfgNames.get(holderId) ?? cfg.name, sel: cfg.sel }]
+        : [];
+    const per = sels.map((x) => ({ cfg: x.cfg, r: evalOne(x.sel) }));
+    if (!familyLevel && !cfg) {
+      out.push(summarise('requirement', sat.id, name, texts.join(' and '), [{ configuration: cfgNames.get(holderId) ?? holderId, word: 'UNDECIDED', values: [], reason: 'the configuration is not a complete valid selection' }], 1, false, true));
+      continue;
+    }
+    const ev = summarise('requirement', sat.id, name, texts.join(' and '), per.map((x) => x.r), sels.length, unreadOther(0), familyLevel ? all !== null : true);
+    out.push(ev);
+    emit(ev, per, sat.id);
+  }
+  return out;
+}
+
+/* ─────────────── explanation of a void family and of dead variants (V3) ─────────────── */
+
+/** The satisfaction bitmask of each structural configuration, with the variants it selects; null when too large or too many constraints. */
+function maskTable(f: Formula): Array<{ mask: number; keys: Set<string> }> | null {
+  if (f.read.length > 30 || f.structural > 200_000) return null;
+  const rows: Array<{ mask: number; keys: Set<string> }> = [];
+  enumerate(f.points, (sel) => {
+    let mask = 0;
+    f.read.forEach((c, i) => {
+      if (evalAst(c.ast, sel)) mask |= 1 << i;
+    });
+    rows.push({ mask, keys: new Set([...sel.values()].filter((x): x is string => x !== null)) });
+  });
+  return rows;
+}
+
+/** A minimal subset of the constraints that no row satisfies together (deletion filtering); [] when even none excludes every row. */
+function conflictCore(masks: number[], n: number): number[] | null {
+  const sat = (set: number[]): boolean => {
+    const m = set.reduce((a, i) => a | (1 << i), 0);
+    return masks.some((x) => (x & m) === m);
+  };
+  let core = Array.from({ length: n }, (_, i) => i);
+  if (sat(core)) return null;
+  for (const i of [...core]) {
+    const t = core.filter((x) => x !== i);
+    if (!sat(t)) core = t;
+  }
+  return core;
+}
+
+function explain(f: Formula, a: FamilyAnalysis): void {
+  if (!a.established || (!a.void && a.dead.length === 0)) return;
+  const table = maskTable(f);
+  if (table === null) return;
+  const nm = (i: number): string => nameOrText(f.read[i].row.name, f.read[i].row.text);
+  if (a.void) {
+    const core = conflictCore(table.map((r) => r.mask), f.read.length);
+    a.voidCore = core === null ? null : core.map(nm);
+    return;
+  }
+  for (const k of f.points.flatMap((p) => p.variants.map((v) => v.key))) {
+    const label = vname(f.points, k);
+    if (!a.dead.includes(label)) continue;
+    const core = conflictCore(table.filter((r) => r.keys.has(k)).map((r) => r.mask), f.read.length);
+    if (core !== null) a.deadWhy.push({ variant: label, killedBy: core.map(nm) });
+  }
 }
 
 /* ───────────────────────────────── driver ──────────────────────────────── */
@@ -966,7 +1277,7 @@ export function variabilityReport(model: Model): VariabilityReport {
     const name = model.qualifiedName(e.id) || e.declaredName || e.id;
     const { points, reasons } = extractPoints(model, e);
     if (reasons.length > 0) {
-      owners.push({ id: e.id, name, status: 'not-read', reasons, points: [], constraints: [], analysis: null, configurations: [] });
+      owners.push({ id: e.id, name, status: 'not-read', reasons, points: [], constraints: [], analysis: null, configurations: [], evaluations: [] });
       for (const r of reasons) diagnostics.push({ code: VARIABILITY_CODES.ownerNotRead, severity: 'info', message: `${name} is not read as a variability model — ${r}`, elementId: e.id });
       continue;
     }
@@ -980,6 +1291,7 @@ export function variabilityReport(model: Model): VariabilityReport {
     }
     const f = buildFormula(points, read, rows.filter((x) => !x.read).length);
     const analysis = analyse(f, excluded.map((p) => p.name));
+    if (analysis.established) explain(f, analysis);
     const breaksOf = connectionChecker(model, e);
     if (analysis.established && f.valid !== null) {
       for (const sel of f.valid) {
@@ -990,12 +1302,15 @@ export function variabilityReport(model: Model): VariabilityReport {
     if (!analysis.established) {
       diagnostics.push({ code: VARIABILITY_CODES.notEstablished, severity: 'warning', message: `${name}: family analyses not established — ${analysis.reason}`, elementId: e.id });
     } else {
-      if (analysis.void) diagnostics.push({ code: VARIABILITY_CODES.void, severity: 'warning', message: `${name}: VOID — no configuration satisfies the variation structure and the selection constraints (AO10)`, elementId: e.id });
-      for (const d of analysis.dead) diagnostics.push({ code: VARIABILITY_CODES.deadVariant, severity: 'warning', message: `${name}: the variant ${d} is dead — no valid configuration selects it (AO14)`, elementId: e.id });
+      if (analysis.void) diagnostics.push({ code: VARIABILITY_CODES.void, severity: 'warning', message: `${name}: VOID — no configuration satisfies the variation structure and the selection constraints (AO10)${analysis.voidCore === null ? '' : analysis.voidCore.length === 0 ? '; the variation structure alone admits none' : `; conflicting constraints (a minimal set): ${analysis.voidCore.join(', ')}`}`, elementId: e.id });
+      for (const d of analysis.dead) diagnostics.push({ code: VARIABILITY_CODES.deadVariant, severity: 'warning', message: `${name}: the variant ${d} is dead — no valid configuration selects it (AO14)${analysis.void ? '' : (w => w ? `; killed by ${w.killedBy.join(', ') || 'the variation structure'}` : '')(analysis.deadWhy.find((x) => x.variant === d))}`, elementId: e.id });
       for (const p of analysis.falseOptional) diagnostics.push({ code: VARIABILITY_CODES.falseOptional, severity: 'warning', message: `${name}: the optional point ${p} is selected in every valid configuration (AO15)`, elementId: e.id });
       diagnostics.push({ code: VARIABILITY_CODES.family, severity: 'info', message: `${name}: ${analysis.exact ? '' : 'at most '}${analysis.valid} valid configuration(s) of ${analysis.structural} structural (AO12)`, elementId: e.id });
     }
-    owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: configurations(model, e, f, diagnostics, breaksOf) });
+    const completeCfgs = new Map<string, { name: string; sel: Sel }>();
+    const cfgReports = configurations(model, e, f, diagnostics, breaksOf, completeCfgs);
+    const evaluations = evaluateFamily(model, e, f, rows, f.valid === null ? new Map() : completeCfgs, diagnostics, name);
+    owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: cfgReports, evaluations });
   }
   const count = (s: VariabilitySeverity): number => diagnostics.filter((d) => d.severity === s).length;
   const verdict = verdictOf(owners);
@@ -1009,7 +1324,7 @@ export function variabilityReport(model: Model): VariabilityReport {
  * the exit code.
  */
 function verdictOf(owners: OwnerReport[]): VariabilityVerdictCounts {
-  const v: VariabilityVerdictCounts = { holds: 0, invalid: 0, violated: 0, connectionBroken: 0, voidFamilies: 0, undecided: 0 };
+  const v: VariabilityVerdictCounts = { holds: 0, invalid: 0, violated: 0, connectionBroken: 0, voidFamilies: 0, configurationViolated: 0, undecided: 0 };
   for (const o of owners) {
     if (o.status === 'not-read' || o.analysis === null) {
       v.undecided++;
@@ -1020,6 +1335,11 @@ function verdictOf(owners: OwnerReport[]): VariabilityVerdictCounts {
     else if (o.analysis.void) v.voidFamilies++;
     if (!o.points.some((p) => p.configurable)) v.undecided++;
     v.undecided += o.constraints.filter((c) => !c.read).length;
+    for (const ev of o.evaluations) {
+      if (ev.verdict === 'violated') v.configurationViolated++;
+      // an unread constraint is already counted undecided above; a requirement is counted here
+      else if (ev.verdict === 'undecided' && ev.kind === 'requirement') v.undecided++;
+    }
     for (const c of o.configurations) {
       if (c.connectionBroken !== undefined) v.connectionBroken++;
       else if (c.status === 'holds') v.holds++;
@@ -1034,7 +1354,7 @@ function verdictOf(owners: OwnerReport[]): VariabilityVerdictCounts {
 /** 1 (a decided negative) outranks 2 (something undecided), as in the other judging contracts. */
 function exitCodeOf(owners: OwnerReport[], v: VariabilityVerdictCounts): 0 | 1 | 2 {
   if (owners.length === 0) return 2;
-  if (v.invalid + v.violated + v.connectionBroken + v.voidFamilies > 0) return 1;
+  if (v.invalid + v.violated + v.connectionBroken + v.voidFamilies + v.configurationViolated > 0) return 1;
   return v.undecided > 0 ? 2 : 0;
 }
 
@@ -1080,8 +1400,25 @@ export function variabilityLines(r: VariabilityReport, name: string): string[] {
       if (!a.exact) out.push('    (constraints not read: the count is an upper bound; dead, core and void remain sound)');
       for (const c of a.configurations) out.push(`    - ${c.join(', ')}`);
     }
+    if (a.void && a.voidCore !== null) out.push(`    void explained: ${a.voidCore.length === 0 ? 'the variation structure alone admits no configuration' : `conflicting constraints (minimal): ${a.voidCore.join(', ')}`}`);
+    for (const d of a.deadWhy) if (!a.void) out.push(`    dead ${d.variant}: killed by ${d.killedBy.join(', ') || 'the variation structure'}`);
+    for (const ev of o.evaluations) {
+      out.push(`  ${ev.kind} ${ev.name}: every configuration ${ev.verdict === 'holds' ? 'HOLDS' : ev.verdict === 'violated' ? 'is NOT satisfied (VIOLATED in ' + ev.violated + ')' : 'is undecided'} — ${ev.coverage}; ${ev.holds} holds, ${ev.violated} violated, ${ev.undecided} undecided${ev.qualified ? ' (constraints not read could exclude a violating configuration)' : ''}`);
+      for (const it of ev.items.slice(0, 20)) out.push(`    ${it.word}  ${it.configuration}${it.values.length > 0 ? ` — ${it.values.join(', ')}` : ''}${it.reason ? ` — ${it.reason}` : ''}`);
+    }
     for (const c of o.configurations) {
       out.push(`  configuration ${c.name}: ${STATUS_WORD[c.status]}`);
+      // The status above answers the selection constraints only. When this named configuration's
+      // selection is one the per-configuration evaluation found VIOLATED, say so beside it: a bare
+      // HOLDS next to a violated constraint would read as the configuration satisfying it.
+      const picked = c.selections.map((s) => s.text.replace(/^:>>\s*/, '')).sort().join(', ');
+      for (const ev of o.evaluations) {
+        for (const it of ev.items) {
+          if (it.word !== 'VIOLATED') continue;
+          const cfg = it.configuration.split(', ').sort().join(', ');
+          if (picked !== '' && cfg === picked) out.push(`    VIOLATES ${ev.kind} ${ev.name}${it.values.length > 0 ? ` — ${it.values.join(', ')}` : ''} (its selection is valid; the configuration does not satisfy it)`);
+        }
+      }
       for (const s of c.selections) out.push(`    ${s.status}  ${s.text} — ${s.reason}`);
       if (c.missing.length > 0 && c.status === 'partial') out.push(`    missing: ${c.missing.join(', ')}`);
       if (c.completes !== undefined) out.push(`    completes: ${c.completes ? `yes, e.g. ${c.completion!.join(', ')}` : `NO (${c.blockedBy!.join(', ')})`}`);

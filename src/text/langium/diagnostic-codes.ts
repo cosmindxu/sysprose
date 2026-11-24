@@ -1275,6 +1275,13 @@ const CODES = [
     when: 'A connector of a superset owner is ill-typed (SysML v2 §7.12.1 port conformance, or no shared port definition) once the chosen variants of a valid configuration, or of a configuration usage, redefine the ports it joins. A connector already ill-typed in the superset is `connection-compatibility`\'s finding and is not repeated.',
     hint: 'Make the variant keep the port type (or a conforming one), or choose a different variant for that configuration.',
   },
+  {
+    code: 'verification/variability-configuration-violates',
+    source: 'verification',
+    severity: 'error',
+    when: 'A constraint of a superset owner (not a selection constraint), or a requirement satisfied by a part on a path through a variation point, evaluates to false in a configuration, read with the selected variant\'s attribute values (`eng.mass` is the `mass` the chosen variant states). The message names the configuration, the constraint or requirement and the values read. A warning instead of an error when constraints that are not read might exclude that configuration. A value that cannot be read makes the configuration, and the family verdict, undecided; it is never a pass.',
+    hint: 'Change the variant\'s value or the constraint, or exclude the configuration with a selection constraint.',
+  },
 
   /* ── round-trip oracle ── */
   {

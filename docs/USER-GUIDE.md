@@ -4940,7 +4940,15 @@ with no variants, a HOLDS only over the constraints read, or a family past the
 enumeration cap. A dead variant or a false-optional point is a warning in the
 report and does **not** move the exit code; gate on its
 `verification/variability-dead-variant` / `-false-optional` code if you want it
-to. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
+to. **Per-configuration evaluation:** a non-selection `assert constraint` of the owner
+(`eng.mass <= limit`) and a requirement satisfied by a part on a path through a point
+(`satisfy R by c1.eng`) are evaluated in every enumerated configuration with the chosen
+variant's stated attribute values visible (`eng.mass` is the `mass` the selected variant
+redefines); the report says HOLDS, VIOLATED or UNDECIDED per configuration and gives a
+family verdict ("exact: all N enumerated", never a pass while one is undecided). A violating
+configuration is `verification/variability-configuration-violates` (error, exit 1). A void
+family lists a minimal conflicting set of its constraints, and a dead variant the
+constraints that kill it. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
 profile; in short:
 
 - **A variation point** is a usage written `variation` (SysML v2 §7.6.7), or a
