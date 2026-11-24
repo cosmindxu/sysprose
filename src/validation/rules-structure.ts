@@ -41,6 +41,7 @@
 import type { ElementId, ElementRecord, Model } from '@core/index';
 import { findLibraryType } from '../library/resolve';
 import { conforms } from '../semantics/conformance';
+import { endPairs } from '../semantics/port-conformance';
 import { resolveQualifiedNameFull } from '../semantics';
 import { childNamed, findTypeFeature, resolveFullName } from '../semantics/bind';
 import { effectiveFeaturesWithLibrary } from '../semantics/featuring';
@@ -666,6 +667,86 @@ export const unresolvedValueChain: ValidationRule = {
           });
         }
         cur = undefined;
+      }
+    }
+    return out;
+  },
+};
+
+/**
+ * BD5 `connector-end-multiplicity`.
+ *
+ * Spec reading (SysML v2, `/tmp/ps3/spec/part1.txt`, §7.13.2, lines ~5025-5112,
+ * verified by reading): an end of a connection carries a CROSS multiplicity,
+ * written `end [0..1] part hub` on a connection definition or `connect [1] hub
+ * ::> a to [0..4] device ::> b` on a usage; it counts the values of that end per
+ * set of values of the other end ("a Device must have at most one Hub as its hub";
+ * "connects each one of the networkHubs to at most four of the networkDevices"),
+ * and a usage's cross multiplicity "further constrains" the one it inherits.
+ * Two shapes cannot hold and are flagged (warnings):
+ *  - the usage writes a cross multiplicity whose upper bound exceeds the upper bound
+ *    of the part the end relates (`connect [5] wheels to hub` over `wheels : Wheel [4]`),
+ *    or whose lower bound does; or exceeds the upper bound of the definition end it redefines;
+ *  - no cross multiplicity is written, the definition end allows at most n, the other
+ *    end relates exactly one instance, and the related part has more than n at least
+ *    (`part a : W [3]` on an end `[0..2]`): all connect to that one instance.
+ * Read only: `connect [m] a to [n] b` (binary, the form the grammar reads, with or
+ * without `end ::>` names), bounds written as number literals, an end related to a
+ * feature owned beside the connection (never a chain). The `connect (a, b, c)` list form
+ * and `end [m] … references x` bodies are not read.
+ */
+export const connectorEndMultiplicity: ValidationRule = {
+  id: 'connector-end-multiplicity',
+  description: 'A connection end whose multiplicity lies outside that of the part it connects or of the definition end it redefines.',
+  severity: 'warning',
+  run(model) {
+    let n = 0;
+    const out: Diagnostic[] = [];
+    for (const el of model.all()) {
+      if (el.attrs.isLibrary === true || el.attrs.staleEnd === true) continue;
+      if (!el.source?.[0] || !el.target?.[0]) continue;
+      if (!['ConnectionUsage', 'InterfaceUsage', 'Connector'].includes(el.eClass)) continue;
+      const mk = (message: string): void => {
+        out.push({ id: `connector-end-multiplicity#${n++}`, ruleId: 'connector-end-multiplicity', severity: 'warning', message, elementId: el.id });
+      };
+      const cross = (which: 'source' | 'target'): Range | undefined => {
+        const raw = which === 'source' ? el.attrs.sourceCrossMult : el.attrs.targetCrossMult;
+        return typeof raw === 'string' ? statedRange({ attrs: { multiplicity: raw } } as unknown as ElementRecord) : undefined;
+      };
+      const related = (which: 'source' | 'target'): ElementRecord | undefined => {
+        const rel = model.get(el[which]![0]!);
+        return rel && rel.ownerId === el.ownerId ? rel : undefined;
+      };
+      const pairs = endPairs(model, el.id);
+      for (const which of ['source', 'target'] as const) {
+        const rel = related(which);
+        if (!rel) continue;
+        const other = related(which === 'source' ? 'target' : 'source');
+        const c = cross(which);
+        const p = rangeOf(model, rel);
+        const end = pairs.find((x) => x.related === rel.id)?.end;
+        const e = end ? statedRange(end) : undefined;
+        const label = `${which === 'source' ? 'source' : 'target'} end ${qualifiedLabel(model, rel)}`;
+        if (c && p && c.lo <= c.hi && (c.hi > p.hi || c.lo > p.hi)) {
+          mk(
+            `Connection ${qualifiedLabel(model, el)}: the ${label} is written ${show(c)} but ${qualifiedLabel(model, rel)} has ${show(p)}: an end cannot connect more instances than the part has (§7.13.2).`,
+          );
+        } else if (c && e && c.hi > e.hi) {
+          mk(
+            `Connection ${qualifiedLabel(model, el)}: the ${label} is written ${show(c)} but the definition end ${end!.declaredName ?? ''} allows ${show(e)}: a usage may only narrow the cross multiplicity it inherits (§7.13.2).`,
+          );
+        } else if (!c && e && p && other) {
+          // A part usage that states no multiplicity and specialises nothing has the default 1 (§7.6.3).
+          const plain =
+            other.eClass === 'PartUsage' && other.attrs.multiplicity === undefined && other.attrs.implicit !== true &&
+            !model.relationshipsFrom(other.id).some((r) => ['Subsetting', 'Redefinition', 'ReferenceSubsetting'].includes(r.eClass));
+          const o = rangeOf(model, other) ?? (plain ? { lo: 1, hi: 1 } : undefined);
+          if (o && o.lo === 1 && o.hi === 1 && p.lo > e.hi) {
+            mk(
+              `Connection ${qualifiedLabel(model, el)}: the ${label} has ${show(p)} instances all connected to the single ${qualifiedLabel(model, other)}, but the definition end ${end!.declaredName ?? ''} allows at most ${e.hi} (§7.13.2).`,
+            );
+          }
+        }
       }
     }
     return out;

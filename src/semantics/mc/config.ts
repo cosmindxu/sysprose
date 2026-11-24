@@ -954,13 +954,27 @@ export function defaultsReadBy(
 /** A transition matches a fired trigger when its non-empty trigger equals it. */
 export function triggerEquals(tr: ElementRecord, trigger: string): boolean {
   const t = tr.attrs.trigger;
-  return typeof t === 'string' && t !== '' && t === trigger;
+  if (typeof t === 'string' && t !== '') return t === trigger;
+  const tt = timeTriggerLabel(tr);
+  return tt !== undefined && tt === trigger;
 }
 
 /** A completion transition carries no trigger. */
 export function isCompletion(tr: ElementRecord): boolean {
   const t = tr.attrs.trigger;
-  return t === undefined || t === null || t === '';
+  return (t === undefined || t === null || t === '') && timeTriggerLabel(tr) === undefined;
+}
+
+/**
+ * The label a SysML v2 §7.18.3 time trigger (`accept after 5`, `accept after 5[min]`) is offered under:
+ * `after 5`, `after 5[min]` — the text as written, so two different delays or units are two different events.
+ * `undefined` for a transition that carries none. The walk has no clock, so it offers this label as a named
+ * event at any time (a clock-free over-approximation, see the `time` field of the semantic profile); the
+ * interpreter, which has no clock for the unit either, still refuses such a machine.
+ */
+export function timeTriggerLabel(tr: ElementRecord): string | undefined {
+  const t = tr.attrs.timeTrigger;
+  return typeof t === 'string' && t.trim() !== '' ? `after ${t.trim()}` : undefined;
 }
 
 /**
@@ -969,6 +983,8 @@ export function isCompletion(tr: ElementRecord): boolean {
  * readers of a dwell can never disagree on what one looks like.
  */
 const AFTER_LABEL = /^after\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*\)$/;
+/** A time-trigger label, `after 5` or `after 5[min]` ({@link timeTriggerLabel}). */
+const TIME_TRIGGER_LABEL = /^after\s+[^\s(].*$/;
 
 /** The dwell time of an `after(n)` timed transition, or `undefined`. */
 export function afterDuration(tr: ElementRecord): number | undefined {
@@ -978,6 +994,13 @@ export function afterDuration(tr: ElementRecord): number | undefined {
   if (typeof t === 'string') {
     const m = AFTER_LABEL.exec(t.trim());
     if (m) return Number(m[1]);
+  }
+  // A §7.18.3 time trigger: the delay as written, read only as a number where it is one (0 where it is an
+  // expression). Nothing in the walk reads the number; it makes the transition a dwell for the gates.
+  const tt = timeTriggerLabel(tr);
+  if (tt !== undefined) {
+    const n = Number.parseFloat(tt.slice('after'.length));
+    return Number.isFinite(n) ? n : 0;
   }
   return undefined;
 }
@@ -995,13 +1018,14 @@ export function afterDuration(tr: ElementRecord): number | undefined {
  * a factory-built one the `after(n)` string IS the label `timedLabels` holds.
  */
 export function isDwellLabel(label: string): boolean {
-  return AFTER_LABEL.test(label.trim());
+  return AFTER_LABEL.test(label.trim()) || TIME_TRIGGER_LABEL.test(label.trim());
 }
 
 /** The trigger label of a transition (empty for completion transitions). */
 export function triggerLabelOf(tr: ElementRecord): string {
   const t = tr.attrs.trigger;
-  return typeof t === 'string' ? t : '';
+  if (typeof t === 'string' && t !== '') return t;
+  return timeTriggerLabel(tr) ?? '';
 }
 
 /** Direct child StateUsages of a container (its states at one nesting level). */

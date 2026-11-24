@@ -38,8 +38,8 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
 | **Date** | 2026-10-15 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **6173 passed / 0 failed / 0 skipped** across **191 files** |
-| &nbsp;&nbsp;— unit | 5039 passed across 152 files |
+| **Vitest checks** | **6173 passed / 0 failed / 0 skipped** across **193 files** |
+| &nbsp;&nbsp;— unit | 5039 passed across 154 files |
 | &nbsp;&nbsp;— integration | 481 passed across 22 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
@@ -271,7 +271,7 @@ wired relationship.
 | Interaction | Covered by | Result | Screenshot |
 |---|---|---|---|
 | Validate flags duplicate name → navigable row | `E validation`; `E panels-problems-text` | PASS | `06b-problem-selected` |
-| Validation engine — all 51 rules (pos/neg) | `U validation.rules` (106 cases); `I pipeline.validate` | PASS | — |
+| Validation engine — all 52 rules (pos/neg) | `U validation.rules` (110 cases); `I pipeline.validate` | PASS | — |
 | Check → constraint-check rows (satisfied/violated) | `E simulate-check`, `E toolbar-lifecycle`; `U semantics.constraints` | PASS | `simcheck-check` |
 | Simulate action flow → ordered trace in Problems | `E simulate`, `E simulate-check` (`ignite`→`accelerate`) | PASS | `simcheck-action` |
 | Simulate state machine → state trace in Problems | `E simulate-check` (`idle`→`running`) | PASS | `simcheck-state` |
@@ -328,7 +328,7 @@ The deep engine coverage that underpins the UI. (Condensed; full per-file counts
 | Interop client — self round-trip over HTTP + live pilot exchange | `X self-roundtrip`; `docs/CONFORMANCE.md` §6 | PASS |
 | Standard libraries — full 38.8k elements / 98 packages + resolution | `U library.load`; `I full-library.load`/`full-library.resolve` | PASS |
 | Persistence — store round-trip + export/import equivalence | `U persistence.io`; `I persist-api.persistence` | PASS |
-| Validation — 51 rules incl. the KerML semantic ones (value conformance, redefinition conformance, units and dimensions) | `U validation.rules`; `I pipeline.validate` | PASS |
+| Validation — 52 rules incl. the KerML semantic ones (value conformance, redefinition conformance, units and dimensions) | `U validation.rules`; `I pipeline.validate` | PASS |
 
 ### 2.13 Real-time collaboration (Yjs CRDT + presence)
 
@@ -1010,7 +1010,7 @@ narrowed subset.
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
 SysML v2 standard family — all six read **Covered** — with **6411 green automated
-checks** (**6173** unit/integration/conformance/server/interop/campaign across **191 files**,
+checks** (**6173** unit/integration/conformance/server/interop/campaign across **193 files**,
 **0 skips**, + **238 E2E** across **84 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
@@ -1030,7 +1030,7 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 ---
 
 *End of report. Counts and verdicts derived from a live `vitest run` (6173 passed /
-0 skipped across 191 files) and Playwright (231/231 across 84 spec files), plus
+0 skipped across 193 files) and Playwright (231/231 across 84 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
 verdict-bearing write probe — see `docs/CONFORMANCE.md` §6.1) and

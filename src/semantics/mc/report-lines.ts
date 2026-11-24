@@ -52,7 +52,7 @@ import {
   type BehaviourReport,
   type PropertyVerdict,
 } from './patterns';
-import { machineRegion } from './config';
+import { isDwellLabel, machineRegion } from './config';
 import { profileLines } from './profile';
 import { DWELL_SENTENCE, environmentSentence, environmentTriggers } from './publishable';
 
@@ -252,6 +252,21 @@ export function reachMachineLines(m: MachineReach, block: number): ReportLine[] 
         'never-fired',
         `    never fired  ${transitionLabel(t)} — enabled where a run reaches, and taken by no run: an inner transition wins wherever it is enabled, or it is due only where the chase budget stops a chase`,
         { elementId: t.id },
+      ),
+    );
+  }
+  // The timing over-approximation, stated beside the figures it qualifies (profile `time`): a dwell the walk
+  // offers as an event at any time. Safety figures hold under it; a figure that needs the timing is withheld
+  // by the gates (liveness, covers, absence of an escape), each with its own sentence.
+  const dwells = m.bounds.alphabet.filter((t) => isDwellLabel(t));
+  if (dwells.length > 0) {
+    out.push(
+      line(
+        'detail',
+        `    timing       over-approximated: ${dwells.map((d) => `\`${d}\``).join(', ')} ` +
+          `${dwells.length === 1 ? 'is' : 'are'} offered as ${dwells.length === 1 ? 'an event' : 'events'} at any time, ` +
+          'with no clock; a pass over it is a claim about every timing, a result that needs a dwell to elapse is not made',
+        { elementId: id },
       ),
     );
   }
@@ -732,7 +747,10 @@ export function propertyVerdictLines(
   const line = liner(block);
   // `inconclusive` and `vacuous` are the two words that say nothing was decided.
   const undecided = v.claim === 'inconclusive' || v.claim === 'vacuous';
-  const from = v.property.source === 'flag' ? '--pattern' : `@PropertyPattern on ${v.property.carrier}`;
+  const from =
+    v.property.source === 'flag'
+      ? v.property.pattern === 'conformance' ? '--conformance' : '--pattern'
+      : `@PropertyPattern on ${v.property.carrier}`;
   const out: ReportLine[] = [
     line('property', `  ${v.claim.toUpperCase().padEnd(12)} ${v.sentence}`, {
       code: v.code,

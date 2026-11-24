@@ -67,13 +67,14 @@ describe('target transition shorthand', () => {
     expect(lres.fired.map((f: any) => f.trigger)).toEqual(['TurnOn']);
   });
 
-  it('a time-triggered shorthand is refused by the interpreter and the walk, never guessed', async () => {
+  it('a time-triggered shorthand is refused by the interpreter, and offered by the walk as a named event (S6), never a guessed clock', async () => {
     const { model } = await load(wrap('    entry; then off;\n    state off;\n    accept after 5[min] then on;\n    state on;'));
     const res = runStateMachine(model!, find(model, 'P::M').id, []);
     expect(res.complete).toBe(false);
     expect(res.unopened).toContain('time trigger');
-    const row = edgeCensus(model!, find(model, 'P::M').id).rows.find((r) => r.account === 'unaccounted');
-    expect(row?.reason).toContain('time trigger');
+    const rows = edgeCensus(model!, find(model, 'P::M').id).rows;
+    expect(rows.some((r) => r.account === 'unaccounted')).toBe(false);
+    expect(rows.some((r) => r.account === 'walked')).toBe(true);
   });
 
   it('the walk accounts for an event shorthand edge', async () => {

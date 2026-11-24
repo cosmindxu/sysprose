@@ -3187,6 +3187,11 @@ class Mapper {
       // the definition end each related feature redefines, by name.
       if (node.connSrcEnd) patch.sourceEndName = node.connSrcEnd;
       if (node.connTgtEnd) patch.targetEndName = node.connTgtEnd;
+      // The cross multiplicity written on an end (`connect [2] a to [1] b`, §7.13.2), stored as written.
+      const srcMult = readableMultiplicities(node.connSrcMult);
+      const tgtMult = readableMultiplicities(node.connTgtMult);
+      if (srcMult.length) patch.sourceCrossMult = srcMult[srcMult.length - 1]!;
+      if (tgtMult.length) patch.targetCrossMult = tgtMult[tgtMult.length - 1]!;
       this.model.update(el.id, { source: [], target: [], attrs: patch });
       this.deferEnds(el.id, srcRef, tgtRef, node, 'ref/unresolved-connection-end', (r) => `Unresolved connection end '${r}'`);
     }

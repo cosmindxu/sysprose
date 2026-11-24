@@ -593,6 +593,13 @@ const CODES = [
     hint: 'Bind features of compatible types (the same type or one specialising the other), or fix the type or multiplicity of one end.',
   },
   {
+    code: 'validation/connector-end-multiplicity',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A connection end written with a cross multiplicity above the part it connects (`connect [5] wheels to hub` over `wheels : Wheel [4]`) or above the definition end it redefines, or a definition end allowing at most n against a part with more than n instances connected to one instance. Only `connect [m] a to [n] b` with number-literal bounds is read.',
+    hint: 'Write an end multiplicity within the connected part’s and the definition end’s, or widen the part or the definition end.',
+  },
+  {
     code: 'validation/subset-type-conformance',
     source: 'validation',
     severity: 'warning',
@@ -1160,6 +1167,13 @@ const CODES = [
     hint: 'Read the sentence as an answer, not a limit: the design as written admits no run into that situation within the printed bounds. If that situation is one the design must reach, add the transition or the trigger that gets there — or pass `--cover-required`, which makes the row exit 1 and adds `verification/cover-required` beside this line without changing the claim word. A witness that IS found prints as `covered` with the run step by step; the positive answer carries no code.',
   },
   {
+    code: 'verification/specialisation-not-preserved',
+    source: 'verification',
+    severity: 'error',
+    when: '`check-behaviour --conformance` found that a specialising `state def X :> Y` does not preserve a run of its general: over the events `Y` names, some run of `Y` (the witness trace) has no run of `X` that offers the same event labels and stands in the same active states, read off both exhaustive walks by the subset construction (SysML v2 Part 1 §7.6, Specialization). Stores and actions are not compared, and the row is never a claim that `X` refines `Y`; where either walk is cut, undecided, timed, parallel or refused the row is `inconclusive` instead, naming why.',
+    hint: 'Read the witness: it is a run of the general machine, step by step, that the specialising one cannot follow. Either the specialisation redefines or shadows a step of the general (a retargeted or replaced transition, an added completion that moves the run on), or it removes what the general offers; restore the step, or accept that `X` is not usable wherever a `Y` is expected.',
+  },
+  {
     code: 'verification/cover-required',
     source: 'verification',
     severity: 'error',
@@ -1267,6 +1281,13 @@ const CODES = [
     severity: 'error',
     when: 'A connector of a superset owner is ill-typed (SysML v2 §7.12.1 port conformance, or no shared port definition) once the chosen variants of a valid configuration, or of a configuration usage, redefine the ports it joins. A connector already ill-typed in the superset is `connection-compatibility`\'s finding and is not repeated.',
     hint: 'Make the variant keep the port type (or a conforming one), or choose a different variant for that configuration.',
+  },
+  {
+    code: 'verification/variability-configuration-violates',
+    source: 'verification',
+    severity: 'error',
+    when: 'A constraint of a superset owner (not a selection constraint), or a requirement satisfied by a part on a path through a variation point, evaluates to false in a configuration, read with the selected variant\'s attribute values (`eng.mass` is the `mass` the chosen variant states). The message names the configuration, the constraint or requirement and the values read. A warning instead of an error when constraints that are not read might exclude that configuration. A value that cannot be read makes the configuration, and the family verdict, undecided; it is never a pass.',
+    hint: 'Change the variant\'s value or the constraint, or exclude the configuration with a selection constraint.',
   },
 
   /* ── round-trip oracle ── */

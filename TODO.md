@@ -1864,10 +1864,11 @@ and §21.4–21.11.
       table (one row per exchange: functional, logical, physical), the Interconnection overlay, and
       a function parameter with no port realisation at all (not judged: opt-in only where written).
       [xalloc]
-- [ ] **Read the cross multiplicity on a connector end.** `connect [2] a.p to [1] b.q` parses
-      (`connSrcMult`/`connTgtMult`) and the multiplicity is dropped without a note (SysML v2
-      §8.2.2.13 `OwnedCrossMultiplicityMember`). Store it, write it back on Save, and read it where
-      a connection's end multiplicity matters. [if-compat]
+- [ ] **Cross multiplicity on the other connector forms.** `connect [m] a to [n] b` is stored
+      (`sourceCrossMult`/`targetCrossMult`), written back and checked (`connector-end-multiplicity`,
+      §7.13.2). Still unread: the list form `connect ([1] hub ::> x, …)` and `end [m] part x references y`
+      bodies (the grammar has no cross multiplicity there), and the spec's `end [0..2] part device` form (multiplicity before the keyword; it does not parse today, only `end part device [0..2]` does), and a definition end's cross multiplicity
+      against a usage written without one when the other end has more than one instance. [if-compat]
 - [ ] **Compare the undirected features and the nested ports of two connected ports.** §7.12.1's
       conformance is over every feature; `connection-compatibility` compares the directed ones and
       does not descend into nested ports (sound: it only reports fewer mismatches). [if-compat]
@@ -1911,7 +1912,9 @@ and §21.4–21.11.
       reads; a `fail` over a lasso carries `modality: null` (no some-run/every-run sentence for a
       liveness refutation); the publishability register's rows A10, A11, W4 and W5 (liveness on an
       acyclic graph, fair-SCC) still describe the earlier plan and name no producer.
+- Variability (var-cfg): per-configuration constraint and requirement evaluation reads only `point.attribute` with a stated number or Boolean on the chosen variant (or the point), plus an unqualified owner attribute; deeper chains, `assume` clauses, string/enum values, and per-instance values under a multiplicity stay UNDECIDED, never a pass. Not done: the `redundant-constraint` warning of V3. Requirement `satisfy` is read at the owner or at a complete valid configuration usage only.
 - Variability (var-fence): the per-configuration connection check re-reads only a connector end that is a feature owned directly by the point (`eng.p`); an end nested deeper under a variant (`eng.sub.p`), flows, and requirement/constraint checks per configuration are still superset-only (audit rows 17, 19; steps V4, V6). `variation-variant-not-specializing` skips a variant with an unresolved type and a reference-form variant.
 - BD2/BD4 follow-ups: promote multiplicity-conformance and binding-conformance from warning to error (user ruling: later); subset-type-conformance (BD3) and connector end multiplicity (BD5) are separate items.
 - State machines (sm-par): `check-behaviour` reads Boolean combinations of `state` atoms only; a combination with a trigger, a transition or an expression leaf is refused (`verification/unknown-atom`), not mixed in. The `events` reading skips states inside parallel regions and has no `--strict-events` switch (nothing consumes it as a finding).
 - bd-struct2 follow-ups: the six wave-2 rules (subset-type-conformance, disjoint-sum-exceeds, enum-value-not-member, value-multiplicity-mismatch, specialization-kind-incompatible, unresolved-value-chain) are warnings; promote to errors later (user ruling). Not read: disjoint through `variation` variants (BD6), a value expression other than a literal, list or single chain (BD8, BD11), chains with quoted or `::` names (BD11), subsetting of an inherited-only type (BD3), usage-level specialisation kinds (BD9).
+- State machines (sm-spec): `check-behaviour --conformance` is opt-in, so a specialising machine is checked only when asked (a default row would move every specialiser's report and the v9 capture; the choice is the coordinator's); it compares active states and event labels, not stores or actions, and a specialisation that only changes an effect is not seen; a specialisation of a parallel, dwelling or cut machine is `inconclusive`. A time trigger (`accept after 5`) is offered as an event at any time: safety passes hold, `existence`/`response` are inconclusive on any machine with a dwell (also the factory-built `after(n)`, which could pass before), and the interpreter still refuses to run such a machine (no clock for the unit).

@@ -950,6 +950,11 @@ export const COMMANDS: readonly CommandSpec[] = [
         doc: 'Raise a vacuous property from a row to verification/vacuous-property, an error. It does NOT change the exit code: a vacuity is inconclusive and exits 2 with the flag and without it',
       },
       {
+        name: 'conformance',
+        kind: 'boolean',
+        doc: 'Where the machine specialises another (`state def X :> Y`), add one row saying whether it preserves the traces of its general: every run of Y over the events Y names is a run X can follow, read off both exhaustive walks (a failure carries the trace of Y X cannot follow, under verification/specialisation-not-preserved; a cut, undecided, timed or parallel walk is inconclusive, naming why). Never a claim that X refines Y',
+      },
+      {
         name: 'cover-required',
         kind: 'boolean',
         doc: 'Exit 1 on a `cover` property that came back not covered, adding verification/cover-required (an error) beside the verification/not-covered line. It raises the exit code and NEVER the claim: the row still says `not covered`, never `fail`, because a missing behaviour is not a violated requirement. Not applied where the row is inconclusive under verification/guard-undetermined — the run says so beside the row, counting how many of the cover\'s unreached states sit behind a guard over an attribute with no declared value, and stays at exit 2',

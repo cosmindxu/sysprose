@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (51 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (52 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -3975,7 +3975,7 @@ definition or usage, an exhibit state among them, marked `parallel`, SysML v2
 §7.18.2; a parallel machine or state with more than 4 regions coupled through an
 attribute is not explored, and a witness on a parallel machine is published only if the interpreter replays it, so one that needs a non-declaration order of coupled regions is withheld), deferred
 events (none — there is no event pool), and time (discrete `after(n)`; the walk
-offers each `after(n)` label as an event rather than advancing a clock). A
+offers each `after(n)` label and each `accept after 5` time trigger as an event rather than advancing a clock). A
 verdict about a machine is a verdict under a reading of those seven, and one
 that does not say which reading is one you cannot check. `exits` is the newest:
 it was added on 2026-10-21, after the step's reading changed and moved verdicts
@@ -4360,7 +4360,7 @@ being called unreachable under a machine that does not contain it.
 The state notation of SysML v2 §7.18 is read only in part. `entry X;` and
 `do X;` without the `action` keyword are still read as declaring a new action
 named `X`, where the specification reads them as a reference to an existing
-one; and these §7.18 forms do not parse yet: `accept after 5[min]`, the
+one; and these §7.18 forms do not parse yet: the
 transition shorthand written after its source state (`state off; accept …
 then on;`), an entry action named `initial`, a guarded start from the entry
 action (`if c then off;`), `entry assign …;` and `do send … to X;`,
@@ -4895,6 +4895,30 @@ machine. It is `vacuous` ⇒ exit 2, with `--strict-vacuity` and without it; the
 flag raises the row from a line to `verification/vacuous-property`, an **error**,
 and changes nothing else — including the exit code.
 
+**A specialisation is checked against its general, on request.** `check-behaviour
+--conformance` adds one row to a machine that specialises another (`state def X
+:> Y`): `X` preserves the `Y` traces over alphabet {the events `Y` names}. The
+check reads both exhaustive walks and asks that every run of `Y` is a run `X`
+can follow: the same event labels, the same active states, and a rest of `Y` is
+a rest of `X` (a completion step `X` adds, where `Y` comes to rest, is a run of
+`Y` it cannot follow). The events `X` adds are not offered, so adding states and
+transitions conforms; re-targeting or replacing a step of `Y` fails under
+`verification/specialisation-not-preserved`, an **error** with the trace of `Y`
+`X` cannot follow (it replays on `Y`). It is never a claim that `X` refines `Y`,
+stores and actions are not compared, and a walk that was cut, held an undecided
+guard, a dwell or a parallel state, or a machine the walk refuses gives
+`inconclusive` and says why (`no conformance claimed`). Without the flag nothing
+changes.
+
+**Time.** A discrete `after(n)` label and a SysML v2 §7.18.3 time trigger
+(`accept after 5`, `accept after 5[min]`, offered as `after 5`, `after 5[min]`)
+are both offered as a named event at any time, with no clock; every report of
+such a machine carries a `timing  over-approximated: … is offered as an event at
+any time` line. A safety pass holds under every timing; `existence` and
+`response` are `inconclusive` (nothing here says when time passes), a cover or a
+witness through the dwell is withheld because the interpreter, which has no clock
+for the unit either, does not run such a machine.
+
 **Source of truth:** `src/semantics/mc/patterns.ts` (the catalogue, the monitor
 and the bad-prefix search), `src/semantics/mc/atoms.ts` (the five atom
 spellings), and `src/semantics/mc/explore.ts` for the walk they both stand on.
@@ -4916,7 +4940,15 @@ with no variants, a HOLDS only over the constraints read, or a family past the
 enumeration cap. A dead variant or a false-optional point is a warning in the
 report and does **not** move the exit code; gate on its
 `verification/variability-dead-variant` / `-false-optional` code if you want it
-to. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
+to. **Per-configuration evaluation:** a non-selection `assert constraint` of the owner
+(`eng.mass <= limit`) and a requirement satisfied by a part on a path through a point
+(`satisfy R by c1.eng`) are evaluated in every enumerated configuration with the chosen
+variant's stated attribute values visible (`eng.mass` is the `mass` the selected variant
+redefines); the report says HOLDS, VIOLATED or UNDECIDED per configuration and gives a
+family verdict ("exact: all N enumerated", never a pass while one is undecided). A violating
+configuration is `verification/variability-configuration-violates` (error, exit 1). A void
+family lists a minimal conflicting set of its constraints, and a dead variant the
+constraints that kill it. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
 profile; in short:
 
 - **A variation point** is a usage written `variation` (SysML v2 §7.6.7), or a
@@ -5013,6 +5045,10 @@ any of these at the language level:
   other is reported (§7.13.3, §8.2.3.13). Ends whose declared multiplicities have
   no cardinality in common (`[1]` bound to `[2..3]`) are reported too; ranges that
   merely differ are not. A warning.
+- **`connector-end-multiplicity`.** `connect [5] wheels to hub` over `wheels : Wheel [4]`
+  asks an end for more instances than the part has; a usage's cross multiplicity may also
+  only narrow the one on the connection definition's end it redefines (§7.13.2). Only the
+  binary `connect [m] a to [n] b` form with number-literal bounds is read; a warning.
 - **`subset-type-conformance`.** `part b : B subsets a` over `part a : A`, where
   neither of A and B specialises the other, holds values that are not values of
   `a` (§7.6.1). A subsetter that declares no type is not judged. A warning.
@@ -5450,7 +5486,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:584-601`, `1148-1178` (the two rules that ask),
+`src/validation/rules.ts:585-602`, `1149-1179` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 
