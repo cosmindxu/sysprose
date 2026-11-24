@@ -636,6 +636,11 @@ export interface ExploreResult {
    */
   successors: readonly (readonly number[])[];
   /**
+   * The label of each edge of {@link successors}, parallel to it: the event the step was offered under, `''` for a
+   * completion step. Read by `./conformance` (a specialisation's walk against its general's).
+   */
+  successorLabels: readonly (readonly string[])[];
+  /**
    * The ACTIVE STACK per node number — not the leaf.
    *
    * One state spans many configurations, and a composite sits on the stack of
@@ -1116,15 +1121,6 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
         `it leads ${outsideStatesSentence(model, machineId, el)}, so no chain of this machine’s ` +
           'states holds its target, the step has no least common ancestor to exit to, and the walk ' +
           'refuses this machine by name rather than walking a step whose meaning is not defined here',
-      );
-    } else if (typeof el.attrs.timeTrigger === 'string' && el.attrs.timeTrigger) {
-      // `accept after 5[min]` (SysML v2 §7.18.3) is a time trigger. This engine's only clock is the discrete `after(n)`
-      // dwell, whose unit it does not know, so equating the two would be a guess; and written without a named
-      // trigger the edge would read as a completion that fires at once. Neither is a claim about the machine.
-      row(
-        'unaccounted',
-        `it is triggered by \`accept after ${el.attrs.timeTrigger}\`, a time trigger (SysML v2 §7.18.3) in a unit ` +
-          'this engine has no clock for, so the walk does not guess a reading and the machine is not walked',
       );
     } else if (relation.has(el.id) && sourceKind === 'InitialNode') {
       row(
@@ -1862,6 +1858,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
       // is defined as the negation of `exhaustive` and never as a test on
       // `boundHit`.
       successors: [],
+      successorLabels: [],
       configStates: [],
       configLeaves: [],
       configRegionLeaves: [],
@@ -1916,6 +1913,7 @@ function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): 
     census,
     undeterminedGuards: walked.undeterminedGuards,
     successors: walked.successors,
+    successorLabels: walked.successorLabels,
     configStates: walked.configStates,
     configLeaves: walked.configLeaves,
     configRegionLeaves: walked.configRegionLeaves,
@@ -1944,6 +1942,7 @@ interface Walked {
   deadlocks: DeadlockRow[];
   undeterminedGuards: UndeterminedGuardRow[];
   successors: number[][];
+  successorLabels: string[][];
   configStates: (readonly ElementId[])[];
   configLeaves: (ElementId | null)[];
   configRegionLeaves: (readonly ElementId[])[];
@@ -2077,6 +2076,8 @@ function walkConfigurations(
   // One row per node, grown at the admission point so `succ.length` and
   // `seen.size` stay equal.
   const succ: number[][] = [[]];
+  const succLabel: string[][] = [[]];
+  const labelOf = (i: StepInput): string => (i.kind === 'trigger' ? i.trigger : '');
   const completionSucc: number[][] = [[]];
   const configStates: (readonly ElementId[])[] = [activeStatesOf(opening.config)];
   const configLeaves: (ElementId | null)[] = [leafOf(opening.config)];
@@ -2246,6 +2247,7 @@ function walkConfigurations(
         const known = seen.get(key);
         if (known !== undefined) {
           succ[here.index].push(known);
+          succLabel[here.index].push(labelOf(input));
           if (input.kind === 'completion') completionSucc[here.index].push(known);
           recordSim(choice, known);
           recordChase(choice, known);
@@ -2290,9 +2292,11 @@ function walkConfigurations(
         seen.set(key, to);
         nodeConfig.push(intern(hash));
         succ.push([]);
+        succLabel.push([]);
         completionSucc.push([]);
         nodeRun.push(run);
         succ[here.index].push(to);
+        succLabel[here.index].push(labelOf(input));
         if (input.kind === 'completion') completionSucc[here.index].push(to);
         recordSim(choice, to);
         recordChase(choice, to);
@@ -2327,6 +2331,7 @@ function walkConfigurations(
     deadlocks,
     undeterminedGuards: [...undeterminedGuards.values()],
     successors: succ,
+    successorLabels: succLabel,
     configStates,
     configLeaves,
     configRegionLeaves,
