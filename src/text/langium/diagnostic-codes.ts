@@ -593,6 +593,13 @@ const CODES = [
     hint: 'Bind features of compatible types (the same type or one specialising the other), or fix the type or multiplicity of one end.',
   },
   {
+    code: 'validation/connector-end-multiplicity',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A connection end written with a cross multiplicity above the part it connects (`connect [5] wheels to hub` over `wheels : Wheel [4]`) or above the definition end it redefines, or a definition end allowing at most n against a part with more than n instances connected to one instance. Only `connect [m] a to [n] b` with number-literal bounds is read.',
+    hint: 'Write an end multiplicity within the connected part’s and the definition end’s, or widen the part or the definition end.',
+  },
+  {
     code: 'validation/subset-type-conformance',
     source: 'validation',
     severity: 'warning',

@@ -58,6 +58,7 @@ import type { Diagnostic, Severity, ValidationRule } from './types';
 import { directedFeaturesOf } from '../semantics/port-conformance';
 import {
   bindingConformance,
+  connectorEndMultiplicity,
   disjointSumExceeds,
   enumValueNotMember,
   multiplicityConformance,
@@ -1982,6 +1983,7 @@ export const RULES: ValidationRule[] = [
   functionPortAllocation,
   multiplicityConformance,
   bindingConformance,
+  connectorEndMultiplicity,
   subsetTypeConformance,
   disjointSumExceeds,
   enumValueNotMember,
