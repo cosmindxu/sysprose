@@ -191,6 +191,7 @@ import {
 } from '../src/semantics/variability';
 // Deep imports rather than `../src/diagram/index`: the diagram barrel pulls the
 // layout engine in with it, and neither of these two builders needs it.
+import { icdLines, icdReport, type IcdReport } from '../src/semantics/icd';
 import { buildGrid, valueCellHasOperator } from '../src/diagram/grid';
 import { buildRequirementsTable } from '../src/diagram/requirements-table';
 import { loadModelText, type CheckReport } from '../src/text/load';
@@ -296,6 +297,8 @@ interface Report {
   faultTree?: FaultTreeReport;
   /** The run of `variability`, which judges configurations and families (VARIABILITY_EXIT_CODES). */
   variability?: VariabilityReport;
+  /** The run of `icd`, which judges the interfaces (ICD_EXIT_CODES). */
+  icd?: IcdReport;
 }
 
 /** The four figures the verify exit contract is computed from, and the answer. */
@@ -487,6 +490,13 @@ function judgeFaultTree(report: FaultTreeReport, degraded: boolean): FaultTreeVe
     undecidedChecks: report.undecidedChecks,
     exitCode: degraded ? 2 : report.exitCode,
   };
+}
+
+/** The verdict block of `icd`: its counts and the exit code. */
+interface IcdVerdict {
+  uncarried: number;
+  unallocated: number;
+  exitCode: number;
 }
 
 /** The verdict block of `variability`: its counts and the exit code. */
@@ -3681,6 +3691,11 @@ async function buildReport(
       return reportReach(model, name, args);
     case 'check-behaviour':
       return reportCheckBehaviour(model, name, args);
+    case 'icd': {
+      const ref = flagValue(args, 'element');
+      const r = icdReport(model, ref === undefined ? undefined : resolveElementRef(model, ref).id);
+      return { json: r, text: icdLines(r, name).join('\n'), icd: r };
+    }
     case 'variability': {
       const r = variabilityReport(model);
       return { json: r, text: variabilityLines(r, name).join('\n'), variability: r };
@@ -3967,6 +3982,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     | BoundsVerdict
     | FaultTreeVerdict
     | VariabilityVerdict
+    | IcdVerdict
     | undefined = built.verify
     ? judge(built.verify, degraded)
     : built.consistency
@@ -3981,7 +3997,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
           ? judgeFaultTree(built.faultTree, degraded)
           : built.variability
             ? judgeVariability(built.variability, degraded)
-            : undefined;
+            : built.icd
+              ? { ...built.icd.verdict, exitCode: degraded ? 2 : built.icd.verdict.exitCode }
+              : undefined;
 
   const body = flagGiven(parsed, 'json')
     ? JSON.stringify(

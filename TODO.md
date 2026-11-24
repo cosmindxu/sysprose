@@ -1860,8 +1860,9 @@ and §21.4–21.11.
 - [ ] **Exchange allocation — the views.** `exchange-allocation` judges the allocations a model
       writes (Arcadia §19.10–19.11, §20.4, §21.9); `exchange-unallocated` flags a flow between
       functions on two components that no connection carries, in a scope that allocates flows (§20.4);
-      `function-port-allocation` judges `allocate fn.p to comp.q` (§20.3). Still open: the ICD
-      table (one row per exchange: functional, logical, physical), the Interconnection overlay, and
+      `function-port-allocation` judges `allocate fn.p to comp.q` (§20.3). The ICD
+      table is `sysprose icd` (one row per connection). Still open: the Interconnection overlay
+      (colour a connection by its ICD status, flows on hover; src/ui/panels), and
       a function parameter with no port realisation at all (not judged: opt-in only where written).
       [xalloc]
 - [ ] **Cross multiplicity on the other connector forms.** `connect [m] a to [n] b` is stored

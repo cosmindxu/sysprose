@@ -265,7 +265,7 @@ contract failures break the top requirement (`fault-tree`), which configurations
 can reach, which sets of configurations no run leaves, and whether a safety pattern survives all
 of them (`reach`, `check-behaviour`), and it
 writes verdicts back into the file as annotations that go stale when the design moves
-(`evidence-attach`, `evidence-status`). All of them are among the **23 subcommands** listed in the
+(`evidence-attach`, `evidence-status`). All of them are among the **24 subcommands** listed in the
 Develop block below, and every flag is in
 [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md).
 

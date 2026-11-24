@@ -4923,6 +4923,30 @@ for the unit either, does not run such a machine.
 and the bad-prefix search), `src/semantics/mc/atoms.ts` (the five atom
 spellings), and `src/semantics/mc/explore.ts` for the walk they both stand on.
 
+
+### The interface control document: `sysprose icd`
+
+`sysprose icd <file> [--element OWNER] [--json]` reads the exchange-allocation facts
+(`exchange-allocation`, `exchange-unallocated`; Arcadia §19.10-19.11, §20.4, §21.9; SysML v2
+§7.12.1, §7.13, §7.15) as one table. There is one row per connection (or interface usage) under
+the owner: its two ends (part, port, port definition, whether the port is conjugated `~`), every
+item the ports carry with its direction (`A->B` is out of the first end into the second; a
+conjugated port is read through `~`, §7.12.3), the flows allocated to it (flow, item, sending and
+receiving function), the connections allocated to it (a physical link carries them) and a status:
+
+| Status | Meaning |
+|---|---|
+| `CONSISTENT` | something is allocated to the row and its ports carry it the right way |
+| `UNCARRIED` | a flow is allocated to it that its ports or its components cannot carry (the `exchange-allocation` finding, quoted on the row) |
+| `UNUSED` | it carries items, nothing is allocated to it, and its package allocates flows elsewhere |
+| `UNJUDGED` | nothing is allocated to it and its package allocates no flows: that layer does not model the exchange allocation |
+
+The footer lists each crossing flow allocated to no connection (the `exchange-unallocated`
+finding). Exit **1** when any row is `UNCARRIED` or a crossing flow is unallocated; **2** for a
+degraded model or when there is nothing to read; `UNUSED` and `UNJUDGED` do not move the exit code.
+`--json` carries the same rows under `icd` and a top-level `verdict`. The header of
+`src/semantics/icd.ts` has the profile.
+
 ### Variability: which configurations a family admits
 
 `sysprose variability <file> [--json]` reads the variation points of a model and
