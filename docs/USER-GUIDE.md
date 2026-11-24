@@ -4926,7 +4926,7 @@ spellings), and `src/semantics/mc/explore.ts` for the walk they both stand on.
 
 ### The interface control document: `sysprose icd`
 
-`sysprose icd <file> [--element OWNER] [--json]` reads the exchange-allocation facts
+`npm run sysprose -- icd model.sysml [--element OWNER] [--json]` reads the exchange-allocation facts
 (`exchange-allocation`, `exchange-unallocated`; Arcadia §19.10-19.11, §20.4, §21.9; SysML v2
 §7.12.1, §7.13, §7.15) as one table. There is one row per connection (or interface usage) under
 the owner: its two ends (part, port, port definition, whether the port is conjugated `~`), every
