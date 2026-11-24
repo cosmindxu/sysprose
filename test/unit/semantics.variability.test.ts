@@ -436,3 +436,83 @@ describe('a named configuration whose selection violates a constraint says so be
     expect(c2).not.toContain('VIOLATES');
   });
 });
+
+describe('state machines per configuration (V6)', () => {
+  const rep = (src: string) => variabilityReport(parseModel(src).model);
+  const beh = (src: string) => rep(src).diagnostics.filter((d) => d.code === VARIABILITY_CODES.behaviour || d.code === VARIABILITY_CODES.behaviourDead);
+
+  it('p10: a variant that adds a state to the machine says "superset only", never silence', () => {
+    const d = beh(`package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s2 { entry state z; } } } }
+}`);
+    const sup = d.filter((x) => x.message.includes('analysed on the superset only'));
+    expect(sup.some((x) => x.message.includes('big'))).toBe(true);
+    expect(sup.every((x) => x.severity === 'info')).toBe(true);
+    // the point's machine is on the superset: no per-configuration claim
+    expect(d.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+  });
+
+  it('a variant-free machine is walked once and reported in one line', () => {
+    const d = beh(`package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng; } }
+}`);
+    expect(d).toHaveLength(1);
+    expect(d[0].message).toContain('the same in every configuration');
+    expect(d[0].message).toContain('every state reachable');
+  });
+
+  it('a variant that owns a machine: dead there, the machine does not exist in the other configuration', () => {
+    const o = rep(`package P {
+  part def Eng;
+  part def Car {
+    variation part eng : Eng {
+      variant part small : Eng;
+      variant part big : Eng { state m { entry state a; state b; state c; transition t first a accept Go then b; } }
+    }
+  }
+}`);
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.severity).toBe('warning');
+    expect(d.message).toContain('present only in the configurations selecting eng::big (1 of 2)');
+    expect(d.message).toContain('unreachable state(s) c');
+    expect(d.message).toContain('in the others the machine does not exist');
+    expect(o.owners[0].behaviour.machines[0].variants).toEqual(['eng::big']);
+  });
+
+  it('a correct variant machine stays silent about dead things', () => {
+    const o = rep(`package P {
+  part def Eng;
+  part def Car {
+    variation part eng : Eng {
+      variant part small : Eng;
+      variant part big : Eng { state m { entry state a; state b; transition t first a accept Go then b; } }
+    }
+  }
+}`);
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviour && x.message.includes('every state reachable'))).toBe(true);
+  });
+
+  it('a cut walk is inconclusive: no reachability claim', () => {
+    const states = Array.from({ length: 30 }, (_, i) => `state s${i}; transition first ${i === 0 ? 'a' : `s${i - 1}`} accept Go then s${i};`).join(' ');
+    const o = rep(`package P {
+  part def Eng;
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state m { entry state a; ${states} } } } }
+}`);
+    const ms = o.owners[0].behaviour.machines;
+    for (const m of ms.filter((x) => !x.conclusive)) {
+      expect(m.unreachable).toEqual([]);
+      expect(m.dead).toEqual([]);
+    }
+    expect(variabilityLines(o, 'x').join('\n')).toContain('machine');
+  });
+
+  it('a variant of a variation state is read on the superset only', () => {
+    const d = beh(`package P {
+  part def Car { state mode { variation state drive { variant state eco; variant state sport; } } }
+}`);
+    expect(d.every((x) => x.severity === 'info')).toBe(true);
+  });
+});
