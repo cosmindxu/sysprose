@@ -317,3 +317,99 @@ describe('variability — per-configuration connection typing (p12)', () => {
     expect(r.owners[0].analysis!.connectionBroken).toEqual([]);
   });
 });
+
+describe('variability: per-configuration evaluation (V4) and void explanation (V3)', () => {
+  const car = (body: string, tail = '') => `package P {
+  part def Engine { attribute mass : Real; }
+  part def Car {
+    variation part eng : Engine {
+      variant part small : Engine { attribute :>> mass = 100; }
+      variant part big : Engine { attribute :>> mass = 400; }
+    }
+    attribute limit : Real = 200;
+    ${body}
+  }
+  ${tail}
+}`;
+  const run = (src: string) => variabilityReport(parseModel(src).model);
+
+  it('constraint over the chosen variant: one configuration holds, one violates, the family is VIOLATED', () => {
+    const r = run(car('assert constraint ok { eng.mass <= limit }', 'part c1 : Car { part :>> eng = eng::big; } part c2 : Car { part :>> eng = eng::small; }'));
+    const ev = r.owners[0].evaluations[0];
+    expect(ev.verdict).toBe('violated');
+    expect(ev.holds).toBe(1);
+    expect(ev.violated).toBe(1);
+    expect(ev.coverage).toBe('exact: all 2 enumerated');
+    expect(ev.items[0].values).toEqual(['eng.mass = 400', 'limit = 200']);
+    const d = r.diagnostics.filter((x) => x.code === VARIABILITY_CODES.configurationViolates);
+    expect(d.map((x) => x.severity)).toEqual(['error', 'error']);
+    expect(d.some((x) => x.message.includes('c1'))).toBe(true);
+    expect(d.some((x) => x.message.includes('c2'))).toBe(false);
+    expect(r.exitCode).toBe(1);
+    expect(variabilityLines(r, 'x').join('\n')).toContain('NOT satisfied');
+  });
+
+  it('a family where every configuration holds is HOLDS, exact', () => {
+    const r = run(car('assert constraint ok { eng.mass <= 500 }'));
+    expect(r.owners[0].evaluations[0].verdict).toBe('holds');
+    expect(r.owners[0].evaluations[0].coverage).toBe('exact: all 2 enumerated');
+    expect(r.diagnostics.some((x) => x.code === VARIABILITY_CODES.configurationViolates)).toBe(false);
+  });
+
+  it('an unreadable value makes the configuration and the family undecided, never a pass', () => {
+    const src = car('assert constraint ok { eng.mass <= 500 }').replace('attribute :>> mass = 400;', '');
+    const ev = run(src).owners[0].evaluations[0];
+    expect(ev.verdict).toBe('undecided');
+    expect(ev.undecided).toBe(1);
+    expect(ev.coverage).toBe('undecided: 1 of 2 enumerated');
+    expect(ev.items[0].reason).toContain('eng.mass');
+  });
+
+  it('an overridable default value is not read as the configuration\'s value', () => {
+    const src = car('assert constraint ok { eng.mass <= 500 }').replace('attribute :>> mass = 400;', 'attribute :>> mass default 400;');
+    expect(run(src).owners[0].evaluations[0].verdict).toBe('undecided');
+  });
+
+  it('a requirement satisfied through the point is decided per configuration', () => {
+    const req = 'requirement def MassReq { subject s : Engine; require constraint { s.mass <= 200 } }';
+    const r = run(car('', `${req} part c1 : Car { part :>> eng = eng::big; satisfy MassReq by c1.eng; } part c2 : Car { part :>> eng = eng::small; satisfy MassReq by c2.eng; }`));
+    const evs = r.owners[0].evaluations.filter((e) => e.kind === 'requirement');
+    expect(evs.map((e) => e.verdict).sort()).toEqual(['holds', 'violated']);
+    expect(r.exitCode).toBe(1);
+  });
+
+  it('family-level satisfy is evaluated over every enumerated configuration', () => {
+    const req = 'requirement def MassReq { subject s : Engine; require constraint { s.mass <= 200 } }';
+    const r = run(car('satisfy MassReq by eng;', req));
+    const ev = r.owners[0].evaluations[0];
+    expect(ev.kind).toBe('requirement');
+    expect(ev.verdict).toBe('violated');
+    expect(ev.coverage).toBe('exact: all 2 enumerated');
+  });
+
+  it('p7: a void family names a minimal conflicting set; dead variants name their killers', () => {
+    const src = `package P { part def Engine; part def Gear;
+      part def Car {
+        variation part eng : Engine { variant part small : Engine; variant part big : Engine; }
+        variation part gb : Gear { variant part man : Gear; variant part aut : Gear; }
+        assert constraint c1 { eng == eng::big implies gb == gb::aut }
+        assert constraint c2 { eng == eng::big implies gb == gb::man }
+        assert constraint c3 { eng == eng::big }
+      } }`;
+    const a = run(src).owners[0].analysis!;
+    expect(a.void).toBe(true);
+    expect(a.voidCore!.slice().sort()).toEqual(['c1', 'c2', 'c3']);
+    const d = run(src).diagnostics.find((x) => x.code === VARIABILITY_CODES.void)!;
+    expect(d.message).toContain('conflicting constraints');
+    // not void: a dead variant names the constraint that kills it
+    const dead = run(src.replace('assert constraint c1', 'assert constraint c1x { eng == eng::big }  assert constraint c1').replace(/assert constraint c[123] \{[^}]*\}/g, (m) => (m.includes('c1x') ? m : ''))).owners[0].analysis!;
+    expect(dead.void).toBe(false);
+    expect(dead.deadWhy.some((x) => x.variant.endsWith('small') && x.killedBy.includes('c1x'))).toBe(true);
+  });
+
+  it('a non-void, constraint-free family has no explanation and no evaluation', () => {
+    const o = run(car('')).owners[0];
+    expect(o.evaluations).toEqual([]);
+    expect(o.analysis!.voidCore).toBeNull();
+  });
+});
