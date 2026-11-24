@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 191
-- **Tests:** 6173 total — 6173 passed, 0 failed, 0 skipped
+- **Files:** 193
+- **Tests:** 6198 total — 6198 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -124,6 +124,7 @@
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
+| test/unit/semantics.mc.after.test.ts | 5 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.parallel-orders.test.ts | 8 | 0 | 0 |
@@ -136,6 +137,7 @@
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.redefinition-merge.test.ts | 2 | 0 | 0 |
 | test/unit/semantics.mc.redefinition.test.ts | 5 | 0 | 0 |
+| test/unit/semantics.mc.refine.test.ts | 7 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 40 | 0 | 0 |
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
@@ -161,7 +163,7 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
-| test/unit/semantics.variability.test.ts | 29 | 0 | 0 |
+| test/unit/semantics.variability.test.ts | 38 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
@@ -198,5 +200,5 @@
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
 | test/unit/validation.exchange-allocation.test.ts | 21 | 0 | 0 |
 | test/unit/validation.interfaces.test.ts | 16 | 0 | 0 |
-| test/unit/validation.rules.test.ts | 106 | 0 | 0 |
+| test/unit/validation.rules.test.ts | 110 | 0 | 0 |
 | test/unit/validation.variability.test.ts | 16 | 0 | 0 |
