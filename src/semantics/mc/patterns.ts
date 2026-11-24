@@ -85,6 +85,7 @@ import {
   UNKNOWN_ATOM_CODE,
   atomHolds,
   formulaHolds,
+  formulaReadsStore,
   expressionRefusal,
   readAtom,
   type Atom,
@@ -3015,7 +3016,7 @@ function modalityOf(
   const atom = property.atoms.p;
   if (atom === undefined) return withheld(NOT_DECIDED.store, null);
   if (atom.kind === 'trigger' || atom.kind === 'fires') return withheld(NOT_DECIDED.step, null);
-  if (atom.kind === 'expression') return withheld(NOT_DECIDED.store, null);
+  if (atom.kind === 'expression' || (atom.kind === 'formula' && formulaReadsStore(atom.formula!))) return withheld(NOT_DECIDED.store, null);
   // Rows 5, 6, 7 — the three relation clauses of the gate, in the gate's own
   // order (`environment` first: a named trigger is something the author can
   // act on, and the dwell sentence would send them to the wrong carrier) —
@@ -3041,7 +3042,7 @@ function modalityOf(
   const target = atom.elementId!;
   const holdsAt = (i: number): boolean =>
     atom.kind === 'formula'
-      ? formulaHolds(atom.formula!, walk.configStates[i])
+      ? formulaHolds(atom.formula!, walk.configStates[i]) === true
       : atom.kind === 'state'
         ? walk.configStates[i].includes(target)
         : leafHolds(walk, i, target);
@@ -3315,8 +3316,9 @@ function recoveryRow(
   // (2) The atom-kind gate, which is part of the arm. Only `state` and `node`
   // are observed AT a configuration; the other three would leave the target
   // set empty and land on the refutation row below.
-  if (atom.kind === 'trigger' || atom.kind === 'fires' || atom.kind === 'expression') {
-    const reason = atom.kind === 'expression' ? STORE_ATOM_REASON : STEP_ATOM_REASON;
+  const readsStore = atom.kind === 'expression' || (atom.kind === 'formula' && formulaReadsStore(atom.formula!));
+  if (atom.kind === 'trigger' || atom.kind === 'fires' || readsStore) {
+    const reason = readsStore ? STORE_ATOM_REASON : STEP_ATOM_REASON;
     return refused(
       MALFORMED_PROPERTY_CODE,
       `inconclusive: \`${atom.text}\` was not read by \`recovery\` — ${reason}`,
@@ -3332,7 +3334,7 @@ function recoveryRow(
   const targets: number[] = [];
   for (let i = 0; i < walk.configs; i++) {
     // prettier-ignore
-    const holds = atom.kind === 'formula' ? formulaHolds(atom.formula!, walk.configStates[i]) : atom.kind === 'state' ? walk.configStates[i].includes(id) : leafHolds(walk, i, id);
+    const holds = atom.kind === 'formula' ? formulaHolds(atom.formula!, walk.configStates[i]) === true : atom.kind === 'state' ? walk.configStates[i].includes(id) : leafHolds(walk, i, id);
     if (holds) targets.push(i);
   }
   const withheld = {

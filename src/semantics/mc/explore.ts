@@ -3179,7 +3179,23 @@ export interface EventCompleteness {
   readonly statesSkipped: number;
   /** The states (a state counts under its own and its enclosing states' transitions) with at least one ignored event. */
   readonly states: readonly { readonly state: StateRef; readonly ignored: readonly string[] }[];
+  /**
+   * The same reading over the configurations of a PARALLEL machine, one row per distinct set of region leaves the walk
+   * reached: an event is unhandled there when no active state of any region, nor a state enclosing one, accepts it.
+   * `null` where no reached configuration had several regions active.
+   */
+  readonly parallel: {
+    /** Distinct region-leaf configurations read (capped at {@link MAX_PARALLEL_EVENT_CONFIGS}). */
+    readonly configsRead: number;
+    /** More distinct configurations were reached than were read. */
+    readonly truncated: boolean;
+    /** The configurations (their region leaves) at which at least one alphabet event is unhandled. */
+    readonly configs: readonly { readonly leaves: readonly StateRef[]; readonly ignored: readonly string[] }[];
+  } | null;
 }
+
+/** How many distinct region-leaf configurations the parallel event reading visits before it stops. */
+const MAX_PARALLEL_EVENT_CONFIGS = 200;
 
 /**
  * Per reachable state, the alphabet events no transition from it or from an enclosing state accepts. A guard does not
@@ -3226,8 +3242,28 @@ function eventCompletenessOf(
     const ignored = alphabet.filter((e) => !handled.has(e));
     if (ignored.length > 0) out.push({ state: stateRef(model, st.id), ignored });
   }
-  if (read === 0) return null;
-  return { alphabet, statesRead: read, statesSkipped: skipped, states: out };
+  // Parallel machines: per distinct set of region leaves, the events no active state (of any region) accepts.
+  const seen = new Set<string>();
+  const parRows: { leaves: StateRef[]; ignored: string[] }[] = [];
+  let truncated = false;
+  for (let i = 0; i < walk.configs; i++) {
+    const leaves = walk.configRegionLeaves[i];
+    if (leaves === undefined || leaves.length < 2) continue;
+    const key = [...leaves].sort().join('|');
+    if (seen.has(key)) continue;
+    if (seen.size >= MAX_PARALLEL_EVENT_CONFIGS) {
+      truncated = true;
+      break;
+    }
+    seen.add(key);
+    const handled = new Set<string>();
+    for (const a of walk.configStates[i]) for (const e of accepted.get(a) ?? []) handled.add(e);
+    const ignored = alphabet.filter((e) => !handled.has(e));
+    if (ignored.length > 0) parRows.push({ leaves: leaves.map((l) => stateRef(model, l)), ignored });
+  }
+  const parallel = seen.size === 0 ? null : { configsRead: seen.size, truncated, configs: parRows };
+  if (read === 0 && parallel === null) return null;
+  return { alphabet, statesRead: read, statesSkipped: skipped, states: out, parallel };
 }
 
 /** One machine's answer. */

@@ -61,29 +61,61 @@ export const MALFORMED_PROPERTY_CODE = 'verification/malformed-property';
 export type AtomKind = 'state' | 'trigger' | 'fires' | 'node' | 'expression' | 'formula';
 
 /**
- * A Boolean combination of state-occupancy atoms: `state A and state B`, `state A or state B`, `not state A`.
+ * A Boolean combination of leaves read in ONE configuration: `state A and n > 3`, `state A or state B`, `not state A`.
  *
- * Over the ACTIVE STATES of one configuration, the same set a plain `state X` reads (`activeStatesOf`), so on a
- * parallel machine `state a2 and state b2` asks whether two regions are in those states in ONE configuration.
- * Leaves are `state` atoms only: a leaf that is a trigger, a transition or a store expression is a different kind of
- * observation (a step, a value) and is refused rather than mixed in.
+ * A `state` leaf reads the ACTIVE STATES of the configuration, the same set a plain `state X` reads (`activeStatesOf`),
+ * so on a parallel machine `state a2 and state b2` asks whether two regions are in those states in ONE configuration.
+ * An `expr` leaf is an expression over the machine's attributes, evaluated against the same configuration's store as a
+ * plain expression atom is. A leaf that is a trigger, a transition or a node is a different kind of observation (a
+ * step, not a configuration predicate) and is refused rather than mixed in.
+ *
+ * Three-valued: an `expr` leaf the evaluator cannot decide is `undefined`, and so is every formula it touches — never
+ * `false` (a `false` would let `absence of (state A and n > 3)` pass on a configuration nobody evaluated).
  */
 export type StateFormula =
   | { readonly op: 'state'; readonly id: ElementId }
+  | { readonly op: 'expr'; readonly text: string }
   | { readonly op: 'not'; readonly a: StateFormula }
   | { readonly op: 'and' | 'or'; readonly a: StateFormula; readonly b: StateFormula };
 
-/** Does the formula hold where exactly these states are active? */
-export function formulaHolds(f: StateFormula, active: readonly ElementId[]): boolean {
+/** Does the formula read the store (has an expression leaf)? Then a state-set-only walk cannot decide it. */
+export function formulaReadsStore(f: StateFormula): boolean {
+  switch (f.op) {
+    case 'state':
+      return false;
+    case 'expr':
+      return true;
+    case 'not':
+      return formulaReadsStore(f.a);
+    default:
+      return formulaReadsStore(f.a) || formulaReadsStore(f.b);
+  }
+}
+
+/**
+ * Does the formula hold where exactly these states are active? `evalLeaf` decides an expression leaf (absent: such a
+ * leaf is undecided). `undefined` = not decidable here; it propagates through every connective.
+ */
+export function formulaHolds(
+  f: StateFormula,
+  active: readonly ElementId[],
+  evalLeaf?: (text: string) => boolean | undefined,
+): boolean | undefined {
   switch (f.op) {
     case 'state':
       return active.includes(f.id);
-    case 'not':
-      return !formulaHolds(f.a, active);
-    case 'and':
-      return formulaHolds(f.a, active) && formulaHolds(f.b, active);
-    case 'or':
-      return formulaHolds(f.a, active) || formulaHolds(f.b, active);
+    case 'expr':
+      return evalLeaf === undefined ? undefined : evalLeaf(f.text);
+    case 'not': {
+      const a = formulaHolds(f.a, active, evalLeaf);
+      return a === undefined ? undefined : !a;
+    }
+    default: {
+      const a = formulaHolds(f.a, active, evalLeaf);
+      const b = formulaHolds(f.b, active, evalLeaf);
+      if (a === undefined || b === undefined) return undefined;
+      return f.op === 'and' ? a && b : a || b;
+    }
   }
 }
 
@@ -314,16 +346,40 @@ function formulaTokens(text: string): string[] | null {
 
 type FormulaTree =
   | { readonly op: 'name'; readonly name: string }
+  | { readonly op: 'expr'; readonly text: string }
+  | { readonly op: 'step'; readonly text: string }
   | { readonly op: 'not'; readonly a: FormulaTree }
   | { readonly op: 'and' | 'or'; readonly a: FormulaTree; readonly b: FormulaTree };
 
 /**
- * Parse `state X`, `not F`, `F and F`, `F or F`, `( F )`; `not` binds tighter than `and`, `and` tighter than `or`.
+ * Parse `state X`, an expression leaf, `not F`, `F and F`, `F or F`, `( F )`; `not` binds tighter than `and`, `and`
+ * tighter than `or`. An expression leaf runs to the next `and`/`or` outside its own parentheses (so an expression
+ * written with `and` is split into leaves, which reads the same). A `(` opens a group only when what follows the
+ * closing `)` is a connective, a `)` or the end; otherwise it begins an expression leaf, as `(n + 1) > 2` does.
  * Returns null where the text is not that grammar, so the caller falls back to the reading it had before.
  */
-function parseFormula(tokens: readonly string[]): { tree: FormulaTree; connectives: number } | null {
+function parseFormula(tokens: readonly string[]): { tree: FormulaTree; connectives: number; states: number } | null {
   let i = 0;
   let connectives = 0;
+  let states = 0;
+  const KW = new Set(['trigger', 'fires', 'node']);
+  const leaf = (): FormulaTree | null => {
+    const start = i;
+    let depth = 0;
+    while (i < tokens.length) {
+      const t = tokens[i];
+      if (t === '(') depth++;
+      else if (t === ')') {
+        if (depth === 0) break;
+        depth--;
+      } else if (depth === 0 && (t === 'and' || t === 'or')) break;
+      i++;
+    }
+    if (depth !== 0 || i === start) return null;
+    const words = tokens.slice(start, i);
+    const text = words.join(' ');
+    return KW.has(words[0]) && words.length > 1 ? { op: 'step', text } : { op: 'expr', text };
+  };
   const atom = (): FormulaTree | null => {
     const t = tokens[i];
     if (t === undefined) return null;
@@ -334,20 +390,37 @@ function parseFormula(tokens: readonly string[]): { tree: FormulaTree; connectiv
       return a === null ? null : { op: 'not', a };
     }
     if (t === '(') {
+      const save = i;
+      const saveC = connectives;
+      const saveS = states;
       i++;
       const e = or();
-      if (e === null || tokens[i] !== ')') return null;
-      i++;
-      connectives++;
-      return e;
+      if (e !== null && tokens[i] === ')') {
+        const next = tokens[i + 1];
+        if (next === undefined || next === 'and' || next === 'or' || next === ')') {
+          i++;
+          connectives++;
+          return e;
+        }
+      }
+      i = save;
+      connectives = saveC;
+      states = saveS;
+      return leaf();
     }
     if (t === 'state') {
       const n = tokens[i + 1];
       if (n === undefined || n === '(' || n === ')') return null;
-      i += 2;
-      return { op: 'name', name: n };
+      // `state X` is a leaf only when nothing but a connective follows; `state s == 1` stays an expression leaf.
+      const after = tokens[i + 2];
+      if (after === undefined || after === 'and' || after === 'or' || after === ')') {
+        i += 2;
+        states++;
+        return { op: 'name', name: n };
+      }
+      return null;
     }
-    return null;
+    return leaf();
   };
   const and = (): FormulaTree | null => {
     let a = atom();
@@ -372,32 +445,56 @@ function parseFormula(tokens: readonly string[]): { tree: FormulaTree; connectiv
     return a;
   };
   const tree = or();
-  return tree === null || i !== tokens.length ? null : { tree, connectives };
+  return tree === null || i !== tokens.length ? null : { tree, connectives, states };
 }
 
 /**
- * `state A and state B`, `state A or state B`, `not state A`, resolved against the machine. A leaf that names no state,
- * or several, refuses the WHOLE property (`resolveNamed`): an unresolved leaf is never read as false.
+ * `state A and state B`, `state A and n > 3`, `not state A`, resolved against the machine. A `state` leaf that names no
+ * state, or several, refuses the WHOLE property (`resolveNamed`): an unresolved leaf is never read as false. So does a
+ * trigger / transition / node leaf (a step, not a configuration predicate) and an expression leaf that does not parse.
+ * A text with no `state` leaf is not read here: it is a plain expression, read as before.
  */
 function readFormula(model: Model, machineId: ElementId, text: string): AtomResult | null {
   const tokens = formulaTokens(text);
   if (tokens === null) return null;
   const parsed = parseFormula(tokens);
-  if (parsed === null || parsed.connectives === 0) return null;
+  if (parsed === null || parsed.connectives === 0 || parsed.states === 0) return null;
   const pool = statesOf(model, machineId);
   let refusal: AtomRefusal | null = null;
+  const refuse = (r: AtomRefusal): null => {
+    refusal ??= r;
+    return null;
+  };
   const build = (t: FormulaTree): StateFormula | null => {
     if (t.op === 'not') {
       const a = build(t.a);
       return a === null ? null : { op: 'not', a };
     }
+    if (t.op === 'step') {
+      return refuse({
+        code: UNKNOWN_ATOM_CODE,
+        detail:
+          `\`${t.text}\` is a step (a trigger, a transition or a node), not a predicate of one configuration, so it ` +
+          'cannot be combined with a `state` or an expression in one formula; state it as its own property.',
+        candidates: [],
+      });
+    }
+    if (t.op === 'expr') {
+      try {
+        parseExpr(t.text);
+      } catch (err) {
+        return refuse({
+          code: MALFORMED_PROPERTY_CODE,
+          detail: `\`${t.text}\` is not an expression this tool can read: ${err instanceof Error ? err.message : String(err)}.`,
+          candidates: [],
+        });
+      }
+      return { op: 'expr', text: t.text };
+    }
     if (t.op === 'name') {
       const name = t.name.includes("'") ? refSegments(t.name).join('::') : t.name;
       const r = resolveNamed(model, pool, name, 'state', `state ${t.name}`);
-      if (!r.ok) {
-        refusal ??= r.refusal;
-        return null;
-      }
+      if (!r.ok) return refuse(r.refusal);
       return { op: 'state', id: r.atom.elementId! };
     }
     const a = build(t.a);
@@ -433,7 +530,7 @@ export function readAtom(model: Model, machineId: ElementId, raw: string): AtomR
     };
   }
   // A Boolean combination of `state` atoms; any other text that is not one reads as it did before.
-  if (text.startsWith('state ') || text.startsWith('not ') || text.startsWith('(')) {
+  {
     const combined = readFormula(model, machineId, text);
     if (combined !== null) return combined;
   }
@@ -527,8 +624,13 @@ export function atomHolds(model: Model, atom: Atom, obs: Observation): boolean |
       return obs.input?.kind === 'trigger' && obs.input.trigger === atom.argument;
     case 'fires':
       return obs.fired !== undefined ? obs.fired.includes(atom.elementId!) : obs.transition?.id === atom.elementId;
-    case 'formula':
-      return formulaHolds(atom.formula!, activeStatesOf(obs.config));
+    case 'formula': {
+      const scope = regionScope(model, obs.config.regionId);
+      return formulaHolds(atom.formula!, activeStatesOf(obs.config), (t) => {
+        const v = evalStr(t, obs.config.store, scope);
+        return typeof v === 'boolean' ? v : undefined;
+      });
+    }
     case 'expression': {
       const scope = regionScope(model, obs.config.regionId);
       const value = evalStr(atom.argument, obs.config.store, scope);
@@ -552,6 +654,22 @@ export function expressionRefusal(
   atom: Atom,
   obs: Observation,
 ): AtomRefusal {
+  if (atom.kind === 'formula') {
+    // The first expression leaf the configuration could not decide names the refusal.
+    const scope0 = regionScope(model, obs.config.regionId);
+    const leaves: string[] = [];
+    const collect = (f: StateFormula): void => {
+      if (f.op === 'expr') leaves.push(f.text);
+      else if (f.op === 'not') collect(f.a);
+      else if (f.op !== 'state') {
+        collect(f.a);
+        collect(f.b);
+      }
+    };
+    collect(atom.formula!);
+    const bad = leaves.find((t) => typeof evalStr(t, obs.config.store, scope0) !== 'boolean') ?? leaves[0];
+    return expressionRefusal(model, { kind: 'expression', text: bad, argument: bad }, obs);
+  }
   const scope = storeScope(obs.config.store, regionScope(model, obs.config.regionId));
   const identifiers = writtenChains(atom.argument)
     .map((c) => (c.includes("'") ? refSegments(c).join('.') : c))

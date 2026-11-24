@@ -155,9 +155,13 @@ describe('Boolean atoms over state occupancy', () => {
       const v = checkProperty(m, id, prop({ pattern: 'absence', p: bad }));
       expect(v.claim, bad).toBe('inconclusive');
     }
-    // a leaf of another kind is not mixed in
-    const mixed = checkProperty(m, id, prop({ pattern: 'absence', p: 'state a2 and n == 1' }));
-    expect(mixed.claim).toBe('inconclusive');
+    // a step leaf is not mixed in (an expression leaf is: see the mixed-formula block)
+    for (const step of ['state a2 and trigger e1', 'state a2 or fires x', 'not state a2 and node a1']) {
+      const r: any = readAtom(m, id, step);
+      expect(r.ok, step).toBe(false);
+      expect(r.refusal.code, step).toBe(UNKNOWN_ATOM_CODE);
+      expect(checkProperty(m, id, prop({ pattern: 'absence', p: step })).claim, step).toBe('inconclusive');
+    }
   });
 
   it('works under a scope and in a plain (non-parallel) machine, and a feature called `not` still reads as an expression', async () => {
@@ -180,5 +184,53 @@ describe('Boolean atoms over state occupancy', () => {
       expect(b.claim, formula).toBe(a.claim);
       expect(b.recovery?.targetConfigs, formula).toBe(a.recovery?.targetConfigs);
     }
+  });
+});
+
+describe('mixed formulas: state leaves with expression leaves, in one configuration', () => {
+  // a1 -> a2 on e1 sets n := n + 2 on entry; r2 independent. n reaches 2 exactly when a2 is active.
+  const src = `package P { item def e1; item def e2; state def M { attribute n : Integer = 0; entry; then run;
+    state run parallel {
+      state r1 { entry; then a1; state a1; state a2 { entry assign n := 2; } transition x first a1 accept e1 then a2; }
+      state r2 { entry; then b1; state b1; state b2; transition y first b1 accept e2 then b2; }
+    } } }`;
+  const chk = async (p: string, pattern = 'absence', text = src): Promise<string> => {
+    const [m, id] = await rootId(text);
+    return checkProperty(m, id, prop({ pattern, p })).claim;
+  };
+
+  it('and / or / not over a state leaf and an expression leaf', async () => {
+    expect(await chk('state a2 and n == 2')).toBe('fail');
+    expect(await chk('state a2 and n == 0')).toBe('pass'); // n is 2 wherever a2 is active
+    expect(await chk('state a1 and n == 2')).toBe('pass');
+    expect(await chk('state a1 or n == 2', 'universality')).toBe('pass'); // a1 or (a2 with n == 2)
+    expect(await chk('state a1 or n == 3', 'universality')).toBe('fail');
+    expect(await chk('not (state a2 and n == 2)', 'universality')).toBe('fail');
+    expect(await chk('state b2 and n == 2', 'cover')).toBe('covered'); // independent regions: both advance
+    expect(await chk('state a1 and n == 2', 'cover')).not.toBe('covered');
+    expect(await chk('(state a2) and (n + 0) == 2')).toBe('fail'); // a group, then an expression starting with (
+    expect(await chk('n > 1 and state b2')).toBe('fail');
+  });
+
+  it('a one-leaf formula agrees with the plain atom', async () => {
+    for (const [plain, wrapped] of [['state a2', 'state a2 and true'], ['n == 2', 'state a1 or n == 2 or not state a1']] as const) {
+      expect(await chk(wrapped), wrapped).toBe(await chk(plain));
+    }
+  });
+
+  it('an expression leaf the evaluator cannot decide is inconclusive, never false or a pass', async () => {
+    for (const bad of ['state a2 and zz == 1', 'state a1 or zz == 1', 'not (state a2 and zz == 1)', 'state a2 and n']) {
+      for (const pattern of ['absence', 'universality']) {
+        const c = await chk(bad, pattern);
+        expect(c, `${pattern} ${bad}`).toBe('inconclusive');
+      }
+    }
+    // an expression that does not parse is a malformed property, not a false leaf
+    expect(await chk('state a2 and n == ')).toBe('inconclusive');
+  });
+
+  it('`recovery` withholds a formula that reads the store, as it does a plain expression', async () => {
+    const [m, id] = await rootId(src);
+    expect(checkProperty(m, id, prop({ pattern: 'recovery', p: 'state a2 and n == 2' })).claim).toBe('inconclusive');
   });
 });
