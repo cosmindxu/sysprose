@@ -6,7 +6,7 @@ import { loadStandardLibrary } from '../../src/library/index';
 import { modelVersionOf, obligationDigest, proofScopeOf } from '@api/index';
 import { obligationsOf } from '@semantics/obligations';
 import { loadModelText } from '@text/load';
-import { parseModel, serializeElement } from '@text/index';
+import { parseModel, serializeElement, serializeModel } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
   effectiveFeatures,
@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 51 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(51);
+  it('exposes all 52 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(52);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -1692,5 +1692,40 @@ describe('validation — transition-in-parallel-state (the 29th rule)', () => {
     const finding = loaded.report.diagnostics.find((d) => d.code === 'validation/transition-in-parallel-state')!;
     expect(finding.severity).toBe('error');
     expect(finding.range).toBeDefined();
+  });
+});
+
+describe('BD5 connector-end-multiplicity', () => {
+  const run = async (body: string) => {
+    const r = await loadModelText(`package P { ${body} }`);
+    return runRule(r.model!, 'connector-end-multiplicity').map((d) => d.message);
+  };
+  it('flags an end multiplicity above the connected part', async () => {
+    const w = await run('part def W; part def H; part def S { part wheels : W [4]; part hub : H; connection c connect [5] wheels to [1] hub; }');
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain('wheels');
+    expect(await run('part def W; part def H; part def S { part a : W [2]; part b : H [3]; connection c connect a to [4] b; }')).toHaveLength(1);
+  });
+  it('flags a usage end above the definition end, and many parts on a one-instance end', async () => {
+    const d = 'part def W; part def H; connection def DC { end part device [0..2] : W; end part hub [1] : H; }';
+    expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC connect [3] device ::> ds to hub; }`)).toHaveLength(1);
+    expect(await run(`${d} part def S { part ds : W [3]; part hub : H; connection c : DC connect ds to hub; }`)).toHaveLength(1);
+  });
+  it('is silent on legal look-alikes', async () => {
+    const d = 'part def W; part def H; connection def DC { end part device [0..4] : W; end part hub [1] : H; }';
+    expect(await run('part def W; part def H; part def S { part wheels : W [4]; part hub : H; connection c connect [4] wheels to [1] hub; connection e connect [1..4] wheels to hub; }')).toEqual([]);
+    expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC connect [2] device ::> ds to hub; }`)).toEqual([]);
+    expect(await run(`${d} part def S { part ds : W [3]; part hub : H [2]; connection c : DC connect ds to hub; }`)).toEqual([]);
+    expect(await run('part def W; part def S { part a : W [2]; part b : W [3]; connection c connect a to b; }')).toEqual([]);
+  });
+  it('maps and round-trips the end multiplicity', async () => {
+    const src = 'package P { part def W; part def S { part a : W [4]; part b : W; connection c connect [2] a to [1] b; connection d connect [3] x ::> a to b; } }';
+    const r = await loadModelText(src);
+    const c = r.model!.all().find((e) => e.declaredName === 'c')!;
+    expect(c.attrs.sourceCrossMult).toBe('2');
+    expect(c.attrs.targetCrossMult).toBe('1');
+    const text = serializeModel(r.model!);
+    expect(text).toContain('connect [2] a to [1] b');
+    expect(text).toMatch(/connect \[3\] x ::> a to b/);
   });
 });

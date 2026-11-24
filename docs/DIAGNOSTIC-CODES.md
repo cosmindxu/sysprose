@@ -575,6 +575,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** The two ends of a `bind a = b` are typed by types that neither specialises the other (`x : Real` bound to `y : String`), or declare multiplicities with no cardinality in common (`[1]` against `[2..3]`).
 - **Hint given:** Bind features of compatible types (the same type or one specialising the other), or fix the type or multiplicity of one end.
 
+### `validation/connector-end-multiplicity`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A connection end written with a cross multiplicity above the part it connects (`connect [5] wheels to hub` over `wheels : Wheel [4]`) or above the definition end it redefines, or a definition end allowing at most n against a part with more than n instances connected to one instance. Only `connect [m] a to [n] b` with number-literal bounds is read.
+- **Hint given:** Write an end multiplicity within the connected part’s and the definition end’s, or widen the part or the definition end.
+
 ### `validation/subset-type-conformance`
 
 - **Severity:** warning

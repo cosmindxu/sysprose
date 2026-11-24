@@ -67,6 +67,8 @@ const KEY_ATTRS = [
   'about',
   'ofPayload',
   'sendTarget',
+  'sourceCrossMult',
+  'targetCrossMult',
   'payload',
   'clients',
   'suppliers',

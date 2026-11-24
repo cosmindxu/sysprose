@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (51 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (52 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -5045,6 +5045,10 @@ any of these at the language level:
   other is reported (§7.13.3, §8.2.3.13). Ends whose declared multiplicities have
   no cardinality in common (`[1]` bound to `[2..3]`) are reported too; ranges that
   merely differ are not. A warning.
+- **`connector-end-multiplicity`.** `connect [5] wheels to hub` over `wheels : Wheel [4]`
+  asks an end for more instances than the part has; a usage's cross multiplicity may also
+  only narrow the one on the connection definition's end it redefines (§7.13.2). Only the
+  binary `connect [m] a to [n] b` form with number-literal bounds is read; a warning.
 - **`subset-type-conformance`.** `part b : B subsets a` over `part a : A`, where
   neither of A and B specialises the other, holds values that are not values of
   `a` (§7.6.1). A subsetter that declares no type is not judged. A warning.
@@ -5482,7 +5486,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:584-601`, `1148-1178` (the two rules that ask),
+`src/validation/rules.ts:585-602`, `1149-1179` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

@@ -1253,7 +1253,9 @@ function hasEndpoints(el: ElementRecord): boolean {
 function connectionLine(model: Model, el: ElementRecord, indent: number): string {
   const named = (which: 'source' | 'target'): string => {
     const end = which === 'source' ? el.attrs.sourceEndName : el.attrs.targetEndName;
-    return `${typeof end === 'string' && end !== '' ? `${quoteName(end)} ::> ` : ''}${endpoint(model, el, which)}`;
+    const cross = which === 'source' ? el.attrs.sourceCrossMult : el.attrs.targetCrossMult;
+    const mult = typeof cross === 'string' && cross !== '' ? `[${cross}] ` : '';
+    return `${mult}${typeof end === 'string' && end !== '' ? `${quoteName(end)} ::> ` : ''}${endpoint(model, el, which)}`;
   };
   const connect = `connect ${named('source')} to ${named('target')}`;
   const bare =

@@ -1864,10 +1864,11 @@ and §21.4–21.11.
       table (one row per exchange: functional, logical, physical), the Interconnection overlay, and
       a function parameter with no port realisation at all (not judged: opt-in only where written).
       [xalloc]
-- [ ] **Read the cross multiplicity on a connector end.** `connect [2] a.p to [1] b.q` parses
-      (`connSrcMult`/`connTgtMult`) and the multiplicity is dropped without a note (SysML v2
-      §8.2.2.13 `OwnedCrossMultiplicityMember`). Store it, write it back on Save, and read it where
-      a connection's end multiplicity matters. [if-compat]
+- [ ] **Cross multiplicity on the other connector forms.** `connect [m] a to [n] b` is stored
+      (`sourceCrossMult`/`targetCrossMult`), written back and checked (`connector-end-multiplicity`,
+      §7.13.2). Still unread: the list form `connect ([1] hub ::> x, …)` and `end [m] part x references y`
+      bodies (the grammar has no cross multiplicity there), and the spec's `end [0..2] part device` form (multiplicity before the keyword; it does not parse today, only `end part device [0..2]` does), and a definition end's cross multiplicity
+      against a usage written without one when the other end has more than one instance. [if-compat]
 - [ ] **Compare the undirected features and the nested ports of two connected ports.** §7.12.1's
       conformance is over every feature; `connection-compatibility` compares the directed ones and
       does not descend into nested ports (sound: it only reports fewer mismatches). [if-compat]
