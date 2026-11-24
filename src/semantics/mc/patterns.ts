@@ -105,6 +105,7 @@ import {
   type MachineConfig,
   type StepInput,
 } from './config';
+import { checkConformance } from './conformance';
 // `boundsSentence` is IMPORTED and no longer copied. This file carried a
 // byte-identical second definition of it, and the sentence it composes is the
 // one every absence row in every lane is qualified by — so the two copies had to
@@ -637,6 +638,11 @@ export interface BehaviourOptions extends ExploreOptions {
    * reproduced by the fix (§2.2).
    */
   coverRequired?: boolean;
+  /**
+   * Also check that the machine, where it specialises another (`state def X :> Y`), preserves the traces of its
+   * general ({@link conformanceVerdict}). Off by default: it adds a row to every specialising machine's report.
+   */
+  conformance?: boolean;
 }
 
 /* ──────────────────────────── reading a property ────────────────────────── */
@@ -2627,6 +2633,9 @@ function livenessRow(
   const refuse = (why: string): PropertyVerdict =>
     livenessRefusal(row, name, why, walk.boundHit, walk.unsupported);
   if (!gate.decreasingOk) return refuse(`${gate.sentence[0].toUpperCase()}${gate.sentence.slice(1)}.`);
+  // A dwell the walk offers as an event at any time (a clock-free over-approximation): "eventually" over it is a
+  // claim about when time passes, which nothing here models, so no liveness verdict is made in either direction.
+  if (walk.timedTransitions.size > 0) return refuse(`Timing is over-approximated here: ${DWELL_SENTENCE}`);
   const budgetEndsRun = bounds.alphabet.length === 0 && walk.timedTransitions.size === 0;
   const graph: LiveGraph = { nodes: new Map(), order: [], edges: [], budgetCut: false };
   const found = search(model, machineId, property, bounds, walk.chaseKeyed, budgetEndsRun, graph);
@@ -3617,6 +3626,8 @@ const STRICT_VACUITY_CODE = 'verification/vacuous-property';
 export const NOT_COVERED_CODE = 'verification/not-covered';
 /** The error `--cover-required` ADDS beside {@link NOT_COVERED_CODE} — never in place of it. */
 export const COVER_REQUIRED_CODE = 'verification/cover-required';
+/** A specialising machine that does not preserve the traces of its general (`./conformance`). */
+export const SPECIALISATION_CODE = 'verification/specialisation-not-preserved';
 
 /**
  * A search that found nothing over a walk no bound stopped, in which a trigger
@@ -3708,7 +3719,7 @@ export function exitCodeOf(
  * touching the word.
  */
 export function behaviourReport(model: Model, opts: BehaviourOptions): BehaviourReport {
-  const { machineId, pattern, strictVacuity = false, coverRequired = false, ...explore } = opts;
+  const { machineId, pattern, strictVacuity = false, coverRequired = false, conformance = false, ...explore } = opts;
   const machineEl = model.get(machineId);
   const machine: (StateRef & { eClass: string }) | null = machineEl
     ? { ...stateRef(model, machineId), eClass: machineEl.eClass }
@@ -3752,6 +3763,10 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
     }
   }
   for (const text of texts) rows.push(checkProperty(model, machineId, text, explore));
+  if (conformance && machine !== null) {
+    const verdict = conformanceVerdict(model, machineId, machine, bounds, explore);
+    if (verdict !== null) rows.push(verdict);
+  }
 
   const counts = {
     passed: rows.filter((r) => r.claim === 'pass').length,
@@ -3884,6 +3899,90 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
       source: 'verification',
       ...d,
     })),
+  };
+}
+
+/**
+ * The conformance row of a specialising machine (`./conformance`), or `null` where it specialises nothing. A row of
+ * the same shape as a property's, so it prints, counts and exits like one: `pass` and `inconclusive` as they are,
+ * `fail` under {@link SPECIALISATION_CODE} with the trace of the general machine the specialising one cannot follow.
+ */
+export function conformanceVerdict(
+  model: Model,
+  machineId: ElementId,
+  machine: StateRef & { eClass: string },
+  bounds: ExploreBounds,
+  opts: ExploreOptions = {},
+): PropertyVerdict | null {
+  const out = checkConformance(model, machineId, opts);
+  if (out.kind === 'none') return null;
+  const g = stateRef(model, out.general);
+  const alpha = `{${out.alphabet.join(', ') || 'no event'}}`;
+  const sentence = `\`${machine.qualifiedName}\` preserves the \`${g.qualifiedName}\` traces over alphabet ${alpha}`;
+  const read =
+    'Compared: the active states and the event labels of every run of the general machine against the walk of the specialising one, ' +
+    'restricted to the general machine\u2019s events; stores and actions are not compared, and nothing here claims the specialising machine refines the general or says anything about what it adds.';
+  const base = {
+    machine,
+    property: { pattern: 'conformance', scope: '', source: 'flag', carrier: null } as PropertyText,
+    pattern: null,
+    patternClass: null,
+    scope: null,
+    sentence,
+    activated: true,
+    bounds,
+    boundHit: 'none' as BoundHit,
+    unsupported: [] as readonly UnsupportedConstruct[],
+    modality: null,
+  };
+  if (out.kind === 'inconclusive') {
+    return {
+      ...base,
+      claim: 'inconclusive',
+      code: out.bound ? BOUND_EXHAUSTED_CODE : BEHAVIOUR_UNSUPPORTED_CODE,
+      detail: `inconclusive: ${out.reason}. Nothing is claimed about whether \`${machine.qualifiedName}\` preserves the traces of \`${g.qualifiedName}\`.`,
+      configs: 0,
+      machineConfigs: 0,
+      exhaustive: false,
+      qualification: 'nothing was decided: no conformance is claimed',
+      witness: [],
+    };
+  }
+  if (out.kind === 'pass') {
+    return {
+      ...base,
+      claim: 'pass',
+      code: null,
+      detail: `pass \u2014 every run of \`${g.qualifiedName}\` (${out.yConfigs} configuration(s)) over ${alpha} is a run \`${machine.qualifiedName}\` (${out.xConfigs} configuration(s)) can follow, over both walks seen whole. ${read}`,
+      configs: out.pairs,
+      machineConfigs: out.xConfigs,
+      exhaustive: true,
+      qualification: `exhaustive under ${boundsSentence(bounds)}`,
+      witness: [],
+    };
+  }
+  const witness: TraceStep[] = out.witness.map((s, index) => ({
+    index,
+    event: s.event,
+    transition: null,
+    leaf: s.leaf === null ? null : stateRef(model, s.leaf),
+    stack: s.stack.map((id) => stateRef(model, id)),
+    holds: [],
+  }));
+  const events = out.witness.filter((s) => s.event !== '-' && s.event !== '').map((s) => `\`${s.event}\``);
+  return {
+    ...base,
+    claim: 'fail',
+    code: SPECIALISATION_CODE,
+    detail:
+      `fail \u2014 witness trace of ${witness.length - 1} step(s) of \`${g.qualifiedName}\` that \`${machine.qualifiedName}\` cannot follow` +
+      (events.length > 0 ? ` (events ${events.join(', ')})` : '') +
+      `: the last step goes to \`${witness[witness.length - 1].leaf?.qualifiedName ?? 'no active state'}\` in the general machine and no step of the specialising one under the same label stands in the same states. ${read}`,
+    configs: out.witness.length,
+    machineConfigs: out.xWalk.configs,
+    exhaustive: true,
+    qualification: `exhaustive under ${boundsSentence(bounds)}`,
+    witness,
   };
 }
 

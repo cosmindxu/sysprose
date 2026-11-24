@@ -67,10 +67,10 @@ describe('accept after <delay> (SysML v2 §7.18.3)', () => {
     expect(res.unopened).toContain('time trigger');
   });
 
-  it('does not walk the time-triggered edge: it is unaccounted, never a guessed reading', async () => {
+  it('walks the time-triggered edge as a named event, never a guessed clock (S6: the profile text and the walk now agree)', async () => {
     const { model } = await load(machine('accept after 5[min]'));
     const row = edgeCensus(model!, find(model, 'P::M').id).rows.find((r) => r.qualifiedName === 'P::M::on_off');
-    expect(row?.account).toBe('unaccounted');
-    expect(row?.reason).toContain('time trigger');
+    // It was `unaccounted` (the whole machine refused) while the profile said an `after` trigger is offered as an event.
+    expect(row?.account).toBe('walked');
   });
 });

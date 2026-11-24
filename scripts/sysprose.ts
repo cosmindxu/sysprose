@@ -3611,6 +3611,7 @@ function reportCheckBehaviour(model: Model, name: string, args: ParsedArgs): Rep
     ...(maxConfigs !== undefined ? { maxConfigs } : {}),
     strictVacuity: flagGiven(args, 'strict-vacuity'),
     coverRequired: flagGiven(args, 'cover-required'),
+    conformance: flagGiven(args, 'conformance'),
   });
   const text = textOf(behaviourLines(r, { name, machineName: qname(model, machine.id) }));
   return { json: r, text, behaviour: r };

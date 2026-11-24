@@ -113,9 +113,13 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
     field: 'time',
     reading:
       'discrete. `after(n)` is a dwell measured against an integer clock that only an explicit ' +
-      'time step advances. The explorer advances no clock: it offers each `after(n)` label as a ' +
-      'named event, which over-approximates time — a state reachable only after a dwell is treated ' +
-      'as reachable, so the unreachable and dead lists stay lower bounds.',
+      'time step advances. The explorer advances no clock: it offers each `after(n)` label, and each ' +
+      'SysML v2 §7.18.3 time trigger (`accept after 5`, `accept after 5[min]`, offered as `after 5`, ' +
+      '`after 5[min]`), as a named event at any time, which over-approximates time — a state reachable only ' +
+      'after a dwell is treated as reachable, so the unreachable and dead lists stay lower bounds, and every ' +
+      'report of such a machine carries a `timing` line saying so. A safety pass holds under every timing; a ' +
+      'liveness verdict, a cover and a witness through a dwell are not made (the interpreter has no clock ' +
+      'for the unit either, and still refuses to run such a machine).',
     provenance: 'src/semantics/mc/config.ts — afterDuration, advanceClock',
   },
 ];

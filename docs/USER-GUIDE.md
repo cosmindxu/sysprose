@@ -3975,7 +3975,7 @@ definition or usage, an exhibit state among them, marked `parallel`, SysML v2
 §7.18.2; a parallel machine or state with more than 4 regions coupled through an
 attribute is not explored, and a witness on a parallel machine is published only if the interpreter replays it, so one that needs a non-declaration order of coupled regions is withheld), deferred
 events (none — there is no event pool), and time (discrete `after(n)`; the walk
-offers each `after(n)` label as an event rather than advancing a clock). A
+offers each `after(n)` label and each `accept after 5` time trigger as an event rather than advancing a clock). A
 verdict about a machine is a verdict under a reading of those seven, and one
 that does not say which reading is one you cannot check. `exits` is the newest:
 it was added on 2026-10-21, after the step's reading changed and moved verdicts
@@ -4360,7 +4360,7 @@ being called unreachable under a machine that does not contain it.
 The state notation of SysML v2 §7.18 is read only in part. `entry X;` and
 `do X;` without the `action` keyword are still read as declaring a new action
 named `X`, where the specification reads them as a reference to an existing
-one; and these §7.18 forms do not parse yet: `accept after 5[min]`, the
+one; and these §7.18 forms do not parse yet: the
 transition shorthand written after its source state (`state off; accept …
 then on;`), an entry action named `initial`, a guarded start from the entry
 action (`if c then off;`), `entry assign …;` and `do send … to X;`,
@@ -4894,6 +4894,30 @@ never holds is true of your machine for a reason that has nothing to do with you
 machine. It is `vacuous` ⇒ exit 2, with `--strict-vacuity` and without it; the
 flag raises the row from a line to `verification/vacuous-property`, an **error**,
 and changes nothing else — including the exit code.
+
+**A specialisation is checked against its general, on request.** `check-behaviour
+--conformance` adds one row to a machine that specialises another (`state def X
+:> Y`): `X` preserves the `Y` traces over alphabet {the events `Y` names}. The
+check reads both exhaustive walks and asks that every run of `Y` is a run `X`
+can follow: the same event labels, the same active states, and a rest of `Y` is
+a rest of `X` (a completion step `X` adds, where `Y` comes to rest, is a run of
+`Y` it cannot follow). The events `X` adds are not offered, so adding states and
+transitions conforms; re-targeting or replacing a step of `Y` fails under
+`verification/specialisation-not-preserved`, an **error** with the trace of `Y`
+`X` cannot follow (it replays on `Y`). It is never a claim that `X` refines `Y`,
+stores and actions are not compared, and a walk that was cut, held an undecided
+guard, a dwell or a parallel state, or a machine the walk refuses gives
+`inconclusive` and says why (`no conformance claimed`). Without the flag nothing
+changes.
+
+**Time.** A discrete `after(n)` label and a SysML v2 §7.18.3 time trigger
+(`accept after 5`, `accept after 5[min]`, offered as `after 5`, `after 5[min]`)
+are both offered as a named event at any time, with no clock; every report of
+such a machine carries a `timing  over-approximated: … is offered as an event at
+any time` line. A safety pass holds under every timing; `existence` and
+`response` are `inconclusive` (nothing here says when time passes), a cover or a
+witness through the dwell is withheld because the interpreter, which has no clock
+for the unit either, does not run such a machine.
 
 **Source of truth:** `src/semantics/mc/patterns.ts` (the catalogue, the monitor
 and the bad-prefix search), `src/semantics/mc/atoms.ts` (the five atom

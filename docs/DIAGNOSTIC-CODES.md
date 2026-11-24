@@ -1013,6 +1013,13 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** A `cover` property — "can this design reach the situation I name?" — found no witness over a graph the walk saw whole: no explored run enters a configuration where its `p` atom holds inside an open scope segment. It is a DECIDED absence, published under the same five conditions a `pass` is (a bound hit or an undecided guard makes the row `inconclusive` instead, and the row says the not-covered claim is not made), and it is a missing behaviour rather than a violated requirement: the run exits 2, never 1, unless `--cover-required` is given.
 - **Hint given:** Read the sentence as an answer, not a limit: the design as written admits no run into that situation within the printed bounds. If that situation is one the design must reach, add the transition or the trigger that gets there — or pass `--cover-required`, which makes the row exit 1 and adds `verification/cover-required` beside this line without changing the claim word. A witness that IS found prints as `covered` with the run step by step; the positive answer carries no code.
 
+### `verification/specialisation-not-preserved`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** `check-behaviour --conformance` found that a specialising `state def X :> Y` does not preserve a run of its general: over the events `Y` names, some run of `Y` (the witness trace) has no run of `X` that offers the same event labels and stands in the same active states, read off both exhaustive walks by the subset construction (SysML v2 Part 1 §7.6, Specialization). Stores and actions are not compared, and the row is never a claim that `X` refines `Y`; where either walk is cut, undecided, timed, parallel or refused the row is `inconclusive` instead, naming why.
+- **Hint given:** Read the witness: it is a run of the general machine, step by step, that the specialising one cannot follow. Either the specialisation redefines or shadows a step of the general (a retargeted or replaced transition, an added completion that moves the run on), or it removes what the general offers; restore the step, or accept that `X` is not usable wherever a `Y` is expected.
+
 ### `verification/cover-required`
 
 - **Severity:** error
@@ -1237,4 +1244,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*163 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*164 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

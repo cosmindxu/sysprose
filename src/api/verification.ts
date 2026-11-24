@@ -91,7 +91,7 @@ import {
   type ConsistencyResult,
 } from '../semantics/consistency';
 import { BEHAVIOUR_CODES, BEHAVIOUR_WARNING_CODES } from '../semantics/mc/explore';
-import { COVER_REQUIRED_CODE, PROPERTY_PATTERN_CODES } from '../semantics/mc/patterns';
+import { COVER_REQUIRED_CODE, SPECIALISATION_CODE, PROPERTY_PATTERN_CODES } from '../semantics/mc/patterns';
 import {
   checkRefinement,
   faultInjectionTargets,
@@ -1201,6 +1201,9 @@ export const VERIFICATION_ERROR_CODES: ReadonlySet<string> = new Set([
   // asked for a decided absence to spend the 1. It is ADDED beside
   // `verification/not-covered`, never substituted for it (§2.2).
   COVER_REQUIRED_CODE,
+  // `check-behaviour --conformance`: a specialisation that does not preserve a run of its general is decided and
+  // about the model.
+  SPECIALISATION_CODE,
   // A requirement set nothing can satisfy is the same KIND of finding as a
   // refutation: decided, about the model, and never a limit of the tool. It is
   // an error for that reason and for one more — it is the only row `consistency`
