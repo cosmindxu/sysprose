@@ -529,6 +529,10 @@ function header(model: Model, el: ElementRecord): string {
     // (would produce `ref ref x`, which reparses to the same element but ugly).
     if (k === 'isRef' && el.eClass === 'ReferenceUsage') continue;
     if (el.attrs[k] === true) parts.push(k.slice(2).toLowerCase());
+    // `end [0..2] part device`: the cross multiplicity written right after `end`.
+    if (k === 'isEnd' && el.attrs.isEnd === true && typeof el.attrs.endCrossMult === 'string' && el.attrs.endCrossMult !== '') {
+      parts.push(`[${el.attrs.endCrossMult}]`);
+    }
   }
   for (const k of Object.keys(el.attrs).sort()) {
     // `isParallel` is not a leading modifier: SysML v2 §7.18.2 puts `parallel`

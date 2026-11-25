@@ -668,6 +668,7 @@ export interface Definition extends langium.AstNode {
     ctrlCond?: Expression;
     ctrlType?: QualifiedName;
     ctrlVar?: Name;
+    endMult: Array<Multiplicity>;
     flowFrom?: QualifiedName;
     flowTo?: QualifiedName;
     fromMult: Array<Multiplicity>;
@@ -1601,6 +1602,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'ctrlCond' },
                         { name: 'ctrlType' },
                         { name: 'ctrlVar' },
+                        { name: 'endMult', defaultValue: [] },
                         { name: 'flowFrom' },
                         { name: 'flowTo' },
                         { name: 'fromMult', defaultValue: [] },

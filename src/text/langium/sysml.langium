@@ -399,7 +399,10 @@ Definition infers Definition:
           prefixes+='variant' name=VariantRefPath DeclSpecs DeclTailRest
         | prefixes+=Prefix (prefixes+=Prefix)*
           ( keyword='state' (isDef?='def' | prefixes+=Direction)? ( StateDeclarationTail | NamelessStateDeclarationTail )
-          | keyword=BaseKeyword (isDef?='def' | prefixes+=Direction)? DeclarationTail
+            // `end [0..2] part device` (SysML v2 §8.2.2.7 EndUsagePrefix, OwnedCrossFeatureMember): the end's cross
+            // multiplicity stands between `end` and the keyword, `end [1..*] ordered part device` takes the modifiers
+            // after it. Only before a kind keyword, so `end [0..2];` keeps reading its multiplicity in DeclSpecs.
+          | (endMult+=Multiplicity (prefixes+=Prefix)*)? keyword=BaseKeyword (isDef?='def' | prefixes+=Direction)? DeclarationTail
             // Keyword-less prefixed feature: its name must NOT be a word that
             // is also a BaseKeyword (see PlainRefName), so `ref occurrence :>> x`
             // deterministically parses as an anonymous occurrence usage — the
@@ -529,8 +532,13 @@ fragment DeclMiddle:
         'to' (toMult+=Multiplicity)? flowTo=QualifiedName (toSpecs+=Specialization)*)?
     // SysML v2 §8.2.2.13 ConnectorEnd: an end may name the definition end it
     // redefines, `connect sender ::> a.p to receiver references b.q`.
-    ('connect' (connSrcMult+=Multiplicity)? (connSrcEnd=Name ('::>' | 'references'))? connectSource=QualifiedName
-        'to' (connTgtMult+=Multiplicity)? (connTgtEnd=Name ('::>' | 'references'))? connectTarget=QualifiedName)?
+    // The list form `connect ([1] hub ::> x, [0..*] y ::> z)` (§8.2.2.13 NaryConnectorPart) is read for exactly two
+    // ends, as the binary form; a longer list stays a syntax error.
+    ('connect'
+        ( '(' (connSrcMult+=Multiplicity)? (connSrcEnd=Name ('::>' | 'references'))? connectSource=QualifiedName
+          ',' (connTgtMult+=Multiplicity)? (connTgtEnd=Name ('::>' | 'references'))? connectTarget=QualifiedName ')'
+        | (connSrcMult+=Multiplicity)? (connSrcEnd=Name ('::>' | 'references'))? connectSource=QualifiedName
+          'to' (connTgtMult+=Multiplicity)? (connTgtEnd=Name ('::>' | 'references'))? connectTarget=QualifiedName ))?
     ('to' (sendMult+=Multiplicity)? sendTarget=QualifiedName)?
     (valueOp=ValueOp value=Expression)?
     ( ctrl='while' ctrlCond=Expression

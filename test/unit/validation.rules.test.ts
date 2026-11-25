@@ -1718,6 +1718,44 @@ describe('BD5 connector-end-multiplicity', () => {
     expect(await run(`${d} part def S { part ds : W [3]; part hub : H [2]; connection c : DC connect ds to hub; }`)).toEqual([]);
     expect(await run('part def W; part def S { part a : W [2]; part b : W [3]; connection c connect a to b; }')).toEqual([]);
   });
+  it('reads the list form and the end-body form', async () => {
+    const d = 'part def W; part def H; connection def DC { end [0..2] part device : W; end [1] part hub : H; }';
+    // list form: cross multiplicity above the part, and a usage above the definition end
+    expect(await run('part def W; part def H; part def S { part wheels : W [4]; part hub : H; connection c connect ([5] wheels, [1] hub); }')).toHaveLength(1);
+    expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC connect ([3] device ::> ds, hub ::> hub); }`)).toHaveLength(1);
+    expect(await run('part def W; part def H; part def S { part wheels : W [4]; part hub : H; connection c connect ([4] wheels, [1] hub); }')).toEqual([]);
+    expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC connect ([2] device ::> ds, hub ::> hub); }`)).toEqual([]);
+    // end bodies: above the part, above the definition end, and the legal look-alikes
+    expect(await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end [5] part a references ws; end [1] part b references hub; } }')).toHaveLength(1);
+    expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC { end [3] part device references ds; end part hub references hub; } }`)).toHaveLength(1);
+    expect(await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end [4] part a references ws; end [1] part b references hub; } }')).toEqual([]);
+    expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC { end [2] part device references ds; end part hub references hub; } }`)).toEqual([]);
+    // a post-name multiplicity on a usage end is the end's own, not a cross multiplicity: never read as one
+    expect(await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end part a [9] references ws; end part b references hub; } }')).toEqual([]);
+    // three ends in a list are not read (a syntax error, nothing checked)
+    expect(await run('part def W; part def S { part a : W [2]; part b : W; part c : W; connect ([9] a, b, c); }')).toEqual([]);
+  });
+  it('reads end [m] before the keyword on a definition end like end part x [m]', async () => {
+    const d = (end: string) => `part def W; part def H; connection def DC { ${end} end part hub : H [1]; }`;
+    const use = 'part def S { part ds : W [3]; part hub : H; connection c : DC connect ds to hub; }';
+    expect(await run(`${d('end [0..2] part device : W;')} ${use}`)).toHaveLength(1);
+    expect(await run(`${d('end part device [0..2] : W;')} ${use}`)).toHaveLength(1);
+    expect(await run(`${d('end [0..4] part device : W;')} ${use}`)).toEqual([]);
+  });
+  it('round-trips the list form and the end multiplicity before the keyword', async () => {
+    const src = 'package P { part def W; connection def DC { end [0..2] part device : W; end [1..*] ordered part hub : W; } part def S { part a : W [4]; part b : W; connection c : DC connect ([2] device ::> a, hub ::> b); connection d : DC { end [1] part device references a; end [0..4] part hub references b; } } }';
+    const r = await loadModelText(src);
+    const c = r.model!.all().find((e) => e.declaredName === 'c')!;
+    expect(c.attrs.sourceCrossMult).toBe('2');
+    expect(r.model!.all().find((e) => e.declaredName === 'device' && e.attrs.endCrossMult === '0..2')).toBeDefined();
+    const text = serializeModel(r.model!);
+    expect(text).toContain('end [0..2] part device');
+    expect(text).toContain('end [1..*] ordered part hub');
+    expect(text).toContain('connect [2] device ::> a to hub ::> b');
+    expect(text).toContain('end [1] part device ::> a');
+    const bare = serializeModel((await loadModelText(src, { library: 'none' })).model!);
+    expect(serializeModel((await loadModelText(bare, { library: 'none' })).model!)).toBe(bare);
+  });
   it('maps and round-trips the end multiplicity', async () => {
     const src = 'package P { part def W; part def S { part a : W [4]; part b : W; connection c connect [2] a to [1] b; connection d connect [3] x ::> a to b; } }';
     const r = await loadModelText(src);

@@ -1866,9 +1866,12 @@ and §21.4–21.11.
       [xalloc]
 - [ ] **Cross multiplicity on the other connector forms.** `connect [m] a to [n] b` is stored
       (`sourceCrossMult`/`targetCrossMult`), written back and checked (`connector-end-multiplicity`,
-      §7.13.2). Still unread: the list form `connect ([1] hub ::> x, …)` and `end [m] part x references y`
-      bodies (the grammar has no cross multiplicity there), and the spec's `end [0..2] part device` form (multiplicity before the keyword; it does not parse today, only `end part device [0..2]` does), and a definition end's cross multiplicity
-      against a usage written without one when the other end has more than one instance. [if-compat]
+      §7.13.2). Now also read (conn-forms): the two-end list form `connect ([1] hub ::> x, [0..*] y ::> z)`, `end [m] part x
+      references y` bodies of exactly two ends, and the spec's `end [0..2] part device` form (stored as `endCrossMult`).
+      Still open: a list of three or more ends (a syntax error, no model home for the third end), a post-name
+      multiplicity on a usage body end (the end's own, not read), and a definition end's cross multiplicity against a
+      usage written without one when the other end has more than one instance (the cross-multiplicity semantics there
+      depend on how the many instances pair up; not judged). [if-compat]
 - [x] **Compare the undirected features and the nested ports of two connected ports.** Done: `portMismatches`
       descends into nested ports (depth 6, pair cycle guard, conjugation composed along the path) and checks
       undirected attribute/item features by name and conforming definition. Left open: undirected features
