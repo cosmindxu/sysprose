@@ -199,6 +199,18 @@ describe('rule 7 — connector-endpoints', () => {
     expect(runRule(m, 'connector-endpoints')).toHaveLength(0);
   });
 
+  it('a connection written with two `end … references` bodies is two-ended (§8.2.2.13); one related end or an unrelated end is not', () => {
+    const src = (ends: string) => `package EP {
+  part def Hub; part def Dev;
+  connection def Link { end part hub : Hub; end part dev : Dev; }
+  part def Sys { part h : Hub; part d : Dev; connection c : Link { ${ends} } }
+}`;
+    const run = (ends: string) => runRule(parseModel(src(ends)).model, 'connector-endpoints');
+    expect(run('end part hub references h; end part dev references d;')).toHaveLength(0);
+    expect(run('end part hub references h; end part dev;')).toHaveLength(1);
+    expect(run('end part hub references h;')).toHaveLength(1);
+  });
+
   it('negative: a connection with one endpoint is flagged', () => {
     const m = new Model();
     const f = new ModelFactory(m);

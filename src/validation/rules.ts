@@ -133,6 +133,18 @@ function endpointCount(el: ElementRecord): number {
   return (el.source?.length ?? 0) + (el.target?.length ?? 0);
 }
 
+/** Owned end features of a connector that each relate one element (`end part x references a`). */
+function relatedOwnedEnds(model: Model, id: ElementId): number {
+  return model
+    .children(id)
+    .filter((c) => c.attrs.isEnd === true)
+    .filter((c) =>
+      model
+        .relationshipsFrom(c.id)
+        .some((r) => ['ReferenceSubsetting', 'Subsetting'].includes(r.eClass) && (r.target?.length ?? 0) > 0 && r.target!.every((t) => model.get(t) !== undefined)),
+    ).length;
+}
+
 /** True for bundled standard-library content (never flagged by semantic rules). */
 function isLibraryElement(el: ElementRecord): boolean {
   return el.attrs.isLibrary === true;
@@ -561,7 +573,9 @@ const connectorEndpoints: ValidationRule = {
     for (const el of model.all()) {
       if (isLibraryElement(el)) continue;
       if (!CONNECTOR_KINDS.has(el.eClass)) continue;
-      const count = endpointCount(el);
+      // `connection c : L { end part hub references h; end part dev references d; }` (§8.2.2.13): the ends are
+      // owned end features, each related to its part by the reference subsetting it writes, not `connect` ends.
+      const count = Math.max(endpointCount(el), relatedOwnedEnds(model, el.id));
       if (count < 2) {
         out.push(
           mk(`Connector "${label(model, el)}" has ${count} endpoint(s); at least 2 are required.`, el.id),
