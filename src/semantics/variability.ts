@@ -281,6 +281,8 @@ export interface MachineBehaviour {
   why?: string;
   unreachable: string[];
   dead: string[];
+  /** Per-configuration readings of a machine the selection changes (V6 follow-up): one row per distinct reading. */
+  readings?: Array<{ label: string; count: number | null; conclusive: boolean; why?: string; unreachable: string[]; dead: string[] }>;
 }
 
 export interface OwnerBehaviour {
@@ -1434,22 +1436,73 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     if (el) for (const m of typeMachines(model, el)) fixed.set(m.id, m);
   }
   const bringers = new Map<string, { rec: ElementRecord; keys: Set<string>; names: Set<string> }>();
+  /* Readable shapes (V6 follow-up). (a) a machine a variant owns that redefines a machine the point has (a whole
+   * machine written out): configurations selecting the variant walk it, the others walk the original. (b) a variant
+   * state of a variation state inside a machine: the machine is walked once per distinct choice, the other variants
+   * removed from a copy of the model. Both stand only while no other variant is unread (`hard` is empty) and, for (b),
+   * the configurations are enumerated; otherwise the soft reasons become the superset-only lines they always were. */
+  const hard: Array<{ variant: string; why: string }> = [];
+  const soft: Array<{ variant: string; why: string }> = [];
+  const machineRoots = new Set(stateMachinesIn(model).map((m) => m.id));
+  const rootOf = (e: ElementRecord): ElementRecord | undefined => {
+    let o: ElementRecord | undefined = e;
+    while (o) {
+      if (machineRoots.has(o.id)) return o;
+      o = o.ownerId !== null ? model.get(o.ownerId) : undefined;
+    }
+    return undefined;
+  };
+  const statePoints = new Map<string, { root: ElementRecord; points: Map<string, { name: string; variants: Array<{ key: string; id: string; name: string }> }> }>();
+  const replacers = new Map<string, { o: ElementRecord; reps: Array<{ key: string; name: string; m: ElementRecord; point: string }> }>();
+  const stateVariantOf = new Map<string, { pointId: string; root: ElementRecord }>();
+  for (const p of f.points) {
+    const pe = model.get(p.id);
+    if (!pe || pe.eClass !== 'StateUsage' || p.viaDefinition !== null) continue;
+    const root = rootOf(pe);
+    if (!root) continue;
+    for (const v of p.variants) stateVariantOf.set(v.key.split('/')[1], { pointId: p.id, root });
+  }
   const supersetWhy = (v: ElementRecord, name: string): void => {
     const why: string[] = [];
     const mine = (e: ElementRecord): boolean => nearestVariant(model, e)?.id === v.id;
-    if (v.eClass === 'StateUsage') why.push('the variant is itself a state of a variation state');
+    const sv = v.eClass === 'StateUsage' ? stateVariantOf.get(v.id) : undefined;
+    const inside = new Set<string>([v.id, ...model.descendants(v.id).map((d) => d.id)]);
+    if (v.eClass === 'StateUsage' && !sv) why.push('the variant is itself a state of a variation state');
     const ownMachines = stateMachinesIn(model, v.id).filter(mine);
+    // a whole machine of the variant that redefines exactly one machine the point has, and only that
+    const replacing = new Map<string, ElementRecord>();
+    for (const m of ownMachines) {
+      const rd = rels(model, m.id, 'Redefinition');
+      const tg = targets(model, m.id, 'Redefinition');
+      if (sv === undefined && rd.length === 1 && tg.length === 1 && fixed.has(tg[0].id) && generalizationsOf(model, m.id).every((g) => g.id === tg[0].id || fixed.has(g.id) || isLibrary(g))) replacing.set(m.id, tg[0]);
+    }
+    const inReplacing = (e: ElementRecord): boolean => [...replacing.keys()].some((id) => e.id === id || model.ancestors(e.id).some((a) => a.id === id));
     const inOwn = (e: ElementRecord): boolean => ownMachines.some((m) => m.id === e.id || model.ancestors(e.id).some((a) => a.id === m.id));
-    const extra = model.descendants(v.id).filter((e) => !isLibrary(e) && STATEISH.has(e.eClass) && mine(e) && !inOwn(e));
+    const extra = sv ? [] : model.descendants(v.id).filter((e) => !isLibrary(e) && STATEISH.has(e.eClass) && mine(e) && !inOwn(e));
     if (extra.length > 0) why.push(`it adds ${extra.length > 1 ? 'states or transitions' : 'a state or transition'} (${[...new Set(extra.map((e) => e.declaredName ?? e.eClass))].slice(0, 4).join(', ')}) outside a machine of its own`);
-    const redef = model.descendants(v.id).filter((e) => STATEISH.has(e.eClass) && mine(e) && rels(model, e.id, 'Redefinition').length > 0);
+    const redef = model.descendants(v.id).filter((e) => STATEISH.has(e.eClass) && mine(e) && !inReplacing(e) && (sv ? targets(model, e.id, 'Redefinition').some((t) => !inside.has(t.id)) : rels(model, e.id, 'Redefinition').length > 0));
     if (redef.length > 0) why.push(`it redefines ${[...new Set(redef.map((e) => e.declaredName ?? e.eClass))].slice(0, 4).join(', ')}`);
     for (const rel of ['Subsetting', 'Redefinition']) {
       for (const t of targets(model, v.id, rel)) {
         if (!isLibrary(t) && (typeMachines(model, t).length > 0 || stateMachinesIn(model, t.id).length > 0)) why.push(`it ${rel === 'Subsetting' ? 'subsets' : 'redefines'} ${t.declaredName ?? 'a usage'}, which owns a machine`);
       }
     }
-    if (why.length > 0) result.supersetOnly.push({ variant: name, why: why.join('; ') });
+    if (why.length > 0) hard.push({ variant: name, why: why.join('; ') });
+    for (const [mid, o] of replacing) {
+      const m = model.get(mid)!;
+      const e = replacers.get(o.id) ?? { o, reps: [] };
+      e.reps.push({ key: vkey.get(v.id)!.key, name, m, point: vkey.get(v.id)!.key.split('/')[0] });
+      replacers.set(o.id, e);
+      soft.push({ variant: name, why: `its machine ${m.declaredName ?? ''} redefines the machine ${o.declaredName ?? ''} the point has` });
+    }
+    if (sv) {
+      const e = statePoints.get(sv.root.id) ?? { root: sv.root, points: new Map() };
+      const pt = e.points.get(sv.pointId) ?? { name: f.points.find((x) => x.id === sv.pointId)?.name ?? sv.pointId, variants: [] };
+      pt.variants.push({ key: vkey.get(v.id)!.key, id: v.id, name });
+      e.points.set(sv.pointId, pt);
+      statePoints.set(sv.root.id, e);
+      soft.push({ variant: name, why: 'the variant is itself a state of a variation state' });
+    }
   };
   for (const [vid, info] of vkey) {
     const v = model.get(vid);
@@ -1457,8 +1510,9 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     supersetWhy(v, info.name);
     for (const m of [...typeMachines(model, v), ...stateMachinesIn(model, v.id).filter((x) => nearestVariant(model, x)?.id === v.id)]) {
       if (fixed.has(m.id)) continue;
+      if ([...replacers.values()].some((r) => r.reps.some((x) => x.m.id === m.id))) continue;
       if (rels(model, m.id, 'Redefinition').length > 0 || generalizationsOf(model, m.id).some((g) => fixed.has(g.id))) {
-        result.supersetOnly.push({ variant: info.name, why: `its type brings the machine ${m.declaredName ?? ''} that redefines or specialises one the point has` });
+        hard.push({ variant: info.name, why: `its type brings the machine ${m.declaredName ?? ''} that redefines or specialises one the point has` });
         continue;
       }
       const b = bringers.get(m.id) ?? { rec: m, keys: new Set<string>(), names: new Set<string>() };
@@ -1468,13 +1522,79 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     }
   }
   const total = f.valid === null ? null : f.valid.length;
-  const walk = (m: ElementRecord): { conclusive: boolean; why?: string; unreachable: string[]; dead: string[] } => {
-    const mr = reachReport(model, { scopeId: m.id }).machines.find((x) => x.machine.id === m.id);
+  type Walked = { conclusive: boolean; why?: string; unreachable: string[]; dead: string[] };
+  const walkIn = (mdl: Model, m: ElementRecord): Walked => {
+    const mr = reachReport(mdl, { scopeId: m.id }).machines.find((x) => x.machine.id === m.id);
     if (!mr) return { conclusive: false, why: 'the machine was not read by the walk', unreachable: [], dead: [] };
     if (mr.unsupported.length > 0) return { conclusive: false, why: 'the walk refuses a construct in it', unreachable: [], dead: [] };
     if (!mr.exhaustive) return { conclusive: false, why: mr.boundHit !== 'none' ? `the walk hit its ${mr.boundHit} bound` : 'the walk could not decide every guard', unreachable: [], dead: [] };
     return { conclusive: true, unreachable: mr.states.unreachable.map((s) => s.name), dead: mr.transitions.dead.map((t) => t.name || t.qualifiedName) };
   };
+  const walk = (m: ElementRecord): Walked => walkIn(model, m);
+  // Finalise what is readable: only while no variant is unread, and (for a variation state) the configurations are known.
+  type Reading = { label: string; count: number | null; w: Walked };
+  const perConfig = new Map<string, { rec: ElementRecord; variants: string[]; readings: Reading[] }>();
+  const MAX_OVERLAYS = 16;
+  if (hard.length === 0) {
+    const conflict = new Set<string>();
+    for (const [oid, r] of replacers) {
+      if (new Set(r.reps.map((x) => x.point)).size > 1 || statePoints.has(oid)) conflict.add(oid);
+    }
+    for (const [oid, r] of replacers) {
+      if (conflict.has(oid)) continue;
+      const groups = new Map<string, { label: string; count: number | null; rec: ElementRecord }>();
+      const base = f.valid === null ? null : f.valid.filter((sel) => !r.reps.some((x) => [...sel.values()].includes(x.key))).length;
+      if (base !== 0) groups.set('', { label: `the configurations selecting none of ${r.reps.map((x) => x.name).join(', ')}`, count: base, rec: r.o });
+      for (const x of r.reps) {
+        const n = f.valid === null ? null : f.valid.filter((sel) => [...sel.values()].includes(x.key)).length;
+        if (n !== 0) groups.set(x.key, { label: `the configurations selecting ${x.name}`, count: n, rec: x.m });
+      }
+      perConfig.set(oid, { rec: r.o, variants: r.reps.map((x) => x.name), readings: [...groups.values()].map((g) => ({ label: g.label, count: g.count, w: walk(g.rec) })) });
+    }
+    if (f.valid !== null) {
+      for (const [rid, e] of statePoints) {
+        if (replacers.has(rid) || [...replacers.values()].some((r) => r.reps.some((x) => x.m.id === rid))) continue;
+        const sigs = new Map<string, { removed: string[]; chosen: string[]; count: number }>();
+        for (const sel of f.valid) {
+          const removed: string[] = [];
+          const chosen: string[] = [];
+          for (const [pid, pt] of e.points) {
+            const k = sel.get(pid) ?? null;
+            for (const v of pt.variants) {
+              if (v.key === k) chosen.push(v.name);
+              else removed.push(v.id);
+            }
+            if (k === null) chosen.push(`${pt.name}=none`);
+          }
+          const sig = removed.sort().join(',');
+          const g = sigs.get(sig) ?? { removed, chosen, count: 0 };
+          g.count++;
+          sigs.set(sig, g);
+        }
+        if (sigs.size > MAX_OVERLAYS) { for (const pt of e.points.values()) for (const v of pt.variants) soft.push({ variant: v.name, why: `more than ${MAX_OVERLAYS} distinct choices of the variation state(s) in the machine` }); continue; }
+        const readings: Reading[] = [];
+        let built = true;
+        for (const g of sigs.values()) {
+          const copy = model.clone();
+          let ok = true;
+          for (const id of g.removed) if (copy.has(id) && copy.remove(id).length === 0) ok = false;
+          const rec = copy.get(e.root.id);
+          if (!ok || !rec) { built = false; break; }
+          readings.push({ label: g.chosen.join(', '), count: g.count, w: walkIn(copy, rec) });
+        }
+        if (!built) { for (const pt of e.points.values()) for (const v of pt.variants) soft.push({ variant: v.name, why: 'the selection overlay could not be built for the machine' }); continue; }
+        perConfig.set(rid, { rec: e.root, variants: [...e.points.values()].flatMap((pt) => pt.variants.map((v) => v.name)), readings });
+      }
+    }
+  }
+  // Whatever was not read per configuration keeps (or gains) its superset-only line, never silence.
+  const readSoft = new Set<string>();
+  for (const [oid] of perConfig) {
+    for (const r of replacers.get(oid)?.reps ?? []) readSoft.add(r.name);
+    for (const pt of statePoints.get(oid)?.points.values() ?? []) for (const v of pt.variants) readSoft.add(v.name);
+  }
+  for (const h of hard) result.supersetOnly.push(h);
+  for (const x of soft) if (!readSoft.has(x.variant)) result.supersetOnly.push(x);
   const emit = (b: MachineBehaviour): void => {
     result.machines.push(b);
     const superset = b.variants.length === 0 && result.supersetOnly.length > 0;
@@ -1490,9 +1610,31 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     diags.push({ code: dead ? VARIABILITY_CODES.behaviourDead : VARIABILITY_CODES.behaviour, severity: dead ? 'warning' : 'info', message: `${ownerName}: the state machine ${b.machine} is ${where}: ${detail}`, elementId: owner.id });
   };
   if (fixed.size > 0 && vkey.size > 0) {
-    for (const m of fixed.values()) emit({ machine: model.qualifiedName(m.id) || m.declaredName || m.id, variants: [], presentIn: total, total, ...walk(m) });
+    for (const m of fixed.values()) if (!perConfig.has(m.id)) emit({ machine: model.qualifiedName(m.id) || m.declaredName || m.id, variants: [], presentIn: total, total, ...walk(m) });
+  }
+  for (const [mid, pc] of perConfig) {
+    const machine = model.qualifiedName(mid) || pc.rec.declaredName || mid;
+    const found = pc.readings.some((r) => r.w.conclusive && (r.w.unreachable.length > 0 || r.w.dead.length > 0));
+    const b: MachineBehaviour = {
+      machine, variants: pc.variants, presentIn: total, total,
+      conclusive: pc.readings.every((r) => r.w.conclusive),
+      unreachable: [...new Set(pc.readings.flatMap((r) => r.w.unreachable))],
+      dead: [...new Set(pc.readings.flatMap((r) => r.w.dead))],
+      readings: pc.readings.map((r) => ({ label: r.label, count: r.count, conclusive: r.w.conclusive, ...(r.w.why ? { why: r.w.why } : {}), unreachable: r.w.unreachable, dead: r.w.dead })),
+    };
+    const why = pc.readings.find((r) => !r.w.conclusive)?.w.why;
+    if (why) b.why = why;
+    result.machines.push(b);
+    const parts = pc.readings.map((r) => {
+      const n = r.count !== null && total !== null ? ` (${r.count} of ${total})` : '';
+      if (!r.w.conclusive) return `${r.label}${n}: inconclusive (${r.w.why}), no state is claimed reachable or unreachable`;
+      const f2 = [r.w.unreachable.length > 0 ? `unreachable state(s) ${r.w.unreachable.join(', ')}` : '', r.w.dead.length > 0 ? `dead transition(s) ${r.w.dead.join(', ')}` : ''].filter((x) => x !== '');
+      return `${r.label}${n}: ${f2.length > 0 ? f2.join('; ') : 'every state reachable and no transition dead'}`;
+    });
+    diags.push({ code: found ? VARIABILITY_CODES.behaviourDead : VARIABILITY_CODES.behaviour, severity: found ? 'warning' : 'info', message: `${ownerName}: the state machine ${machine} is walked per configuration (the selection applied to it; ${pc.variants.join(', ')} change it) — ${parts.join(' | ')}`, elementId: owner.id });
   }
   for (const b of bringers.values()) {
+    if (perConfig.has(b.rec.id)) continue;
     let presentIn: number | null = null;
     if (f.valid !== null) presentIn = f.valid.filter((sel) => [...sel.values()].some((k) => k !== null && b.keys.has(k))).length;
     emit({ machine: model.qualifiedName(b.rec.id) || b.rec.declaredName || b.rec.id, variants: [...b.names], presentIn, total, ...walk(b.rec) });

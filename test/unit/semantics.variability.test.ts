@@ -515,4 +515,67 @@ describe('state machines per configuration (V6)', () => {
 }`);
     expect(d.every((x) => x.severity === 'info')).toBe(true);
   });
+
+  const REDEF = (bigBody: string, baseBody = 'entry state a; state b; state c; transition t first a accept Go then b;') => `package P {
+  part def Eng { state s { ${baseBody} } }
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s :>> Eng::s { ${bigBody} } } } }
+}`;
+
+  it('a variant that redefines the machine: c is unreachable only where the redefinition is not selected', () => {
+    const o = rep(REDEF('entry state a2; state b2; state c2; transition t2 first a2 accept Go then b2; transition t3 first b2 accept Go then c2;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.severity).toBe('warning');
+    expect(d.message).toContain('walked per configuration');
+    expect(d.message).toContain('the configurations selecting none of eng::big (1 of 2): unreachable state(s) c');
+    expect(d.message).toContain('the configurations selecting eng::big (1 of 2): every state reachable and no transition dead');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('a correct redefinition stays silent about dead things', () => {
+    const o = rep(REDEF('entry state a2; state b2; transition t2 first a2 accept Go then b2;', 'entry state a; state b; transition t first a accept Go then b;'));
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
+  });
+
+  it('a redefined machine the walk cannot take whole is inconclusive, never a claim', () => {
+    const o = rep(`package P {
+  part def Eng { state s { entry state a; state b; state c; transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s2 :>> s { transition t2 first b accept Go then c; } } } }
+}`);
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('inconclusive'))).toBe(true);
+  });
+
+  const VSTATE = (extra: string) => `package P {
+  part def Car { state mode { entry state off; state fin; variation state drive { variant state eco; variant state sport; }
+    transition t1 first off accept On then drive::eco; transition t2 first off accept Fast then drive::sport; ${extra} } }
+}`;
+
+  it('a variation state: a state reached only through one variant is unreachable where the other is chosen', () => {
+    const o = rep(VSTATE('transition t4 first drive::eco accept Done then fin;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.severity).toBe('warning');
+    expect(d.message).toContain('walked per configuration');
+    expect(d.message).toContain('sport (1 of 2): unreachable state(s) fin');
+    expect(d.message).toContain('eco (1 of 2): every state reachable and no transition dead');
+    expect(o.owners[0].behaviour.machines[0].readings).toHaveLength(2);
+    expect(o.diagnostics.some((x) => x.message.includes('itself a state'))).toBe(false);
+  });
+
+  it('a variation state where every variant reaches the same states stays silent about dead things', () => {
+    const o = rep(VSTATE('transition t4 first drive::eco accept Done then fin; transition t5 first drive::sport accept Done then fin;'));
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
+  });
+
+  it('a variant whose redefinition is not a whole machine keeps the superset-only line next to a readable one', () => {
+    const o = rep(`package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { variant part small : Eng { state x { entry state y; } }
+    variant part big : Eng { state s :>> Eng::s { entry state a2; state b2; transition t2 first a2 accept Go then b2; } } } }
+}`);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(false);
+    expect(o.diagnostics.every((x) => x.code !== VARIABILITY_CODES.behaviourDead)).toBe(true);
+  });
 });
