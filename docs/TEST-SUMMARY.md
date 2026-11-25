@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 195
-- **Tests:** 6239 total — 6239 passed, 0 failed, 0 skipped
+- **Tests:** 6253 total — 6253 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -164,7 +164,7 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
-| test/unit/semantics.variability.test.ts | 50 | 0 | 0 |
+| test/unit/semantics.variability.test.ts | 54 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
@@ -199,8 +199,8 @@
 | test/unit/ui.requirements-table.test.ts | 29 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
-| test/unit/validation.connection.test.ts | 15 | 0 | 0 |
+| test/unit/validation.connection.test.ts | 17 | 0 | 0 |
 | test/unit/validation.exchange-allocation.test.ts | 21 | 0 | 0 |
 | test/unit/validation.interfaces.test.ts | 16 | 0 | 0 |
-| test/unit/validation.rules.test.ts | 110 | 0 | 0 |
+| test/unit/validation.rules.test.ts | 118 | 0 | 0 |
 | test/unit/validation.variability.test.ts | 16 | 0 | 0 |
