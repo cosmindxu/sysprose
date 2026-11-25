@@ -4945,7 +4945,9 @@ The footer lists each crossing flow allocated to no connection (the `exchange-un
 finding). Exit **1** when any row is `UNCARRIED` or a crossing flow is unallocated; **2** for a
 degraded model or when there is nothing to read; `UNUSED` and `UNJUDGED` do not move the exit code.
 `--json` carries the same rows under `icd` and a top-level `verdict`. The header of
-`src/semantics/icd.ts` has the profile.
+`src/semantics/icd.ts` has the profile. In the app, the Interconnection view draws each
+connection in its ICD colour (green `CONSISTENT`, red `UNCARRIED`, dotted amber `UNUSED`; `UNJUDGED`
+keeps the plain line) and hovering it lists the allocated flows with their item and direction.
 
 ### Variability: which configurations a family admits
 
