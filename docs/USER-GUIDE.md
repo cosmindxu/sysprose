@@ -5084,7 +5084,8 @@ any of these at the language level:
   binary `connect [m] a to [n] b` form with number-literal bounds is read; a warning.
 - **`subset-type-conformance`.** `part b : B subsets a` over `part a : A`, where
   neither of A and B specialises the other, holds values that are not values of
-  `a` (§7.6.1). A subsetter that declares no type is not judged. A warning.
+  `a` (§7.6.1). The types a subsetter declares and those of the features it redefines
+  are read; a subsetter with none is not judged. A warning.
 - **`disjoint-sum-exceeds`.** `front [3]` and `rear [3]` both subset `wheels [4]`
   and `disjoint front from rear;`: six values cannot fit in four (§7.6.1, KerML
   disjoining). Only lower bounds written as literals are summed. A warning.
@@ -5093,16 +5094,19 @@ any of these at the language level:
   enumeration specialises no attribute definition (§7.8.2). A warning.
 - **`value-multiplicity-mismatch`.** `attribute c : Real [1] = (1.0, 2.0)` holds
   two values in a `[1]`; `attribute a : Real [2] = 3.0` holds one in a `[2]`
-  (§7.13.4, §7.6.3). Only literals and parenthesised lists are counted; any other
-  expression may give any number of values. A warning.
+  (§7.13.4, §7.6.3). Literals, arithmetic over literals (`2.0 * 3.0`, one scalar)
+  and parenthesised lists are counted; any other expression may give any number
+  of values. A warning.
 - **`specialization-kind-incompatible`.** `item def C :> V` over `attribute def V`
   and `part def B :> Q` over `port def Q` cross lines of the metaclass hierarchy
   (§7.7.2); an `enum def` may not specialise another `enum def` (§7.8.2). A
-  definition may specialise one of its own kind, or a kind it is a kind of. A
-  warning.
+  definition may specialise one of its own kind, or a kind it is a kind of. The
+  same holds for a usage that subsets, redefines or reference-subsets another
+  (`attribute x :> p` over a part usage; §7.6.3, §8.3); a `ref` usage stands for
+  any kind. A warning.
 - **`unresolved-value-chain`.** `attribute bad : Real = e.nosuch` where `e` is a
   typed usage with no `nosuch` (§7.6.6). Only a value that is one dotted chain of
-  plain names is read, and only where the types are resolved. A warning.
+  names (plain or quoted, the head possibly `::` qualified) is read, and only where the types are resolved. A warning.
 
 `port-direction` no longer asks for `in`/`out` on a port whose features are
 directed: it reports only a port that says nothing about direction anywhere. A
