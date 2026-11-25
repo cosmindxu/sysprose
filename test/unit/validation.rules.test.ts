@@ -880,6 +880,20 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(await run('part def A; part def B :> A; part def X { part a : A [2]; part b : B subsets a; part c : A subsets a; part d subsets a; }', 'subset-type-conformance')).toEqual([]);
   });
 
+  it('BD3: the type a redefined feature gives is judged; a conforming one stays silent', async () => {
+    const w = await run('part def A; part def B; part def Base { part x : B; part a : A [2]; } part def X :> Base { part c redefines x subsets a; }', 'subset-type-conformance');
+    expect(w).toHaveLength(1);
+    expect(await run('part def A; part def B :> A; part def Base { part x : B; part a : A [2]; } part def X :> Base { part c redefines x subsets a; }', 'subset-type-conformance')).toEqual([]);
+  });
+
+  it('BD11: chains with quoted names and a qualified head are read', async () => {
+    const decl = "part def E { attribute mass : Real; } part def Car { part 'main engine' : E; attribute ok : Real = 'main engine'.mass; attribute bad : Real = 'main engine'.nosuch; attribute q : Real = P::Car::'main engine'.nosuch2; attribute okq : Real = P::Car::'main engine'.mass; }";
+    const w = await run(decl, 'unresolved-value-chain');
+    expect(w).toHaveLength(2);
+    expect(w.join('\n')).toContain('nosuch');
+    expect(w.join('\n')).toContain('nosuch2');
+  });
+
   it('BD6 disjoint-sum-exceeds: flags disjoint subsets whose lower bounds exceed the superset', async () => {
     const w = await run('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; part rear : W [3] subsets wheels; disjoint front from rear; }', 'disjoint-sum-exceeds');
     expect(w).toHaveLength(1);
@@ -917,6 +931,11 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     ).toEqual([]);
   });
 
+  it('BD8: arithmetic of literals is one value; a name in it stays unread', async () => {
+    expect(await run('part def X { attribute a : Real [2] = 2.0 * 3.0 + 1.0; attribute b : Real [1] = (1.0 + 2.0, 3.0); }', 'value-multiplicity-mismatch')).toHaveLength(2);
+    expect(await run('part def X { attribute a : Real [1] = 2.0 * 3.0 + 1.0; attribute n : Real [2] = 1.0 + other; attribute c : Real [2] = (1.0 + 2.0, 3.0); }', 'value-multiplicity-mismatch')).toEqual([]);
+  });
+
   it('BD9 specialization-kind-incompatible: flags item def :> attribute def, part def :> port def, enum :> enum', async () => {
     expect(await run('attribute def V; item def C :> V;', 'specialization-kind-incompatible')).toHaveLength(1);
     expect(await run('port def Q; part def B :> Q;', 'specialization-kind-incompatible')).toHaveLength(1);
@@ -924,6 +943,15 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
   });
   it('BD9: silent on one line of the hierarchy and on attribute :> enum', async () => {
     expect(await run('item def I; part def B :> I; part def C :> B; occurrence def O; item def D :> O; attribute def V; attribute def W :> V; enum def E { a; } attribute def Z :> E;', 'specialization-kind-incompatible')).toEqual([]);
+  });
+
+  it('BD9 usage level: a usage subsetting or redefining a usage of another line is flagged', async () => {
+    expect(await run('part def A; port def Q; part def X { part p : A; attribute v :> p; }', 'specialization-kind-incompatible')).toHaveLength(1);
+    expect(await run('port def Q; part def X { port r : Q; part s subsets r; }', 'specialization-kind-incompatible')).toHaveLength(1);
+    expect(await run('part def A; part def Y { part p : A; } part def Z :> Y { attribute p redefines p; }', 'specialization-kind-incompatible')).toHaveLength(1);
+  });
+  it('BD9 usage level: item over part, state over action, a ref usage and same kinds stay silent', async () => {
+    expect(await run('part def A; part def X { part p : A; item i :> p; ref r :> p; part q :> p; attribute a; attribute b :> a; action act; state st :> act; ref x; part y :> x; }', 'specialization-kind-incompatible')).toEqual([]);
   });
 
   it('BD11 unresolved-value-chain: flags a chain whose later name is not a feature', async () => {

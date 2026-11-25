@@ -603,7 +603,7 @@ const CODES = [
     code: 'validation/subset-type-conformance',
     source: 'validation',
     severity: 'warning',
-    when: 'A feature that declares a type and subsets another feature whose type it does not specialise (`part b : B subsets a` over `part a : A`, neither of A and B specialising the other): its values are not values of the subsetted feature (§7.6.1).',
+    when: 'A feature that declares a type (or redefines a feature that does) and subsets another feature whose type it does not specialise (`part b : B subsets a` over `part a : A`, neither of A and B specialising the other): its values are not values of the subsetted feature (§7.6.1).',
     hint: 'Type the subsetting feature with the subsetted feature\u2019s type or a specialization of it, or subset a feature of its own type.',
   },
   {
@@ -624,14 +624,14 @@ const CODES = [
     code: 'validation/value-multiplicity-mismatch',
     source: 'validation',
     severity: 'warning',
-    when: 'A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals with fewer values than its lower bound (`attribute a : Real [2] = 3.0`). A default or initial value is read only for the upper bound (§7.13.4).',
+    when: 'A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals (or arithmetic over literals) with fewer values than its lower bound (`attribute a : Real [2] = 3.0`). A default or initial value is read only for the upper bound (§7.13.4).',
     hint: 'Make the multiplicity and the number of values written agree.',
   },
   {
     code: 'validation/specialization-kind-incompatible',
     source: 'validation',
     severity: 'warning',
-    when: 'A definition specialises a definition of another line of the metaclass hierarchy (`item def C :> attribute def V`, `part def B :> port def Q`), or an enumeration definition specialises another enumeration definition (§7.7.2, §7.8.2).',
+    when: 'A definition specialises a definition of another line of the metaclass hierarchy (`item def C :> attribute def V`, `part def B :> port def Q`), or an enumeration definition specialises another enumeration definition (§7.7.2, §7.8.2); a usage that subsets or redefines a usage of another kind (`attribute x :> part p`) (§7.6.3).',
     hint: 'Specialise a definition of the same kind, or of a kind your definition is a kind of (an item def may specialise an occurrence def; a part def, an item def).',
   },
   {

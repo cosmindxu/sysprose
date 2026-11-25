@@ -44,6 +44,8 @@ import { conforms } from '../semantics/conformance';
 import { endPairs } from '../semantics/port-conformance';
 import { resolveQualifiedNameFull } from '../semantics';
 import { childNamed, findTypeFeature, resolveFullName } from '../semantics/bind';
+import { evaluate, parseExpr } from '../semantics/expr';
+import type { ExprNode } from '../semantics/expr';
 import { effectiveFeaturesWithLibrary } from '../semantics/featuring';
 import { effectiveNameOf, generalizationsOf } from '../semantics/inheritance';
 import { DIRECT_SUPERTYPES, isKindOf } from '../semantics/metaclasses';
@@ -251,9 +253,11 @@ const isUserElement = (el: ElementRecord): boolean => el.attrs.isLibrary !== tru
  * a specialisation of it (§7.6.3: a usage that subsets inherits the subsetted
  * usage's constraints, its typing among them). `part b : B subsets a` over
  * `part a : A` with neither of A, B specialising the other has values that are
- * not values of `a`. Only a subsetter that DECLARES its type is judged (one that
- * only inherits a type has it by the subsetting itself), and only when it has
- * no declared type that conforms; a type that does not resolve gives no finding.
+ * not values of `a`. A subsetter's types are those it declares and those of the
+ * features it redefines (a redefinition has the redefined feature's typing, §7.6.3);
+ * one that only inherits a type through the subsetting has it by the subsetting
+ * itself. It is judged only when it has some type and none conforms; a type that
+ * does not resolve gives no finding.
  * Redefinitions are `redefinition-conformance`'s.
  */
 export const subsetTypeConformance: ValidationRule = {
@@ -272,6 +276,19 @@ export const subsetTypeConformance: ValidationRule = {
       const sup = model.get(superId);
       if (!sub || !sup || !isUserElement(sub)) continue;
       const subTypes = allDeclaredTypes(model, subId);
+      // A redefining feature has the typing of the feature it redefines (`part c redefines x subsets a`, `x : B`).
+      const seen = new Set<ElementId>([subId]);
+      const queue = [subId];
+      while (queue.length > 0) {
+        const cur = queue.shift()!;
+        for (const r of model.relationshipsFrom(cur)) {
+          const t = r.eClass === 'Redefinition' ? r.target?.[0] : undefined;
+          if (!t || seen.has(t) || !model.has(t) || t === superId) continue;
+          seen.add(t);
+          queue.push(t);
+          for (const ty of allDeclaredTypes(model, t)) if (!subTypes.includes(ty)) subTypes.push(ty);
+        }
+      }
       const supType = typeOf(model, superId);
       if (subTypes.length === 0 || !supType) continue;
       if (subTypes.some((t) => conforms(model, t, supType))) continue;
@@ -453,6 +470,37 @@ export const enumValueNotMember: ValidationRule = {
   },
 };
 
+/**
+ * Is `text` a single scalar expression over literals only (`2 * 3 + 1`, `-4`, `"a" + "b"`)? It is parsed and
+ * evaluated by the existing evaluator; a name, call, conditional, list, range or anything it cannot evaluate is no.
+ */
+function literalArithmetic(text: string): boolean {
+  if (text.includes(',') || text.includes('..')) return false;
+  let node: ExprNode;
+  try {
+    node = parseExpr(text);
+  } catch {
+    return false;
+  }
+  const pure = (n: ExprNode): boolean => {
+    switch (n.kind) {
+      case 'num':
+      case 'str':
+      case 'bool':
+        return true;
+      case 'unary':
+        return pure(n.operand);
+      case 'binary':
+        return pure(n.left) && pure(n.right);
+      default:
+        return false;
+    }
+  };
+  if (!pure(node)) return false;
+  const r = evaluate(node, () => undefined);
+  return 'value' in r && r.value !== null && r.value !== undefined && !(typeof r.value === 'number' && !Number.isFinite(r.value));
+}
+
 /** The values a written value expression gives, when its text is a literal or a parenthesised list: `count` of top-level elements, `exact` when every one is a literal. */
 function valueCount(el: ElementRecord): { count: number; exact: boolean } | undefined {
   const v = el.attrs.value;
@@ -460,7 +508,7 @@ function valueCount(el: ElementRecord): { count: number; exact: boolean } | unde
   if (typeof v !== 'string') return undefined;
   const text = v.trim();
   const literal = (t: string): boolean => /^-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?$/.test(t) || /^"(?:[^"\\]|\\.)*"$/.test(t) || t === 'true' || t === 'false';
-  if (literal(text)) return { count: 1, exact: true };
+  if (literal(text) || literalArithmetic(text)) return { count: 1, exact: true };
   if (!text.startsWith('(') || !text.endsWith(')')) return undefined;
   // Split at top-level commas; give up on a text where the first `(` does not close at the end.
   const parts: string[] = [];
@@ -496,8 +544,8 @@ function valueCount(el: ElementRecord): { count: number; exact: boolean } | unde
   parts.push(cur.trim());
   if (parts.some((p) => p === '' || p.includes('..'))) return undefined;
   // `(a, b)` is a sequence; `(a)` alone is a parenthesised expression, which may itself stand for many values.
-  if (parts.length === 1) return literal(parts[0]!) ? { count: 1, exact: true } : undefined;
-  return { count: parts.length, exact: parts.every(literal) };
+  if (parts.length === 1) return literal(parts[0]!) || literalArithmetic(parts[0]!) ? { count: 1, exact: true } : undefined;
+  return { count: parts.length, exact: parts.every((p) => literal(p) || literalArithmetic(p)) };
 }
 
 /**
@@ -513,7 +561,8 @@ function valueCount(el: ElementRecord): { count: number; exact: boolean } | unde
  * literals, whose lower bound exceeds the number of values written has fewer.
  * Only a multiplicity the feature states itself, with literal bounds, and a
  * value that is a literal or a parenthesised list at its top level are read; a
- * value that is any other expression may stand for any number of values.
+ * value that is any other expression may stand for any number of values. Arithmetic over literals
+ * alone (`2 * 3 + 1`) evaluates to one scalar and is read as a single value.
  */
 export const valueMultiplicityMismatch: ValidationRule = {
   id: 'value-multiplicity-mismatch',
@@ -570,6 +619,12 @@ export const valueMultiplicityMismatch: ValidationRule = {
  * `enum def :> enum def` is the one same-kind pair that is not legal.
  * Both ends must be definitions of a known metaclass; implicit and library
  * specialisations are not read.
+ *
+ * Usage level (§7.6.3, line ~3300, and §8.3: every usage kind must subset its own base
+ * usage, "A PartUsage must subset, directly or indirectly, the base PartUsage parts"): a
+ * usage that subsets, redefines or reference-subsets another follows the same line of
+ * metaclasses, so `attribute x :> p` over a part usage, or `part q :> port r`, are
+ * flagged. A `ref` usage and the bare `Usage` metaclass stand for any kind and are not read.
  */
 export const specializationKindIncompatible: ValidationRule = {
   id: 'specialization-kind-incompatible',
@@ -579,16 +634,21 @@ export const specializationKindIncompatible: ValidationRule = {
     let n = 0;
     const out: Diagnostic[] = [];
     for (const rel of model.all()) {
-      if (rel.eClass !== 'Subclassification' || rel.attrs.isLibrary === true) continue;
+      const usageLevel = rel.eClass === 'Subsetting' || rel.eClass === 'Redefinition' || rel.eClass === 'ReferenceSubsetting';
+      if ((rel.eClass !== 'Subclassification' && !usageLevel) || rel.attrs.isLibrary === true || rel.attrs.implicit === true) continue;
       const subId = rel.source?.[0];
       const supId = rel.target?.[0];
       const sub = subId ? model.get(subId) : undefined;
       const sup = supId ? model.get(supId) : undefined;
       if (!sub || !sup || !isUserElement(sub) || sub.id === sup.id) continue;
-      const known = (e: ElementRecord): boolean => e.eClass.endsWith('Definition') && e.eClass in DIRECT_SUPERTYPES;
+      // A usage-level pair reads only the specific usage kinds: a reference usage (`ref x`) or the bare `Usage` may stand for any.
+      const known = (e: ElementRecord): boolean =>
+        usageLevel
+          ? e.eClass.endsWith('Usage') && e.eClass in DIRECT_SUPERTYPES && e.eClass !== 'ReferenceUsage' && e.eClass !== 'Usage'
+          : e.eClass.endsWith('Definition') && e.eClass in DIRECT_SUPERTYPES;
       if (!known(sub) || !known(sup)) continue;
       let why: string | undefined;
-      if (sub.eClass === 'EnumerationDefinition' && sup.eClass === 'EnumerationDefinition') {
+      if (!usageLevel && sub.eClass === 'EnumerationDefinition' && sup.eClass === 'EnumerationDefinition') {
         why = 'an enumeration definition must not specialise another enumeration definition: its literals would add to the values the general allows (§7.8.2)';
       } else if (!isKindOf(sub.eClass, sup.eClass) && !isKindOf(sup.eClass, sub.eClass)) {
         why = `a «${sub.eClass}» and a «${sup.eClass}» are on different lines of the metaclass hierarchy, so neither is a kind of the other (§7.6.2, §7.7.2)`;
@@ -598,13 +658,37 @@ export const specializationKindIncompatible: ValidationRule = {
         id: `specialization-kind-incompatible#${n++}`,
         ruleId: 'specialization-kind-incompatible',
         severity: 'warning',
-        message: `${qualifiedLabel(model, sub)} (${sub.eClass}) specialises ${qualifiedLabel(model, sup)} (${sup.eClass}): ${why}.`,
+        message: `${qualifiedLabel(model, sub)} (${sub.eClass}) ${usageLevel ? rel.eClass === 'Redefinition' ? 'redefines' : 'subsets' : 'specialises'} ${qualifiedLabel(model, sup)} (${sup.eClass}): ${why}.`,
         elementId: sub.id,
       });
     }
     return out;
   },
 };
+
+/**
+ * A value that is exactly one feature chain, as its names: the head (a qualified name, its `::` steps
+ * joined, quotes removed) and the `.`-steps after it. Names are plain (`[A-Za-z_]\w*`) or quoted
+ * (`'a b'`); anything else (calls, operators, indexes) gives `undefined`.
+ */
+export function parseValueChain(text: string): { head: string; rest: string[] } | undefined {
+  const name = "(?:[A-Za-z_]\\w*|'(?:[^'\\\\]|\\\\.)+')";
+  const re = new RegExp(`^${name}(?:::${name})*(?:\\.${name})*$`);
+  const t = text.trim();
+  if (!re.test(t)) return undefined;
+  const parts: string[] = [];
+  const tok = new RegExp(`${name}|::|\\.`, 'g');
+  const sep: string[] = [];
+  for (const m of t.matchAll(tok)) {
+    if (m[0] === '::' || m[0] === '.') sep.push(m[0]);
+    else {
+      parts.push(m[0].startsWith("'") ? m[0].slice(1, -1) : m[0]);
+    }
+  }
+  const dotted = sep.indexOf('.');
+  const headLen = (dotted === -1 ? sep.length : dotted) + 1;
+  return { head: parts.slice(0, headLen).join('::'), rest: parts.slice(headLen) };
+}
 
 /**
  * BD11 `unresolved-value-chain`.
@@ -619,7 +703,8 @@ export const specializationKindIncompatible: ValidationRule = {
  * `ref/` code reads value expressions (they cover relationship targets), so this
  * is a rule of its own. Only a value that is exactly one dotted chain of plain
  * names is read, and only where each step's feature has a resolved type and no
- * type is left unresolved; otherwise nothing is concluded.
+ * type is left unresolved; otherwise nothing is concluded. Names may be quoted
+ * (`'my part'.mass`) and the head may be a `::` qualified name (`Pkg::e.mass`).
  */
 export const unresolvedValueChain: ValidationRule = {
   id: 'unresolved-value-chain',
@@ -631,9 +716,11 @@ export const unresolvedValueChain: ValidationRule = {
     for (const el of model.all()) {
       if (!isUserElement(el) || !isKindOf(el.eClass, 'Usage')) continue;
       const v = el.attrs.value;
-      if (typeof v !== 'string' || !/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(v.trim())) continue;
-      const segs = v.trim().split('.');
-      let cur = resolveFullName(model, segs[0]!, el.ownerId, { exclude: el.id });
+      if (typeof v !== 'string') continue;
+      const chain = parseValueChain(v);
+      if (!chain || chain.rest.length === 0) continue;
+      const segs = [chain.head, ...chain.rest];
+      let cur = resolveFullName(model, chain.head, el.ownerId, { exclude: el.id });
       if (!cur || cur.attrs.isLibrary === true || !isKindOf(cur.eClass, 'Usage')) continue;
       for (let i = 1; i < segs.length && cur; i++) {
         const seg = segs[i]!;

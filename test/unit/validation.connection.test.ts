@@ -161,6 +161,24 @@ describe('connection-compatibility', () => {
       expect(findings(m)).toEqual([]);
     });
 
+    it('flags an undirected part or reference feature with no counterpart, and compares its definition', async () => {
+      for (const kw of ['part', 'ref']) {
+        const m = await bound(wrap(`part def Unit; port def P { out item top; ${kw} u : Unit; } port def Q { in item top; }`, 'Q'));
+        const f = findings(m);
+        expect(f).toHaveLength(1);
+        expect(f[0]).toMatch(/\bu\b/);
+      }
+      const other = await bound(wrap(`part def Unit; part def Other; port def P { out item top; part u : Unit; } port def Q { in item top; part u : Other; }`, 'Q'));
+      expect(findings(other).length).toBeGreaterThan(0);
+    });
+
+    it('stays silent when the undirected part or reference exists on both ends with a conforming definition', async () => {
+      const m = await bound(
+        wrap(`part def Unit; part def Sub :> Unit; port def P { out item top; part u : Unit; ref r : Unit; } port def Q { in item top; part u : Sub; ref r : Unit; }`, 'Q'),
+      );
+      expect(findings(m)).toEqual([]);
+    });
+
     it('reads a feature copy through a conjugated port as reversed (effectiveDirection)', async () => {
       const m = await bound(`package R {
     port def P { out item update; }
