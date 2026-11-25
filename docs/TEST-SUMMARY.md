@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 194
-- **Tests:** 6219 total — 6219 passed, 0 failed, 0 skipped
+- **Files:** 195
+- **Tests:** 6239 total — 6239 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -164,7 +164,7 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
-| test/unit/semantics.variability.test.ts | 44 | 0 | 0 |
+| test/unit/semantics.variability.test.ts | 50 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
@@ -193,12 +193,13 @@
 | test/unit/text.transition-redefinition.test.ts | 5 | 0 | 0 |
 | test/unit/text.variability.test.ts | 13 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
+| test/unit/ui.icd-overlay.test.ts | 5 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
 | test/unit/ui.properties-facets.test.ts | 27 | 0 | 0 |
 | test/unit/ui.requirements-table.test.ts | 29 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
-| test/unit/validation.connection.test.ts | 6 | 0 | 0 |
+| test/unit/validation.connection.test.ts | 15 | 0 | 0 |
 | test/unit/validation.exchange-allocation.test.ts | 21 | 0 | 0 |
 | test/unit/validation.interfaces.test.ts | 16 | 0 | 0 |
 | test/unit/validation.rules.test.ts | 110 | 0 | 0 |
