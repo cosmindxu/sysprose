@@ -1860,3 +1860,10 @@ textarea:focus-visible,
 .legend-mark-word {
   font-variant-numeric: tabular-nums;
 }
+
+/* The Interconnection overlay (icd-overlay.ts): a connection coloured by its ICD status. */
+:root { --icd-consistent: #1a7f4b; --icd-uncarried: #d92d20; --icd-unused: #b45309; }
+:root[data-theme='dark'] { --icd-consistent: #4ade80; --icd-uncarried: #f87171; --icd-unused: #fbbf24; }
+.react-flow__edge.rf-icd-consistent .react-flow__edge-path { stroke: var(--icd-consistent) !important; stroke-width: 2; }
+.react-flow__edge.rf-icd-uncarried .react-flow__edge-path { stroke: var(--icd-uncarried) !important; stroke-width: 2.5; }
+.react-flow__edge.rf-icd-unused .react-flow__edge-path { stroke: var(--icd-unused) !important; stroke-width: 2; stroke-dasharray: 2 4; }

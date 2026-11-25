@@ -1861,9 +1861,8 @@ and §21.4–21.11.
       writes (Arcadia §19.10–19.11, §20.4, §21.9); `exchange-unallocated` flags a flow between
       functions on two components that no connection carries, in a scope that allocates flows (§20.4);
       `function-port-allocation` judges `allocate fn.p to comp.q` (§20.3). The ICD
-      table is `sysprose icd` (one row per connection). Still open: the Interconnection overlay
-      (colour a connection by its ICD status, flows on hover; src/ui/panels), and
-      a function parameter with no port realisation at all (not judged: opt-in only where written).
+      table is `sysprose icd` (one row per connection). The Interconnection overlay is done
+      (src/ui/icd-overlay.ts: connections coloured by ICD status, flows on hover). Still open: a function parameter with no port realisation at all (not judged: opt-in only where written).
       [xalloc]
 - [ ] **Cross multiplicity on the other connector forms.** `connect [m] a to [n] b` is stored
       (`sourceCrossMult`/`targetCrossMult`), written back and checked (`connector-end-multiplicity`,

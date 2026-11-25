@@ -66,6 +66,7 @@ import {
 import { NodeContextMenu } from './NodeContextMenu';
 import { PaneContextMenu } from './PaneContextMenu';
 import { Legend } from './Legend';
+import { icdOverlay, type IcdEdgeMark } from '../icd-overlay';
 import { ColumnHeaders, columnStripTop } from './ColumnHeaders';
 
 /**
@@ -527,16 +528,26 @@ function DiagramCanvasInner(): JSX.Element {
   // which `layout.css` draws as a coloured, dashed edge and a badge. The base
   // edges are reused untouched when nothing is marked, so React Flow keeps their
   // identity.
+  // The Interconnection overlay: ICD status colour and flow hover text, read from icdReport.
+  const diagramRootId = useAppStore((s) => s.diagramRootId);
+  const icd = useMemo(
+    () => (activeView === 'interconnection' ? icdOverlay(model, diagramRootId ?? undefined) : new Map<string, IcdEdgeMark>()),
+    // `rev` is the model's change signal: the model object is mutated in place.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeView, model, rev, diagramRootId],
+  );
   const decoratedEdges = useMemo(() => {
-    if (behaviour.edgeClasses.size === 0) return edges;
+    if (behaviour.edgeClasses.size === 0 && icd.size === 0) return edges;
     return edges.map((e) => {
       const elementId = (e.data as { elementId?: string } | undefined)?.elementId;
+      const mark = elementId != null ? icd.get(elementId) : undefined;
+      if (mark !== undefined) return { ...e, className: mark.className, data: { ...e.data, icdTitle: mark.title } };
       const cls = elementId != null ? behaviour.edgeClasses.get(elementId) : undefined;
       if (cls === undefined) return e;
       const behMark = elementId != null ? behaviour.edgeMarks.get(elementId) : undefined;
       return { ...e, className: cls, data: { ...e.data, behMark } };
     });
-  }, [edges, behaviour.edgeClasses, behaviour.edgeMarks]);
+  }, [edges, icd, behaviour.edgeClasses, behaviour.edgeMarks]);
 
   /* ── connection: shared resolution for handle-drag and click-to-connect ── */
 
