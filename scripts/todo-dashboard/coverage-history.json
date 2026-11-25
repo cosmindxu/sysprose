@@ -1729,6 +1729,51 @@
   },
   {
    "idx": 137,
+   "day": "2026-11-25",
+   "sha": "3f81267",
+   "subject": "Merge sm-atoms",
+   "source": "timeline",
+   "snapshot": "3f81267",
+   "rows": 87,
+   "measured": 57,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 7,
+   "construct_coverage": 73.4,
+   "decision_coverage": 26.9
+  },
+  {
+   "idx": 138,
+   "day": "2026-11-25",
+   "sha": "03a54d3",
+   "subject": "Merge var-sm",
+   "source": "timeline",
+   "snapshot": "03a54d3",
+   "rows": 87,
+   "measured": 57,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 7,
+   "construct_coverage": 73.4,
+   "decision_coverage": 26.9
+  },
+  {
+   "idx": 139,
+   "day": "2026-11-25",
+   "sha": "268d585",
+   "subject": "Merge icd-view",
+   "source": "timeline",
+   "snapshot": "268d585",
+   "rows": 87,
+   "measured": 57,
+   "unmeasured": 30,
+   "decided_classes": 7,
+   "false": 7,
+   "construct_coverage": 73.4,
+   "decision_coverage": 26.9
+  },
+  {
+   "idx": 140,
    "day": "2026-11-17",
    "sha": "5b07886",
    "subject": "todo-dashboard: the SysML v2 coverage universe and what is measurably covered",
@@ -1743,7 +1788,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 138,
+   "idx": 141,
    "day": "2026-11-18",
    "sha": "2890ef2",
    "subject": "a5-cu CU1: API groups decided and GRAPH kinds rendered where a test asserts them (17 rows; API:other stays unmeasured, not shipped)",
@@ -1758,7 +1803,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 139,
+   "idx": 142,
    "day": "2026-11-19",
    "sha": "0d08856",
    "subject": "a5-cu CU2: measure the read column for the 14 textual rows from pinned probes (6 read, 8 partial)",
@@ -1773,7 +1818,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 140,
+   "idx": 143,
    "day": "2026-11-19",
    "sha": "a073ae2",
    "subject": "a5-cu CU3: normative clause list",
@@ -1788,7 +1833,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 141,
+   "idx": 144,
    "day": "2026-11-19",
    "sha": "b7cc670",
    "subject": "a5-cu-3: review fixes",
@@ -1803,7 +1848,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 142,
+   "idx": 145,
    "day": "2026-11-19",
    "sha": "7ede80b",
    "subject": "a5-cu CU3: cases get their own unmeasured row; the gaps are listed; the source is validated harder",
@@ -1818,7 +1863,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 143,
+   "idx": 146,
    "day": "2026-11-19",
    "sha": "37471ac",
    "subject": "a5-cu CU6: per-area false counts",
@@ -1833,7 +1878,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 144,
+   "idx": 147,
    "day": "2026-11-19",
    "sha": "ccb21bb",
    "subject": "a5-cu CU8: weighting policy",
@@ -1848,7 +1893,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 145,
+   "idx": 148,
    "day": "2026-11-19",
    "sha": "92c5289",
    "subject": "a5-cu CU9: trends and evidence links",
@@ -1863,7 +1908,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 146,
+   "idx": 149,
    "day": "2026-11-19",
    "sha": "3a740db",
    "subject": "a5-cu-689: review fixes (trend note, README rows, a truncated history is an error, per-area count wording)",
@@ -1878,7 +1923,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 147,
+   "idx": 150,
    "day": "2026-11-19",
    "sha": "4a9d6a3",
    "subject": "a5-cu-689: Fable review fixes (register wrong-statement defects counted, equal-size variants, n/a for an empty denominator, class names only as code or in the tag, ignored files rejected)",
@@ -1893,7 +1938,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 148,
+   "idx": 151,
    "day": "2026-11-19",
    "sha": "7d2dc6a",
    "subject": "coverage: regenerate the trend and page after the merge",
@@ -1908,7 +1953,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 149,
+   "idx": 152,
    "day": "2026-11-19",
    "sha": "7908a33",
    "subject": "todo-dashboard: refresh the datasets and the standalone page against main 7d2dc6a (78 open items)",
@@ -1923,7 +1968,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 150,
+   "idx": 153,
    "day": "2026-11-19",
    "sha": "2840e97",
    "subject": "todo-dashboard: refresh the datasets and the standalone page against main 8344ad0",
@@ -1938,7 +1983,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 151,
+   "idx": 154,
    "day": "2026-11-19",
    "sha": "abf30a6",
    "subject": "todo-dashboard: refresh the datasets and the standalone page against main fe9aa18",
@@ -1953,7 +1998,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 152,
+   "idx": 155,
    "day": "2026-11-19",
    "sha": "240592c",
    "subject": "todo-dashboard: refresh the datasets and the standalone page",
@@ -1968,7 +2013,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 153,
+   "idx": 156,
    "day": "2026-11-19",
    "sha": "88a0507",
    "subject": "todo-dashboard: refresh the datasets against main 240592c",
@@ -1983,7 +2028,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 154,
+   "idx": 157,
    "day": "2026-11-19",
    "sha": "1326425",
    "subject": "todo-dashboard: CU-7 is not a FALSE-tier item (override) and the datasets are refreshed",
@@ -1998,7 +2043,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 155,
+   "idx": 158,
    "day": "2026-11-19",
    "sha": "586b2de",
    "subject": "todo-dashboard: refresh the coverage datasets against main 1d21098",
@@ -2013,7 +2058,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 156,
+   "idx": 159,
    "day": "2026-11-20",
    "sha": "ad64f42",
    "subject": "todo-dashboard: refresh the datasets against main 99ab8b1 (open 76: WEAKER 42, POLISH 32, HELD 2, FALSE 0)",
@@ -2028,7 +2073,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 157,
+   "idx": 160,
    "day": "2026-11-20",
    "sha": "36d7c3b",
    "subject": "todo-dashboard: refresh against main 63ecb9d",
@@ -2043,7 +2088,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 158,
+   "idx": 161,
    "day": "2026-11-20",
    "sha": "8d6e810",
    "subject": "todo-dashboard: refresh against main",
@@ -2058,7 +2103,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 159,
+   "idx": 162,
    "day": "2026-11-20",
    "sha": "4933744",
    "subject": "todo-dashboard: refresh against main",
@@ -2073,7 +2118,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 160,
+   "idx": 163,
    "day": "2026-11-21",
    "sha": "3fe3586",
    "subject": "todo-dashboard: refresh against main",
@@ -2088,7 +2133,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 161,
+   "idx": 164,
    "day": "2026-11-21",
    "sha": "de39346",
    "subject": "todo-dashboard: refresh against main",
@@ -2103,7 +2148,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 162,
+   "idx": 165,
    "day": "2026-11-21",
    "sha": "a820853",
    "subject": "todo-dashboard: refresh against main",
@@ -2118,7 +2163,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 163,
+   "idx": 166,
    "day": "2026-11-21",
    "sha": "7f3bd9e",
    "subject": "todo-dashboard: refresh against main",
@@ -2133,7 +2178,7 @@
    "decision_coverage": 28.0
   },
   {
-   "idx": 164,
+   "idx": 167,
    "day": "2026-11-22",
    "sha": "e121020",
    "subject": "todo-dashboard: refresh against main",
