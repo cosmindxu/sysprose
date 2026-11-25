@@ -619,6 +619,12 @@ export const valueMultiplicityMismatch: ValidationRule = {
  * `enum def :> enum def` is the one same-kind pair that is not legal.
  * Both ends must be definitions of a known metaclass; implicit and library
  * specialisations are not read.
+ *
+ * Usage level (§7.6.3, line ~3300, and §8.3: every usage kind must subset its own base
+ * usage, "A PartUsage must subset, directly or indirectly, the base PartUsage parts"): a
+ * usage that subsets, redefines or reference-subsets another follows the same line of
+ * metaclasses, so `attribute x :> p` over a part usage, or `part q :> port r`, are
+ * flagged. A `ref` usage and the bare `Usage` metaclass stand for any kind and are not read.
  */
 export const specializationKindIncompatible: ValidationRule = {
   id: 'specialization-kind-incompatible',
@@ -628,16 +634,21 @@ export const specializationKindIncompatible: ValidationRule = {
     let n = 0;
     const out: Diagnostic[] = [];
     for (const rel of model.all()) {
-      if (rel.eClass !== 'Subclassification' || rel.attrs.isLibrary === true) continue;
+      const usageLevel = rel.eClass === 'Subsetting' || rel.eClass === 'Redefinition' || rel.eClass === 'ReferenceSubsetting';
+      if ((rel.eClass !== 'Subclassification' && !usageLevel) || rel.attrs.isLibrary === true || rel.attrs.implicit === true) continue;
       const subId = rel.source?.[0];
       const supId = rel.target?.[0];
       const sub = subId ? model.get(subId) : undefined;
       const sup = supId ? model.get(supId) : undefined;
       if (!sub || !sup || !isUserElement(sub) || sub.id === sup.id) continue;
-      const known = (e: ElementRecord): boolean => e.eClass.endsWith('Definition') && e.eClass in DIRECT_SUPERTYPES;
+      // A usage-level pair reads only the specific usage kinds: a reference usage (`ref x`) or the bare `Usage` may stand for any.
+      const known = (e: ElementRecord): boolean =>
+        usageLevel
+          ? e.eClass.endsWith('Usage') && e.eClass in DIRECT_SUPERTYPES && e.eClass !== 'ReferenceUsage' && e.eClass !== 'Usage'
+          : e.eClass.endsWith('Definition') && e.eClass in DIRECT_SUPERTYPES;
       if (!known(sub) || !known(sup)) continue;
       let why: string | undefined;
-      if (sub.eClass === 'EnumerationDefinition' && sup.eClass === 'EnumerationDefinition') {
+      if (!usageLevel && sub.eClass === 'EnumerationDefinition' && sup.eClass === 'EnumerationDefinition') {
         why = 'an enumeration definition must not specialise another enumeration definition: its literals would add to the values the general allows (§7.8.2)';
       } else if (!isKindOf(sub.eClass, sup.eClass) && !isKindOf(sup.eClass, sub.eClass)) {
         why = `a «${sub.eClass}» and a «${sup.eClass}» are on different lines of the metaclass hierarchy, so neither is a kind of the other (§7.6.2, §7.7.2)`;
@@ -647,7 +658,7 @@ export const specializationKindIncompatible: ValidationRule = {
         id: `specialization-kind-incompatible#${n++}`,
         ruleId: 'specialization-kind-incompatible',
         severity: 'warning',
-        message: `${qualifiedLabel(model, sub)} (${sub.eClass}) specialises ${qualifiedLabel(model, sup)} (${sup.eClass}): ${why}.`,
+        message: `${qualifiedLabel(model, sub)} (${sub.eClass}) ${usageLevel ? rel.eClass === 'Redefinition' ? 'redefines' : 'subsets' : 'specialises'} ${qualifiedLabel(model, sup)} (${sup.eClass}): ${why}.`,
         elementId: sub.id,
       });
     }

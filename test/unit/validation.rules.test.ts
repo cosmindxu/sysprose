@@ -945,6 +945,15 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(await run('item def I; part def B :> I; part def C :> B; occurrence def O; item def D :> O; attribute def V; attribute def W :> V; enum def E { a; } attribute def Z :> E;', 'specialization-kind-incompatible')).toEqual([]);
   });
 
+  it('BD9 usage level: a usage subsetting or redefining a usage of another line is flagged', async () => {
+    expect(await run('part def A; port def Q; part def X { part p : A; attribute v :> p; }', 'specialization-kind-incompatible')).toHaveLength(1);
+    expect(await run('port def Q; part def X { port r : Q; part s subsets r; }', 'specialization-kind-incompatible')).toHaveLength(1);
+    expect(await run('part def A; part def Y { part p : A; } part def Z :> Y { attribute p redefines p; }', 'specialization-kind-incompatible')).toHaveLength(1);
+  });
+  it('BD9 usage level: item over part, state over action, a ref usage and same kinds stay silent', async () => {
+    expect(await run('part def A; part def X { part p : A; item i :> p; ref r :> p; part q :> p; attribute a; attribute b :> a; action act; state st :> act; ref x; part y :> x; }', 'specialization-kind-incompatible')).toEqual([]);
+  });
+
   it('BD11 unresolved-value-chain: flags a chain whose later name is not a feature', async () => {
     const w = await run('part def E { attribute mass : Real; } part def Car { part e : E; attribute m : Real = e.mass; attribute bad : Real = e.nosuch; }', 'unresolved-value-chain');
     expect(w).toHaveLength(1);
