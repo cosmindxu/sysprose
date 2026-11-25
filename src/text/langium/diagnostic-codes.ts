@@ -351,7 +351,7 @@ const CODES = [
     code: 'validation/connection-compatibility',
     source: 'validation',
     severity: 'warning',
-    when: 'A connection joins two `out` (or two `in`) ports; or ports with directed features that do not conform (SysML v2 §7.12.1: each directed feature needs a feature of a conforming definition with the conjugate direction on the other port); or, where neither port has a directed feature, two ports whose port definitions share no ancestor.',
+    when: 'A connection joins two `out` (or two `in`) ports; or ports with directed features that do not conform (SysML v2 §7.12.1: each directed feature needs a feature of a conforming definition with the conjugate direction on the other port); or, where neither port has a directed feature, two ports whose port definitions share no ancestor. The comparison also covers undirected attribute and item features (a same-named feature of a conforming definition must exist on the other port) and nested ports (the same-named nested port must exist, compared recursively with the conjugation of each port along the path composed; a nested port with nothing in it is not required).',
     hint: 'Wire an `out` port to an `in` port (or use `inout`), and give both ends the same port definition — or a conjugated one (`~PortDef`) on the receiving side.',
   },
   {

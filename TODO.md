@@ -1870,14 +1870,13 @@ and §21.4–21.11.
       §7.13.2). Still unread: the list form `connect ([1] hub ::> x, …)` and `end [m] part x references y`
       bodies (the grammar has no cross multiplicity there), and the spec's `end [0..2] part device` form (multiplicity before the keyword; it does not parse today, only `end part device [0..2]` does), and a definition end's cross multiplicity
       against a usage written without one when the other end has more than one instance. [if-compat]
-- [ ] **Compare the undirected features and the nested ports of two connected ports.** §7.12.1's
-      conformance is over every feature; `connection-compatibility` compares the directed ones and
-      does not descend into nested ports (sound: it only reports fewer mismatches). [if-compat]
-- [ ] **Store the direction of an implicit feature copy under a conjugated port as seen through
-      it.** The copy of `update` under `b.meshIn : ~MeshPort` keeps `out` as written on `MeshPort`
-      (§7.12.3 makes it `in`). No current reader reaches it through a conjugated port (the
-      interface rules read `effectiveDirection`); a reader that does would read it reversed.
-      [if-compat]
+- [x] **Compare the undirected features and the nested ports of two connected ports.** Done: `portMismatches`
+      descends into nested ports (depth 6, pair cycle guard, conjugation composed along the path) and checks
+      undirected attribute/item features by name and conforming definition. Left open: undirected features
+      other than attributes and items (parts, references) are not compared. [if-compat]
+- [x] **Store the direction of an implicit feature copy under a conjugated port as seen through
+      it.** Settled by routing: every reader goes through `effectiveDirection`, which reverses a copy
+      reached through a conjugated port (tested through `~P`); the stored attribute stays as written. [if-compat]
 - [ ] **Bring `port-typing` models to the spec, then decide its severity.** v9 types 80 declared
       ports by item definitions (`in port taskingIn : TaskingOrder;`); the mbse-workflow authoring
       steps should write a port definition with directed items and type ports by it (and `~` on

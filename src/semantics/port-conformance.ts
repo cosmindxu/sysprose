@@ -168,33 +168,129 @@ export function directedFeaturesOf(model: Model, portId: ElementId): DirectedFea
 export interface PortMismatch {
   /** The port whose feature found no match. */
   port: ElementId;
-  feature: DirectedFeature;
-  /** Why: a feature of a conforming definition exists but its direction is not the conjugate, or none conforms. */
-  reason: 'direction' | 'definition';
+  /** The unmatched feature; `direction` is absent for an undirected feature or a nested port. */
+  feature: { el: ElementRecord; name: string; direction?: Direction };
+  /**
+   * Why: `direction` — a feature of a conforming definition exists but its direction is not the conjugate;
+   * `definition` — none conforms; `undirected` — an undirected feature has no same-named counterpart;
+   * `nested` — a nested port has no same-named counterpart.
+   */
+  reason: 'direction' | 'definition' | 'undirected' | 'nested';
   /** The other side's same-definition feature, when the reason is direction. */
   other?: DirectedFeature;
+  /** Names of the nested ports descended through from `port` to the feature (empty at the top). */
+  path: string[];
+}
+
+/** Words for a mismatch's feature: `out x : T`, `attribute x`, `port x`, with the nested path in front. */
+export function mismatchFeatureText(m: PortMismatch, typeSuffix: string): string {
+  const prefix = m.path.length > 0 ? `${m.path.join('.')}.` : '';
+  const kw = m.feature.direction ?? (m.reason === 'nested' ? 'port' : 'undirected');
+  return `${kw} ${prefix}${m.feature.name}${typeSuffix}`;
+}
+
+const MAX_NEST = 6;
+
+interface PortFeatures {
+  directed: DirectedFeature[];
+  undirected: { el: ElementRecord; name: string }[];
+  nested: { el: ElementRecord; name: string }[];
+}
+
+/** The features of a port by kind; directions carry the net conjugation `acc` (of the ancestors) composed with the port's own. */
+function featuresByKind(model: Model, portId: ElementId, acc: boolean): PortFeatures {
+  const conj = acc !== portConjugated(model, portId);
+  const out: PortFeatures = { directed: [], undirected: [], nested: [] };
+  const seen = new Set<string>();
+  for (const f of effectiveFeatures(model, portId)) {
+    if (f.attrs.isLibrary === true || f.attrs.isEnd === true) continue;
+    const name = f.declaredName ?? undefined;
+    const d = declaredDirection(model, f.id);
+    if (f.eClass === 'PortUsage' && f.attrs.keywordless !== true) {
+      if (name !== undefined && !seen.has(`p:${name}`)) {
+        seen.add(`p:${name}`);
+        out.nested.push({ el: f, name });
+      }
+      continue;
+    }
+    if (d !== undefined) {
+      out.directed.push({ el: f, name: name ?? `«${f.eClass}»`, direction: conj ? conjugateDirection(d) : d });
+      continue;
+    }
+    if (name !== undefined && (f.eClass === 'AttributeUsage' || f.eClass === 'ItemUsage') && !seen.has(`u:${name}`)) {
+      seen.add(`u:${name}`);
+      out.undirected.push({ el: f, name });
+    }
+  }
+  return out;
+}
+
+/** A nested port with something to exchange (an empty one has nothing a counterpart could lack). */
+function hasContent(model: Model, portId: ElementId, depth: number): boolean {
+  const f = featuresByKind(model, portId, false);
+  if (f.directed.length > 0 || f.undirected.length > 0) return true;
+  return depth < MAX_NEST && f.nested.some((n) => hasContent(model, n.el.id, depth + 1));
 }
 
 /**
- * §7.12.1 port conformance between two port usages, over their DIRECTED
- * features. `undefined` when neither port has a directed feature (the question
- * is the nominal one the caller already asks); `[]` when they conform.
+ * §7.12.1 port conformance between two port usages: their DIRECTED features
+ * (conjugate directions), their UNDIRECTED attribute and item features (a
+ * same-named feature of a conforming definition on the other), and their NESTED
+ * ports (the same-named nested port on the other end, compared recursively with
+ * the conjugation of every port along the path composed, §7.12.3). `undefined`
+ * when neither port has a directed feature and nothing else mismatched (the
+ * question is the nominal one the caller already asks); `[]` when they conform.
  */
 export function portMismatches(model: Model, a: ElementId, b: ElementId): PortMismatch[] | undefined {
-  const fa = directedFeaturesOf(model, a);
-  const fb = directedFeaturesOf(model, b);
-  if (fa.length === 0 && fb.length === 0) return undefined;
   const out: PortMismatch[] = [];
-  const side = (port: ElementId, mine: DirectedFeature[], theirs: DirectedFeature[]) => {
-    for (const f of mine) {
-      const conforming = theirs.filter((g) => definitionsConform(model, f.el.id, g.el.id));
-      if (conforming.some((g) => g.direction === conjugateDirection(f.direction))) continue;
-      if (conforming.length > 0) out.push({ port, feature: f, reason: 'direction', other: conforming[0] });
-      else out.push({ port, feature: f, reason: 'definition' });
+  let anyDirected = false;
+  const visited = new Set<string>();
+  const walk = (pa: ElementId, pb: ElementId, accA: boolean, accB: boolean, path: string[], depth: number): void => {
+    const key = `${pa}|${pb}`;
+    if (visited.has(key)) return; // cycle guard (a port def whose nested port is typed by itself)
+    visited.add(key);
+    const A = featuresByKind(model, pa, accA);
+    const B = featuresByKind(model, pb, accB);
+    if (A.directed.length > 0 || B.directed.length > 0) anyDirected = true;
+    const side = (port: ElementId, mine: PortFeatures, theirs: PortFeatures) => {
+      for (const f of mine.directed) {
+        const conforming = theirs.directed.filter((g) => definitionsConform(model, f.el.id, g.el.id));
+        if (conforming.some((g) => g.direction === conjugateDirection(f.direction))) continue;
+        if (conforming.length > 0) out.push({ port, feature: f, reason: 'direction', other: conforming[0], path });
+        else out.push({ port, feature: f, reason: 'definition', path });
+      }
+      for (const u of mine.undirected) {
+        // A same-named DIRECTED feature on the other side is the directed check's finding, not a second one here.
+        if (theirs.directed.some((g) => g.name === u.name)) continue;
+        const same = theirs.undirected.filter((g) => g.name === u.name);
+        if (same.length === 0 || !same.some((g) => definitionsConform(model, u.el.id, g.el.id))) {
+          out.push({ port, feature: u, reason: 'undirected', path });
+        }
+      }
+      for (const n of mine.nested) {
+        if (!theirs.nested.some((g) => g.name === n.name) && hasContent(model, n.el.id, depth + 1)) {
+          out.push({ port, feature: n, reason: 'nested', path });
+        }
+      }
+    };
+    side(pa, A, B);
+    side(pb, B, A);
+    if (depth >= MAX_NEST) return;
+    for (const n of A.nested) {
+      const m = B.nested.find((g) => g.name === n.name);
+      if (!m) continue;
+      walk(
+        n.el.id,
+        m.el.id,
+        accA !== portConjugated(model, pa),
+        accB !== portConjugated(model, pb),
+        [...path, n.name],
+        depth + 1,
+      );
     }
   };
-  side(a, fa, fb);
-  side(b, fb, fa);
+  walk(a, b, false, false, [], 0);
+  if (!anyDirected && out.length === 0) return undefined;
   return out;
 }
 

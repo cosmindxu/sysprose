@@ -90,7 +90,7 @@ import { generalizationsOf } from './inheritance';
 import { reachReport, stateMachinesIn } from './mc/explore';
 import { connectorEndsOf } from './connectors';
 import { evaluate, exprRefusal, parseExpr } from './expr';
-import { declaredDefinitions, definitionsConform, portMismatches } from './port-conformance';
+import { declaredDefinitions, definitionsConform, mismatchFeatureText, portMismatches } from './port-conformance';
 
 /** Diagnostic codes of this module (catalogued by the integrator). */
 export const VARIABILITY_CODES = {
@@ -727,7 +727,7 @@ function pairBreak(model: Model, a: string, b: string): string | undefined {
   if (mm !== undefined) {
     if (mm.length === 0) return undefined;
     const m = mm[0];
-    return `${label(m.port)}: \`${m.feature.direction} ${m.feature.name}\` ${m.reason === 'direction' ? 'meets a feature that is not its conjugate' : 'has no feature of a conforming definition on the other end'} (SysML v2 §7.12.1)`;
+    return `${label(m.port)}: \`${mismatchFeatureText(m, '')}\` ${m.reason === 'direction' ? 'meets a feature that is not its conjugate' : m.reason === 'nested' ? 'has no nested port of that name on the other end' : m.reason === 'undirected' ? 'has no same-named feature on the other end' : 'has no feature of a conforming definition on the other end'} (SysML v2 §7.12.1)`;
   }
   // The DECLARED definitions (a redefining port typed Sg is an Sg, whatever the port it redefines was typed).
   const da = declaredDefinitions(model, a).filter((d) => d.eClass === 'PortDefinition');
