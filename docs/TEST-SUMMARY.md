@@ -4,13 +4,13 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 193
-- **Tests:** 6198 total — 6198 passed, 0 failed, 0 skipped
+- **Files:** 194
+- **Tests:** 6219 total — 6219 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
 | test/campaign/authoring-campaign.test.ts | 144 | 0 | 0 |
-| test/campaign/cli.sysprose.test.ts | 140 | 0 | 0 |
+| test/campaign/cli.sysprose.test.ts | 145 | 0 | 0 |
 | test/campaign/cli.test.ts | 14 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
 | test/campaign/verification.test.ts | 191 | 0 | 0 |
@@ -64,7 +64,7 @@
 | test/unit/centrality.test.ts | 8 | 0 | 0 |
 | test/unit/checks-registry.test.ts | 140 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
-| test/unit/cli-reference.test.ts | 29 | 0 | 0 |
+| test/unit/cli-reference.test.ts | 30 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 36 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
@@ -122,18 +122,19 @@
 | test/unit/semantics.execution-full.test.ts | 20 | 0 | 0 |
 | test/unit/semantics.expr.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
+| test/unit/semantics.icd.test.ts | 4 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
 | test/unit/semantics.mc.after.test.ts | 5 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.parallel-orders.test.ts | 8 | 0 | 0 |
-| test/unit/semantics.mc.parallel-witness.test.ts | 12 | 0 | 0 |
+| test/unit/semantics.mc.parallel-witness.test.ts | 16 | 0 | 0 |
 | test/unit/semantics.mc.parallel.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 104 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.mc.quoted-atom.test.ts | 1 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 146 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 147 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.redefinition-merge.test.ts | 2 | 0 | 0 |
 | test/unit/semantics.mc.redefinition.test.ts | 5 | 0 | 0 |
@@ -163,7 +164,7 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
-| test/unit/semantics.variability.test.ts | 38 | 0 | 0 |
+| test/unit/semantics.variability.test.ts | 44 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
