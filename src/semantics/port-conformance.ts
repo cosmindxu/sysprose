@@ -191,6 +191,9 @@ export function mismatchFeatureText(m: PortMismatch, typeSuffix: string): string
 
 const MAX_NEST = 6;
 
+/** The undirected feature kinds compared by name and conforming definition: attributes, items, parts and references. */
+const UNDIRECTED_KINDS = new Set(['AttributeUsage', 'ItemUsage', 'PartUsage', 'ReferenceUsage']);
+
 interface PortFeatures {
   directed: DirectedFeature[];
   undirected: { el: ElementRecord; name: string }[];
@@ -217,7 +220,7 @@ function featuresByKind(model: Model, portId: ElementId, acc: boolean): PortFeat
       out.directed.push({ el: f, name: name ?? `«${f.eClass}»`, direction: conj ? conjugateDirection(d) : d });
       continue;
     }
-    if (name !== undefined && (f.eClass === 'AttributeUsage' || f.eClass === 'ItemUsage') && !seen.has(`u:${name}`)) {
+    if (name !== undefined && UNDIRECTED_KINDS.has(f.eClass) && !seen.has(`u:${name}`)) {
       seen.add(`u:${name}`);
       out.undirected.push({ el: f, name });
     }
@@ -234,7 +237,7 @@ function hasContent(model: Model, portId: ElementId, depth: number): boolean {
 
 /**
  * §7.12.1 port conformance between two port usages: their DIRECTED features
- * (conjugate directions), their UNDIRECTED attribute and item features (a
+ * (conjugate directions), their UNDIRECTED attribute, item, part and reference features (a
  * same-named feature of a conforming definition on the other), and their NESTED
  * ports (the same-named nested port on the other end, compared recursively with
  * the conjugation of every port along the path composed, §7.12.3). `undefined`
