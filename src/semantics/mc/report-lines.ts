@@ -273,22 +273,36 @@ export function reachMachineLines(m: MachineReach, block: number): ReportLine[] 
   // A READING, never a finding: no code, no withholding, no exit-code effect. One line per machine.
   const ec = m.eventCompleteness;
   if (ec !== null) {
-    const shown = ec.states
-      .slice(0, 3)
-      .map((e) => `${e.state.name} ignores ${e.ignored.map((x) => `\`${x}\``).join(', ')}`)
-      .join('; ');
-    out.push(
-      line(
-        'events',
+    const parts: string[] = [];
+    if (ec.statesRead > 0) {
+      const shown = ec.states
+        .slice(0, 3)
+        .map((e) => `${e.state.name} ignores ${e.ignored.map((x) => `\`${x}\``).join(', ')}`)
+        .join('; ');
+      parts.push(
         ec.states.length === 0
-          ? `    events       every one of the ${ec.alphabet.length} event(s) is accepted by each of the ${ec.statesRead} reachable state(s) read` +
-              (ec.statesSkipped > 0 ? ` (${ec.statesSkipped} state(s) inside parallel regions not read)` : '')
-          : `    events       ${ec.states.length} of ${ec.statesRead} reachable state(s) ignore at least one of the ${ec.alphabet.length} event(s) ` +
+          ? `every one of the ${ec.alphabet.length} event(s) is accepted by each of the ${ec.statesRead} reachable state(s) read` +
+              (ec.statesSkipped > 0 && ec.parallel === null ? ` (${ec.statesSkipped} state(s) inside parallel regions not read)` : '')
+          : `${ec.states.length} of ${ec.statesRead} reachable state(s) ignore at least one of the ${ec.alphabet.length} event(s) ` +
               `(${shown}${ec.states.length > 3 ? '; …' : ''}) — an event no transition accepts is dropped there, which a model may intend; a reading, not a defect` +
-              (ec.statesSkipped > 0 ? `; ${ec.statesSkipped} state(s) inside parallel regions not read` : ''),
-        { elementId: id },
-      ),
-    );
+              (ec.statesSkipped > 0 && ec.parallel === null ? `; ${ec.statesSkipped} state(s) inside parallel regions not read` : ''),
+      );
+    }
+    if (ec.parallel !== null) {
+      const pc = ec.parallel;
+      const shown = pc.configs
+        .slice(0, 3)
+        .map((c) => `(${c.leaves.map((l) => l.name).join(', ')}) ignores ${c.ignored.map((x) => `\`${x}\``).join(', ')}`)
+        .join('; ');
+      parts.push(
+        pc.configs.length === 0
+          ? `in each of the ${pc.configsRead} parallel region configuration(s) read, every event is accepted by some active state`
+          : `${pc.configs.length} of ${pc.configsRead} parallel region configuration(s) leave at least one event unhandled by every active state ` +
+              `(${shown}${pc.configs.length > 3 ? '; …' : ''}) — a reading, not a defect` +
+              (pc.truncated ? `; only the first ${pc.configsRead} configurations were read` : ''),
+      );
+    }
+    out.push(line('events', `    events       ${parts.join('; ')}`, { elementId: id }));
   }
   for (const d of m.deadlocks) {
     out.push(

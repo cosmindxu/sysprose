@@ -4441,4 +4441,31 @@ describe('event completeness is a reading: one info line, never a finding', () =
     );
     expect(m.eventCompleteness === null || m.eventCompleteness.states.length === 0).toBe(true);
   });
+
+  it('parallel regions: an event is unhandled where no active state of any region accepts it', async () => {
+    // Each region loops on its own event, so each event is always accepted by some region: complete.
+    const complete = await run(
+      `package P { item def e1; item def e2; state def M { entry; then run; state run parallel {
+        state r1 { entry; then a1; state a1; transition x first a1 accept e1 then a1; }
+        state r2 { entry; then b1; state b1; transition y first b1 accept e2 then b1; } } } }`,
+      'run',
+    );
+    expect(complete.eventCompleteness.parallel.configs).toEqual([]);
+    expect(complete.eventCompleteness.parallel.configsRead).toBeGreaterThan(0);
+    expect(reachMachineLines(complete, 1).find((l: any) => l.kind === 'events')!.text).toContain('every event is accepted by some active state');
+    // e3 is declared (by a transition in a third region state that is never active together) and handled by neither region.
+    const gap = await run(
+      `package P { item def e1; item def e2; item def e3; state def M { entry; then run; state run parallel {
+        state r1 { entry; then a1; state a1; state a2; transition x first a1 accept e1 then a2; transition z first a2 accept e3 then a1; }
+        state r2 { entry; then b1; state b1; transition y first b1 accept e2 then b1; } } } }`,
+      'run',
+    );
+    const rows = gap.eventCompleteness.parallel.configs.map((c: any) => [c.leaves.map((l: any) => l.name).sort(), c.ignored]);
+    expect(rows).toContainEqual([['a1', 'b1'], ['e3']]);
+    expect(rows).toContainEqual([['a2', 'b1'], ['e1']]);
+    expect(rows.some((r: any) => r[0].includes('a2') && r[1].includes('e3'))).toBe(false);
+    const text = reachMachineLines(gap, 1).find((l: any) => l.kind === 'events')!.text;
+    expect(text).toContain('unhandled by every active state');
+    expect(text).toContain('a reading, not a defect');
+  });
 });
