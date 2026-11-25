@@ -90,4 +90,88 @@ describe('connection-compatibility', () => {
   it.each(['examples/vehicle.sysml', 'examples/uav-isr.sysml'])('%s is clean', async (f) => {
     expect(findings(await bound(readFileSync(f, 'utf8')))).toEqual([]);
   });
+
+  describe('nested ports, undirected features and conjugated copies (§7.12.1, §7.12.3)', () => {
+    const wrap = (defs: string, conn: string) => `package N {
+    ${defs}
+    part def A { port p : P; }
+    part def B { port q : ${conn}; }
+    part def Sys { part a : A; part b : B; connection c connect a.p to b.q; }
+}`;
+
+    it('flags a nested port missing on the other end, naming the path', async () => {
+      const m = await bound(
+        wrap(`port def Inner { out item x; } port def P { out item top; port sub : Inner; } port def Q { in item top; }`, 'Q'),
+      );
+      const f = findings(m);
+      expect(f).toHaveLength(1);
+      expect(f[0]).toMatch(/§7\.12\.1/);
+      expect(f[0]).toMatch(/nested/);
+      expect(f[0]).toMatch(/sub/);
+    });
+
+    it('flags a direction mismatch inside nested ports, with conjugation composed along the path', async () => {
+      const m = await bound(
+        wrap(
+          `port def Inner { out item x; } port def P { port sub : Inner; } port def Q { port sub : Inner; }`,
+          'Q', // not conjugated: sub.x is out on both sides
+        ),
+      );
+      const f = findings(m);
+      expect(f).toHaveLength(1);
+      expect(f[0]).toMatch(/sub\.x/);
+    });
+
+    it('stays silent for a conjugated pair with nested ports that conform', async () => {
+      const m = await bound(
+        wrap(`port def Inner { out item x; } port def P { out item top; port sub : Inner; }`, '~P'),
+      );
+      expect(findings(m)).toEqual([]);
+    });
+
+    it('stays silent when a port def has no nested ports (as before)', async () => {
+      const m = await bound(wrap(`port def P { out item top; }`, '~P'));
+      expect(findings(m)).toEqual([]);
+    });
+
+    it('stays silent for an empty nested port the other end omits', async () => {
+      const m = await bound(wrap(`port def E; port def P { out item top; port sub : E; } port def Q { in item top; }`, 'Q'));
+      expect(findings(m)).toEqual([]);
+    });
+
+    it('terminates on a nested port typed by its own definition', async () => {
+      const m = await bound(wrap(`port def P { out item top; port sub : P; }`, '~P'));
+      expect(() => findings(m)).not.toThrow();
+      expect(findings(m)).toEqual([]);
+    });
+
+    it('flags an undirected attribute with no same-named counterpart', async () => {
+      const m = await bound(
+        wrap(`port def P { out item top; attribute id : ScalarValues::String; } port def Q { in item top; }`, 'Q'),
+      );
+      const f = findings(m);
+      expect(f).toHaveLength(1);
+      expect(f[0]).toMatch(/id/);
+    });
+
+    it('stays silent when the undirected attribute exists on both ends', async () => {
+      const m = await bound(
+        wrap(`port def P { out item top; attribute id : ScalarValues::String; } port def Q { in item top; attribute id : ScalarValues::String; }`, 'Q'),
+      );
+      expect(findings(m)).toEqual([]);
+    });
+
+    it('reads a feature copy through a conjugated port as reversed (effectiveDirection)', async () => {
+      const m = await bound(`package R {
+    port def P { out item update; }
+    part def B { port meshIn : ~P; }
+}`);
+      const port = m.all().find((e) => e.declaredName === 'meshIn')!;
+      const { effectiveDirection } = await import('../../src/semantics/port-conformance');
+      const copies = m.all().filter((e) => e.declaredName === 'update' && e.ownerId === port.id);
+      const proto = m.all().find((e) => e.declaredName === 'update' && e.ownerId !== port.id && e.attrs.isLibrary !== true)!;
+      expect(effectiveDirection(m, proto.id)).toBe('out');
+      for (const c of copies) expect(effectiveDirection(m, c.id)).toBe('in');
+    });
+  });
 });

@@ -5041,6 +5041,13 @@ any of these at the language level:
   features match (`out item m : Msg` against `in item m : Msg`). Where neither
   port has a directed feature, the old question stays: a port definition in
   common, and not `out` to `out` on the usages.
+  The comparison goes further than the directed features: an undirected
+  attribute or item of one port needs a same-named feature of a conforming
+  definition on the other, and a nested port (`port sub : Inner` inside a port
+  definition) needs the same-named nested port on the other end, compared the
+  same way with the conjugation of each port along the path composed (§7.12.3);
+  the finding names the path (`sub.x`). A nested port with nothing in it is not
+  required.
 - **`interface-end-conformance`.** `interface i : MeshInterface connect a.x to
   b.y` relates `a.x` through the definition's first end and `b.y` through its
   second (KerML §7.4.6). A port of another definition there, or one conjugated

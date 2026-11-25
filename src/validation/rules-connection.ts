@@ -38,6 +38,7 @@ import {
   payloadDefinition,
   portConjugated,
   portMismatches,
+  mismatchFeatureText,
 } from '../semantics/port-conformance';
 import type { Diagnostic, ValidationRule } from './types';
 
@@ -143,13 +144,17 @@ export const connectionCompatibility: ValidationRule = {
       if (mismatches !== undefined) {
         if (mismatches.length > 0) {
           const first = mismatches[0];
-          const f = `\`${first.feature.direction} ${first.feature.name}${typeSuffix(model, first.feature.el.id)}\``;
+          const f = `\`${mismatchFeatureText(first, typeSuffix(model, first.feature.el.id))}\``;
           const where = qualifiedLabel(model, model.get(first.port) ?? first.feature.el);
           const otherPort = first.port === ends[0] ? b.el : a.el;
           const why =
             first.reason === 'direction' && first.other
               ? `${f} of ${where} meets \`${first.other.direction} ${first.other.name}\` on ${qualifiedLabel(model, otherPort)}, which is not its conjugate (in↔out, inout↔inout)`
-              : `${f} of ${where} has no feature of a conforming definition on ${qualifiedLabel(model, otherPort)}`;
+              : first.reason === 'undirected'
+                ? `${f} of ${where} has no same-named feature of a conforming definition on ${qualifiedLabel(model, otherPort)}`
+                : first.reason === 'nested'
+                  ? `the nested ${f} of ${where} has no nested port of that name on ${qualifiedLabel(model, otherPort)}`
+                  : `${f} of ${where} has no feature of a conforming definition on ${qualifiedLabel(model, otherPort)}`;
           const more = mismatches.length > 1 ? ` (${mismatches.length - 1} more unmatched feature${mismatches.length > 2 ? 's' : ''})` : '';
           out.push(mk(`Connection "${name}" joins ports that do not conform (SysML v2 §7.12.1): ${why}${more}.`, el.id));
         }
