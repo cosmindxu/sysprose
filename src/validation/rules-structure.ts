@@ -251,9 +251,11 @@ const isUserElement = (el: ElementRecord): boolean => el.attrs.isLibrary !== tru
  * a specialisation of it (§7.6.3: a usage that subsets inherits the subsetted
  * usage's constraints, its typing among them). `part b : B subsets a` over
  * `part a : A` with neither of A, B specialising the other has values that are
- * not values of `a`. Only a subsetter that DECLARES its type is judged (one that
- * only inherits a type has it by the subsetting itself), and only when it has
- * no declared type that conforms; a type that does not resolve gives no finding.
+ * not values of `a`. A subsetter's types are those it declares and those of the
+ * features it redefines (a redefinition has the redefined feature's typing, §7.6.3);
+ * one that only inherits a type through the subsetting has it by the subsetting
+ * itself. It is judged only when it has some type and none conforms; a type that
+ * does not resolve gives no finding.
  * Redefinitions are `redefinition-conformance`'s.
  */
 export const subsetTypeConformance: ValidationRule = {
@@ -272,6 +274,19 @@ export const subsetTypeConformance: ValidationRule = {
       const sup = model.get(superId);
       if (!sub || !sup || !isUserElement(sub)) continue;
       const subTypes = allDeclaredTypes(model, subId);
+      // A redefining feature has the typing of the feature it redefines (`part c redefines x subsets a`, `x : B`).
+      const seen = new Set<ElementId>([subId]);
+      const queue = [subId];
+      while (queue.length > 0) {
+        const cur = queue.shift()!;
+        for (const r of model.relationshipsFrom(cur)) {
+          const t = r.eClass === 'Redefinition' ? r.target?.[0] : undefined;
+          if (!t || seen.has(t) || !model.has(t) || t === superId) continue;
+          seen.add(t);
+          queue.push(t);
+          for (const ty of allDeclaredTypes(model, t)) if (!subTypes.includes(ty)) subTypes.push(ty);
+        }
+      }
       const supType = typeOf(model, superId);
       if (subTypes.length === 0 || !supType) continue;
       if (subTypes.some((t) => conforms(model, t, supType))) continue;

@@ -880,6 +880,12 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(await run('part def A; part def B :> A; part def X { part a : A [2]; part b : B subsets a; part c : A subsets a; part d subsets a; }', 'subset-type-conformance')).toEqual([]);
   });
 
+  it('BD3: the type a redefined feature gives is judged; a conforming one stays silent', async () => {
+    const w = await run('part def A; part def B; part def Base { part x : B; part a : A [2]; } part def X :> Base { part c redefines x subsets a; }', 'subset-type-conformance');
+    expect(w).toHaveLength(1);
+    expect(await run('part def A; part def B :> A; part def Base { part x : B; part a : A [2]; } part def X :> Base { part c redefines x subsets a; }', 'subset-type-conformance')).toEqual([]);
+  });
+
   it('BD6 disjoint-sum-exceeds: flags disjoint subsets whose lower bounds exceed the superset', async () => {
     const w = await run('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; part rear : W [3] subsets wheels; disjoint front from rear; }', 'disjoint-sum-exceeds');
     expect(w).toHaveLength(1);
