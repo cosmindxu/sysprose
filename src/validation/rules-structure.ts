@@ -44,6 +44,8 @@ import { conforms } from '../semantics/conformance';
 import { endPairs } from '../semantics/port-conformance';
 import { resolveQualifiedNameFull } from '../semantics';
 import { childNamed, findTypeFeature, resolveFullName } from '../semantics/bind';
+import { evaluate, parseExpr } from '../semantics/expr';
+import type { ExprNode } from '../semantics/expr';
 import { effectiveFeaturesWithLibrary } from '../semantics/featuring';
 import { effectiveNameOf, generalizationsOf } from '../semantics/inheritance';
 import { DIRECT_SUPERTYPES, isKindOf } from '../semantics/metaclasses';
@@ -468,6 +470,37 @@ export const enumValueNotMember: ValidationRule = {
   },
 };
 
+/**
+ * Is `text` a single scalar expression over literals only (`2 * 3 + 1`, `-4`, `"a" + "b"`)? It is parsed and
+ * evaluated by the existing evaluator; a name, call, conditional, list, range or anything it cannot evaluate is no.
+ */
+function literalArithmetic(text: string): boolean {
+  if (text.includes(',') || text.includes('..')) return false;
+  let node: ExprNode;
+  try {
+    node = parseExpr(text);
+  } catch {
+    return false;
+  }
+  const pure = (n: ExprNode): boolean => {
+    switch (n.kind) {
+      case 'num':
+      case 'str':
+      case 'bool':
+        return true;
+      case 'unary':
+        return pure(n.operand);
+      case 'binary':
+        return pure(n.left) && pure(n.right);
+      default:
+        return false;
+    }
+  };
+  if (!pure(node)) return false;
+  const r = evaluate(node, () => undefined);
+  return 'value' in r && r.value !== null && r.value !== undefined && !(typeof r.value === 'number' && !Number.isFinite(r.value));
+}
+
 /** The values a written value expression gives, when its text is a literal or a parenthesised list: `count` of top-level elements, `exact` when every one is a literal. */
 function valueCount(el: ElementRecord): { count: number; exact: boolean } | undefined {
   const v = el.attrs.value;
@@ -475,7 +508,7 @@ function valueCount(el: ElementRecord): { count: number; exact: boolean } | unde
   if (typeof v !== 'string') return undefined;
   const text = v.trim();
   const literal = (t: string): boolean => /^-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?$/.test(t) || /^"(?:[^"\\]|\\.)*"$/.test(t) || t === 'true' || t === 'false';
-  if (literal(text)) return { count: 1, exact: true };
+  if (literal(text) || literalArithmetic(text)) return { count: 1, exact: true };
   if (!text.startsWith('(') || !text.endsWith(')')) return undefined;
   // Split at top-level commas; give up on a text where the first `(` does not close at the end.
   const parts: string[] = [];
@@ -511,8 +544,8 @@ function valueCount(el: ElementRecord): { count: number; exact: boolean } | unde
   parts.push(cur.trim());
   if (parts.some((p) => p === '' || p.includes('..'))) return undefined;
   // `(a, b)` is a sequence; `(a)` alone is a parenthesised expression, which may itself stand for many values.
-  if (parts.length === 1) return literal(parts[0]!) ? { count: 1, exact: true } : undefined;
-  return { count: parts.length, exact: parts.every(literal) };
+  if (parts.length === 1) return literal(parts[0]!) || literalArithmetic(parts[0]!) ? { count: 1, exact: true } : undefined;
+  return { count: parts.length, exact: parts.every((p) => literal(p) || literalArithmetic(p)) };
 }
 
 /**
@@ -528,7 +561,8 @@ function valueCount(el: ElementRecord): { count: number; exact: boolean } | unde
  * literals, whose lower bound exceeds the number of values written has fewer.
  * Only a multiplicity the feature states itself, with literal bounds, and a
  * value that is a literal or a parenthesised list at its top level are read; a
- * value that is any other expression may stand for any number of values.
+ * value that is any other expression may stand for any number of values. Arithmetic over literals
+ * alone (`2 * 3 + 1`) evaluates to one scalar and is read as a single value.
  */
 export const valueMultiplicityMismatch: ValidationRule = {
   id: 'value-multiplicity-mismatch',

@@ -931,6 +931,11 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     ).toEqual([]);
   });
 
+  it('BD8: arithmetic of literals is one value; a name in it stays unread', async () => {
+    expect(await run('part def X { attribute a : Real [2] = 2.0 * 3.0 + 1.0; attribute b : Real [1] = (1.0 + 2.0, 3.0); }', 'value-multiplicity-mismatch')).toHaveLength(2);
+    expect(await run('part def X { attribute a : Real [1] = 2.0 * 3.0 + 1.0; attribute n : Real [2] = 1.0 + other; attribute c : Real [2] = (1.0 + 2.0, 3.0); }', 'value-multiplicity-mismatch')).toEqual([]);
+  });
+
   it('BD9 specialization-kind-incompatible: flags item def :> attribute def, part def :> port def, enum :> enum', async () => {
     expect(await run('attribute def V; item def C :> V;', 'specialization-kind-incompatible')).toHaveLength(1);
     expect(await run('port def Q; part def B :> Q;', 'specialization-kind-incompatible')).toHaveLength(1);
