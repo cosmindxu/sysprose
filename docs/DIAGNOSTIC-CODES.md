@@ -1139,6 +1139,20 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** A constraint of a superset owner (not a selection constraint), or a requirement satisfied by a part on a path through a variation point, evaluates to false in a configuration, read with the selected variant's attribute values (`eng.mass` is the `mass` the chosen variant states). The message names the configuration, the constraint or requirement and the values read. A warning instead of an error when constraints that are not read might exclude that configuration. A value that cannot be read makes the configuration, and the family verdict, undecided; it is never a pass.
 - **Hint given:** Change the variant's value or the constraint, or exclude the configuration with a selection constraint.
 
+### `verification/variability-behaviour`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A variability owner has state machines. One line per machine: a machine no variant adds or redefines is the same in every configuration and is walked once; a machine a variant brings (inside it or through its type) is walked once and reported for the configurations that select it; a variant that adds states or transitions outside a machine of its own, redefines one, subsets a machine owner or is itself a state of a variation state is read on the superset only, and the line says so. A walk that is not exhaustive (a bound, an undecided guard, a construct it refuses) is inconclusive: no state is claimed reachable or unreachable.
+- **Hint given:** Nothing to fix by itself. Where it says "analysed on the superset only", the selection is not applied to a state machine: model the alternative behaviours as separate machines (one per variant) to have each walked per configuration.
+
+### `verification/variability-behaviour-dead`
+
+- **Severity:** warning
+- **Source:** verification
+- **Fires when:** A state machine a variant brings has a state that is never entered or a transition that is never enabled in an exhaustive walk (`reach`'s). The message names the variant, how many configurations have the machine, and says the finding holds in every configuration that has it; in the others the machine does not exist.
+- **Hint given:** Add the missing transition or remove the state, as for `reach`; the finding is limited to the configurations that select the variant.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -1258,4 +1272,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*166 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*168 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

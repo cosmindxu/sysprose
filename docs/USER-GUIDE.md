@@ -4948,7 +4948,7 @@ redefines); the report says HOLDS, VIOLATED or UNDECIDED per configuration and g
 family verdict ("exact: all N enumerated", never a pass while one is undecided). A violating
 configuration is `verification/variability-configuration-violates` (error, exit 1). A void
 family lists a minimal conflicting set of its constraints, and a dead variant the
-constraints that kill it. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
+constraints that kill it. **State machines per configuration:** a machine no variant touches is the same in every configuration and is walked once; a machine a variant brings (inside it, or through its type) is walked once with `reach`'s walk and reported for the configurations that select it (`verification/variability-behaviour`, info; `-behaviour-dead`, warning, for an unreachable state or dead transition, which holds in every configuration that has the machine). A variant that adds states or transitions outside a machine of its own, redefines one or is itself a state of a variation state is read on the superset only, and the report says "behaviour analysed on the superset only"; a walk that is not exhaustive claims nothing. Run it as `npm run sysprose -- variability model.sysml`. Read the header of `src/semantics/variability.ts` for the full
 profile; in short:
 
 - **A variation point** is a usage written `variation` (SysML v2 §7.6.7), or a

@@ -87,6 +87,7 @@
  */
 import type { ElementRecord, Model } from '@core/index';
 import { generalizationsOf } from './inheritance';
+import { reachReport, stateMachinesIn } from './mc/explore';
 import { connectorEndsOf } from './connectors';
 import { evaluate, exprRefusal, parseExpr } from './expr';
 import { declaredDefinitions, definitionsConform, portMismatches } from './port-conformance';
@@ -107,6 +108,8 @@ export const VARIABILITY_CODES = {
   family: 'verification/variability-family',
   connectionBroken: 'verification/variability-connection-broken',
   configurationViolates: 'verification/variability-configuration-violates',
+  behaviour: 'verification/variability-behaviour',
+  behaviourDead: 'verification/variability-behaviour-dead',
 } as const;
 
 /** The most structural configurations enumerated before the analyses are withheld. */
@@ -261,6 +264,29 @@ export interface OwnerReport {
   configurations: ConfigurationReport[];
   /** Per-configuration evaluation of the owner's attribute constraints and of the requirements satisfied through a point (V4). */
   evaluations: FamilyEvaluation[];
+  /** State machines per configuration (V6). */
+  behaviour: OwnerBehaviour;
+}
+
+/** One state machine and where it exists: in every configuration (`variants` empty) or only where one of the variants is selected. */
+export interface MachineBehaviour {
+  machine: string;
+  /** Variants (by name) whose selection brings the machine in; empty = the same machine in every configuration. */
+  variants: string[];
+  /** Configurations that have it / enumerated configurations (null = not enumerated). */
+  presentIn: number | null;
+  total: number | null;
+  /** The walk was exhaustive; false = no claim of absence or reachability is made. */
+  conclusive: boolean;
+  why?: string;
+  unreachable: string[];
+  dead: string[];
+}
+
+export interface OwnerBehaviour {
+  machines: MachineBehaviour[];
+  /** Variants that add, remove or redefine states or transitions in a way not read per configuration: behaviour analysed on the superset only. */
+  supersetOnly: Array<{ variant: string; why: string }>;
 }
 
 export interface VariabilityVerdictCounts {
@@ -1277,7 +1303,7 @@ export function variabilityReport(model: Model): VariabilityReport {
     const name = model.qualifiedName(e.id) || e.declaredName || e.id;
     const { points, reasons } = extractPoints(model, e);
     if (reasons.length > 0) {
-      owners.push({ id: e.id, name, status: 'not-read', reasons, points: [], constraints: [], analysis: null, configurations: [], evaluations: [] });
+      owners.push({ id: e.id, name, status: 'not-read', reasons, points: [], constraints: [], analysis: null, configurations: [], evaluations: [], behaviour: { machines: [], supersetOnly: [] } });
       for (const r of reasons) diagnostics.push({ code: VARIABILITY_CODES.ownerNotRead, severity: 'info', message: `${name} is not read as a variability model — ${r}`, elementId: e.id });
       continue;
     }
@@ -1310,7 +1336,8 @@ export function variabilityReport(model: Model): VariabilityReport {
     const completeCfgs = new Map<string, { name: string; sel: Sel }>();
     const cfgReports = configurations(model, e, f, diagnostics, breaksOf, completeCfgs);
     const evaluations = evaluateFamily(model, e, f, rows, f.valid === null ? new Map() : completeCfgs, diagnostics, name);
-    owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: cfgReports, evaluations });
+    const behaviour = behaviourOf(model, e, f, name, diagnostics);
+    owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: cfgReports, evaluations, behaviour });
   }
   const count = (s: VariabilitySeverity): number => diagnostics.filter((d) => d.severity === s).length;
   const verdict = verdictOf(owners);
@@ -1356,6 +1383,124 @@ function exitCodeOf(owners: OwnerReport[], v: VariabilityVerdictCounts): 0 | 1 |
   if (owners.length === 0) return 2;
   if (v.invalid + v.violated + v.connectionBroken + v.voidFamilies + v.configurationViolated > 0) return 1;
   return v.undecided > 0 ? 2 : 0;
+}
+
+/* ─────────────────────────── state machines per configuration (V6) ─────────────────────────── */
+
+/**
+ * SysML v2 §7.17 (state usages, `exhibit state`, variation states) with §7.12 variation: a configuration
+ * selects one variant per active point, and the machines of the configured part are those of the point (the same
+ * in every configuration) plus those the selected variants own or are typed by. A machine the point types or owns
+ * outside every variant is walked once. A machine a variant brings (inside it, or through its type) is walked once
+ * and reported for the configurations that select the variant. Where a variant adds states or transitions outside a
+ * machine of its own, redefines a state or transition, or is itself a state (a variant of a variation state), the
+ * selection is not applied to a machine: the walk stays on the superset and an info says so. The walk is `reach`'s:
+ * a walk that is not exhaustive claims nothing (no state is called unreachable or reachable).
+ */
+function nearestVariant(model: Model, e: ElementRecord): ElementRecord | undefined {
+  let o = e.ownerId !== null ? model.get(e.ownerId) : undefined;
+  while (o) {
+    if (isVariantUsage(o)) return o;
+    o = o.ownerId !== null ? model.get(o.ownerId) : undefined;
+  }
+  return undefined;
+}
+
+/** The machines an element's types (and their generals) own. */
+function typeMachines(model: Model, el: ElementRecord): ElementRecord[] {
+  const out = new Map<string, ElementRecord>();
+  const seen = new Set<string>();
+  for (const t of model.typesOf(el.id)) {
+    for (const d of [t, ...generalizationsOf(model, t.id)]) {
+      if (seen.has(d.id) || isLibrary(d)) continue;
+      seen.add(d.id);
+      for (const m of stateMachinesIn(model, d.id)) out.set(m.id, m);
+    }
+  }
+  return [...out.values()];
+}
+
+const STATEISH = new Set(['StateUsage', 'StateDefinition', 'TransitionUsage', 'ExhibitStateUsage']);
+
+function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: string, diags: VariabilityDiagnostic[]): OwnerBehaviour {
+  const result: OwnerBehaviour = { machines: [], supersetOnly: [] };
+  const vkey = new Map<string, { key: string; name: string }>();
+  for (const p of f.points) for (const v of p.variants) vkey.set(v.key.split('/')[1], { key: v.key, name: `${p.name}::${v.name}` });
+  const fixed = new Map<string, ElementRecord>();
+  for (const m of typeMachines(model, owner)) fixed.set(m.id, m);
+  for (const m of stateMachinesIn(model, owner.id)) if (nearestVariant(model, m) === undefined) fixed.set(m.id, m);
+  for (const p of f.points) {
+    const el = model.get(p.id);
+    if (el) for (const m of typeMachines(model, el)) fixed.set(m.id, m);
+  }
+  const bringers = new Map<string, { rec: ElementRecord; keys: Set<string>; names: Set<string> }>();
+  const supersetWhy = (v: ElementRecord, name: string): void => {
+    const why: string[] = [];
+    const mine = (e: ElementRecord): boolean => nearestVariant(model, e)?.id === v.id;
+    if (v.eClass === 'StateUsage') why.push('the variant is itself a state of a variation state');
+    const ownMachines = stateMachinesIn(model, v.id).filter(mine);
+    const inOwn = (e: ElementRecord): boolean => ownMachines.some((m) => m.id === e.id || model.ancestors(e.id).some((a) => a.id === m.id));
+    const extra = model.descendants(v.id).filter((e) => !isLibrary(e) && STATEISH.has(e.eClass) && mine(e) && !inOwn(e));
+    if (extra.length > 0) why.push(`it adds ${extra.length > 1 ? 'states or transitions' : 'a state or transition'} (${[...new Set(extra.map((e) => e.declaredName ?? e.eClass))].slice(0, 4).join(', ')}) outside a machine of its own`);
+    const redef = model.descendants(v.id).filter((e) => STATEISH.has(e.eClass) && mine(e) && rels(model, e.id, 'Redefinition').length > 0);
+    if (redef.length > 0) why.push(`it redefines ${[...new Set(redef.map((e) => e.declaredName ?? e.eClass))].slice(0, 4).join(', ')}`);
+    for (const rel of ['Subsetting', 'Redefinition']) {
+      for (const t of targets(model, v.id, rel)) {
+        if (!isLibrary(t) && (typeMachines(model, t).length > 0 || stateMachinesIn(model, t.id).length > 0)) why.push(`it ${rel === 'Subsetting' ? 'subsets' : 'redefines'} ${t.declaredName ?? 'a usage'}, which owns a machine`);
+      }
+    }
+    if (why.length > 0) result.supersetOnly.push({ variant: name, why: why.join('; ') });
+  };
+  for (const [vid, info] of vkey) {
+    const v = model.get(vid);
+    if (!v || isLibrary(v)) continue;
+    supersetWhy(v, info.name);
+    for (const m of [...typeMachines(model, v), ...stateMachinesIn(model, v.id).filter((x) => nearestVariant(model, x)?.id === v.id)]) {
+      if (fixed.has(m.id)) continue;
+      if (rels(model, m.id, 'Redefinition').length > 0 || generalizationsOf(model, m.id).some((g) => fixed.has(g.id))) {
+        result.supersetOnly.push({ variant: info.name, why: `its type brings the machine ${m.declaredName ?? ''} that redefines or specialises one the point has` });
+        continue;
+      }
+      const b = bringers.get(m.id) ?? { rec: m, keys: new Set<string>(), names: new Set<string>() };
+      b.keys.add(info.key);
+      b.names.add(info.name);
+      bringers.set(m.id, b);
+    }
+  }
+  const total = f.valid === null ? null : f.valid.length;
+  const walk = (m: ElementRecord): { conclusive: boolean; why?: string; unreachable: string[]; dead: string[] } => {
+    const mr = reachReport(model, { scopeId: m.id }).machines.find((x) => x.machine.id === m.id);
+    if (!mr) return { conclusive: false, why: 'the machine was not read by the walk', unreachable: [], dead: [] };
+    if (mr.unsupported.length > 0) return { conclusive: false, why: 'the walk refuses a construct in it', unreachable: [], dead: [] };
+    if (!mr.exhaustive) return { conclusive: false, why: mr.boundHit !== 'none' ? `the walk hit its ${mr.boundHit} bound` : 'the walk could not decide every guard', unreachable: [], dead: [] };
+    return { conclusive: true, unreachable: mr.states.unreachable.map((s) => s.name), dead: mr.transitions.dead.map((t) => t.name || t.qualifiedName) };
+  };
+  const emit = (b: MachineBehaviour): void => {
+    result.machines.push(b);
+    const superset = b.variants.length === 0 && result.supersetOnly.length > 0;
+    const all = b.variants.length === 0 || (b.presentIn !== null && b.presentIn === b.total);
+    const where = superset ? 'analysed on the superset only (a variant below changes behaviour)' : b.variants.length === 0 ? 'the same in every configuration (no variant adds or redefines it), walked once' : `present only in the configurations selecting ${b.variants.join(' or ')}${b.presentIn !== null && b.total !== null ? ` (${b.presentIn} of ${b.total})` : ''}`;
+    const found = b.unreachable.length > 0 || b.dead.length > 0;
+    const detail = !b.conclusive
+      ? `inconclusive (${b.why}): no state is claimed reachable or unreachable`
+      : found
+        ? `${b.unreachable.length > 0 ? `unreachable state(s) ${b.unreachable.join(', ')}` : ''}${b.unreachable.length > 0 && b.dead.length > 0 ? '; ' : ''}${b.dead.length > 0 ? `dead transition(s) ${b.dead.join(', ')}` : ''} — ${superset ? 'on the superset; a configuration that adds or redefines behaviour may differ' : `dead in every configuration${all ? '' : ' that has it; in the others the machine does not exist'}`}`
+        : superset ? 'every state reachable and no transition dead on the superset; no per-configuration claim' : 'every state reachable and no transition dead';
+    const dead = found && b.conclusive && !superset;
+    diags.push({ code: dead ? VARIABILITY_CODES.behaviourDead : VARIABILITY_CODES.behaviour, severity: dead ? 'warning' : 'info', message: `${ownerName}: the state machine ${b.machine} is ${where}: ${detail}`, elementId: owner.id });
+  };
+  if (fixed.size > 0 && vkey.size > 0) {
+    for (const m of fixed.values()) emit({ machine: model.qualifiedName(m.id) || m.declaredName || m.id, variants: [], presentIn: total, total, ...walk(m) });
+  }
+  for (const b of bringers.values()) {
+    let presentIn: number | null = null;
+    if (f.valid !== null) presentIn = f.valid.filter((sel) => [...sel.values()].some((k) => k !== null && b.keys.has(k))).length;
+    emit({ machine: model.qualifiedName(b.rec.id) || b.rec.declaredName || b.rec.id, variants: [...b.names], presentIn, total, ...walk(b.rec) });
+  }
+  for (const s of result.supersetOnly) {
+    diags.push({ code: VARIABILITY_CODES.behaviour, severity: 'info', message: `${ownerName}: the variant ${s.variant} changes behaviour (${s.why}): behaviour analysed on the superset only — the selection is not applied to a state machine, so no per-configuration reachability is claimed`, elementId: owner.id });
+  }
+  return result;
 }
 
 /* ───────────────────────────────── rendering ───────────────────────────── */
@@ -1406,6 +1551,8 @@ export function variabilityLines(r: VariabilityReport, name: string): string[] {
       out.push(`  ${ev.kind} ${ev.name}: every configuration ${ev.verdict === 'holds' ? 'HOLDS' : ev.verdict === 'violated' ? 'is NOT satisfied (VIOLATED in ' + ev.violated + ')' : 'is undecided'} — ${ev.coverage}; ${ev.holds} holds, ${ev.violated} violated, ${ev.undecided} undecided${ev.qualified ? ' (constraints not read could exclude a violating configuration)' : ''}`);
       for (const it of ev.items.slice(0, 20)) out.push(`    ${it.word}  ${it.configuration}${it.values.length > 0 ? ` — ${it.values.join(', ')}` : ''}${it.reason ? ` — ${it.reason}` : ''}`);
     }
+    for (const m of o.behaviour.machines) out.push(`  machine ${m.machine}: ${m.variants.length === 0 ? 'same in every configuration' : `only with ${m.variants.join(' or ')}${m.presentIn !== null && m.total !== null ? ` (${m.presentIn} of ${m.total})` : ''}`} — ${m.conclusive ? (m.unreachable.length + m.dead.length === 0 ? 'every state reachable, no dead transition' : `unreachable: ${m.unreachable.join(', ') || 'none'}; dead: ${m.dead.join(', ') || 'none'}`) : `inconclusive (${m.why})`}`);
+    for (const s of o.behaviour.supersetOnly) out.push(`  behaviour analysed on the superset only: variant ${s.variant} — ${s.why}`);
     for (const c of o.configurations) {
       out.push(`  configuration ${c.name}: ${STATUS_WORD[c.status]}`);
       // The status above answers the selection constraints only. When this named configuration's
