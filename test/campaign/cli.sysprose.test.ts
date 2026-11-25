@@ -6013,6 +6013,7 @@ package P {
         { argv: ['check-behaviour', UAV, ...BEHAVIOUR] },
         { argv: ['variability', `${FIXV}/models/variability-family.sysml`] },
         { argv: ['variability', `${FIXV}/models/variability-family.sysml`, '--json'], idBlind: true },
+        { argv: ['icd', `${FIXV}/models/icd-exchange.sysml`] },
       ];
 
       // Every subcommand this tool ships, or this case is not the bridge it says
@@ -6049,6 +6050,46 @@ package P {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 900_000);
+  /** `icd` has its own verdict contract (ICD_EXIT_CODES). */
+  describe('icd exit contract', () => {
+    const base = `package P { item def Cmd; port def CmdPort { out item cmd : Cmd; }
+      action def Command { out cmd : Cmd; } action def Execute { in cmd : Cmd; }
+      part def Ground { out port cmdOut : CmdPort; } part def Drone { in port cmdIn : ~CmdPort; }
+      part sys { action command : Command; action execute : Execute;
+        flow f of Cmd from command.cmd to execute.cmd;
+        part ground : Ground; part drone : Drone; allocate command to ground; allocate execute to drone;
+        connection l connect ground.cmdOut to drone.cmdIn; BODY } }`;
+    const CASES: Array<[string, string, number]> = [
+      ['every flow carried', base.replace('BODY', 'allocate f to l;'), 0],
+      ['a crossing flow allocated to no connection', base.replace('BODY', 'flow g of Cmd from command.cmd to execute.cmd; allocate g to l; flow h of Cmd from command.cmd to execute.cmd;'), 1],
+      ['a flow its connection cannot carry', base.replace('BODY', 'part o : Ground; connection l2 connect o.cmdOut to drone.cmdIn; allocate f to l2; allocate f to l;'), 1],
+      ['nothing to read', 'package P { part def A; part a : A; }', 2],
+    ];
+    it.each(CASES)('%s', async (label, src, code) => {
+      const dir = mkdtempSync(join(tmpdir(), 'sysprose-icd-'));
+      try {
+        const file = join(dir, 'm.sysml');
+        writeFileSync(file, src);
+        const r = await run(['icd', file, '--json']);
+        expect(r.code, label).toBe(code);
+        const body = JSON.parse(r.stdout) as { verdict: { exitCode: number }; icd: { rows: unknown[] } };
+        expect(body.verdict.exitCode, 'the payload and the process must agree').toBe(r.code);
+        expect(Array.isArray(body.icd.rows)).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+    it('a degraded model exits 2', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'sysprose-icd-'));
+      try {
+        const file = join(dir, 'm.sysml');
+        writeFileSync(file, 'package P { part def {');
+        expect((await run(['icd', file])).code).toBe(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
   /**
    * `variability` has its own verdict contract (VARIABILITY_EXIT_CODES): an agent
    * acts on the exit code alone. One small model per exit, in-process.

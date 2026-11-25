@@ -39,16 +39,16 @@ import { declaredDefinitions, declaredDirection, directedFeaturesOf, payloadDefi
 import { resolveName } from '../semantics/resolve-names';
 import type { Diagnostic, ValidationRule } from './types';
 
-const FLOW_KINDS = new Set(['Flow', 'FlowUsage', 'SuccessionFlowUsage', 'ItemFlow', 'SuccessionFlow']);
-const LINK_KINDS = new Set(['ConnectionUsage', 'InterfaceUsage', 'Connector']);
-const ALLOCATION_KINDS = new Set(['Allocation', 'AllocationUsage']);
+export const FLOW_KINDS = new Set(['Flow', 'FlowUsage', 'SuccessionFlowUsage', 'ItemFlow', 'SuccessionFlow']);
+export const LINK_KINDS = new Set(['ConnectionUsage', 'InterfaceUsage', 'Connector']);
+export const ALLOCATION_KINDS = new Set(['Allocation', 'AllocationUsage']);
 /** Features an end is reached through before its owner: ports, parameters, items. */
 const END_FEATURE_KINDS = new Set(['PortUsage', 'ReferenceUsage', 'ItemUsage', 'AttributeUsage']);
 
 const isExchange = (el: ElementRecord | undefined) =>
   el !== undefined && (FLOW_KINDS.has(el.eClass) || LINK_KINDS.has(el.eClass));
 
-function label(model: Model, id: ElementId | undefined): string {
+export function label(model: Model, id: ElementId | undefined): string {
   const el = id ? model.get(id) : undefined;
   if (!el) return String(id);
   const parts: string[] = [];
@@ -63,7 +63,7 @@ function label(model: Model, id: ElementId | undefined): string {
 }
 
 /** The element an exchange end hangs on: the first owner of the end feature that is not itself a port, parameter or item. */
-function endOwner(model: Model, endId: ElementId | undefined): ElementRecord | undefined {
+export function endOwner(model: Model, endId: ElementId | undefined): ElementRecord | undefined {
   let cur = endId ? model.get(endId) : undefined;
   const seen = new Set<ElementId>();
   while (cur && END_FEATURE_KINDS.has(cur.eClass) && !seen.has(cur.id)) {
@@ -82,7 +82,7 @@ function endOwner(model: Model, endId: ElementId | undefined): ElementRecord | u
  * component and its own sub-component are joined by delegation, never by a
  * component exchange between them (Arcadia §20.4).
  */
-function related(model: Model, a: ElementId, b: ElementId): boolean {
+export function related(model: Model, a: ElementId, b: ElementId): boolean {
   if (a === b) return true;
   const within = (inner: ElementId, outer: ElementId) => {
     const defs = new Set<ElementId>();
@@ -103,14 +103,14 @@ function related(model: Model, a: ElementId, b: ElementId): boolean {
   return generalizationsOf(model, a).some((g) => g.id === b) || generalizationsOf(model, b).some((g) => g.id === a);
 }
 
-interface Index {
+export interface Index {
   /** Allocation targets by source, for allocations whose source is not an exchange. */
   allocatedTo: Map<ElementId, ElementId[]>;
   /** Parts that `perform` an action, by the action. */
   performedBy: Map<ElementId, ElementId[]>;
 }
 
-function buildIndex(model: Model): Index {
+export function buildIndex(model: Model): Index {
   const allocatedTo = new Map<ElementId, ElementId[]>();
   const performedBy = new Map<ElementId, ElementId[]>();
   const push = (m: Map<ElementId, ElementId[]>, k: ElementId, v: ElementId) => {
@@ -151,7 +151,7 @@ function buildIndex(model: Model): Index {
  * behaviour, else what it (or an enclosing action) is allocated to or
  * performed by. Empty when unknown.
  */
-function hostsOf(model: Model, idx: Index, owner: ElementRecord | undefined): ElementId[] {
+export function hostsOf(model: Model, idx: Index, owner: ElementRecord | undefined): ElementId[] {
   if (!owner) return [];
   const behaviour = (e: ElementRecord) => /Action|State|Calculation|Case/.test(e.eClass);
   let cur: ElementRecord | undefined = owner;
@@ -286,7 +286,7 @@ export const exchangeAllocation: ValidationRule = {
 };
 
 /** The nearest enclosing package (or namespace) of an element: the scope a layer's allocations are read in. */
-function scopeOf(model: Model, el: ElementRecord): ElementId | undefined {
+export function scopeOf(model: Model, el: ElementRecord): ElementId | undefined {
   const seen = new Set<ElementId>();
   let cur: ElementRecord | undefined = el.ownerId ? model.get(el.ownerId) : undefined;
   while (cur && !seen.has(cur.id)) {

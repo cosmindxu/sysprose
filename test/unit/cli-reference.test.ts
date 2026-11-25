@@ -34,6 +34,7 @@ import {
   DEFAULT_MAX_ORDER,
   EXIT_CODES,
   FAULT_TREE_EXIT_CODES,
+  ICD_EXIT_CODES,
   VARIABILITY_EXIT_CODES,
   PATTERN_NAMES,
   REFINE_EXIT_CODES,
@@ -128,11 +129,12 @@ describe('the generated command reference', () => {
       behaviour: BEHAVIOUR_EXIT_CODES,
       'fault-tree': FAULT_TREE_EXIT_CODES,
       variability: VARIABILITY_EXIT_CODES,
+      icd: ICD_EXIT_CODES,
     };
     expect(
       COMMANDS.map((c) => c.exitContract).filter((v, i, a) => a.indexOf(v) === i).sort(),
       'the command table no longer declares every exit contract',
-    ).toEqual(['bounds', 'behaviour', 'fault-tree', 'refine', 'report', 'variability', 'verify', 'write'].sort());
+    ).toEqual(['bounds', 'behaviour', 'fault-tree', 'icd', 'refine', 'report', 'variability', 'verify', 'write'].sort());
 
     for (const cmd of COMMANDS) {
       const section = sections.get(cmd.name);
@@ -304,6 +306,15 @@ describe('the generated command reference', () => {
     const flags = flagsFor(COMMANDS.find((c) => c.name === 'variability')!).map((f) => f.name);
     expect(flags).not.toContain('free');
     expect(flags).not.toContain('allow-inconclusive');
+  });
+
+  it('gives `icd` a verdict contract: 1 is a decided negative, UNUSED and UNJUDGED rows do not move it', () => {
+    expect(ICD_EXIT_CODES).toContain('1 at least one decided negative');
+    expect(ICD_EXIT_CODES).toContain('UNCARRIED');
+    expect(ICD_EXIT_CODES).toContain('do NOT move the exit code');
+    expect(ICD_EXIT_CODES).not.toBe(EXIT_CODES);
+    expect(COMMANDS.filter((c) => c.exitContract === 'icd').map((c) => c.name)).toEqual(['icd']);
+    expect(flagsFor(COMMANDS.find((c) => c.name === 'icd')!).map((f) => f.name)).toContain('element');
   });
 
   it('names every JUDGING subcommand in the top-level exit-code caveat', () => {

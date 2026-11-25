@@ -231,6 +231,15 @@ export const BEHAVIOUR_EXIT_CODES = `Exit codes: 0 every ASSERTION stated on thi
 export const FAULT_TREE_EXIT_CODES = `Exit codes: 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine whose failure modes this command found none of (or found and does not inject), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over`;
 
 /**
+ * `icd`'s exit-code contract — an EIGHTH one. The interface control document is
+ * a reading of the exchange-allocation facts, and a build gate wants its two
+ * negatives (a flow allocated to a connection that cannot carry it; a crossing
+ * flow no connection carries) as an exit code, which the reporting contract's 1
+ * (a degraded load) cannot be.
+ */
+export const ICD_EXIT_CODES = `Exit codes: 0 the model loaded clean, at least one connection or crossing flow was read, no row is UNCARRIED and no crossing flow is allocated to no connection · 1 at least one decided negative: a connection with a flow allocated to it that its ports cannot carry (the exchange-allocation finding), or a crossing flow allocated to no connection (the exchange-unallocated finding) · 2 usage/IO error, a degraded model, or nothing to read (no connection and no crossing flow under the owner). UNUSED and UNJUDGED rows are reported and do NOT move the exit code`;
+
+/**
  * `variability`'s exit-code contract — a SEVENTH one. The command answers two
  * questions a build gate asks (is each configuration valid; is the family
  * satisfiable), so an agent must be able to act on the exit code alone, and
@@ -360,7 +369,8 @@ export type ExitContract =
   | 'write'
   | 'behaviour'
   | 'fault-tree'
-  | 'variability';
+  | 'variability'
+  | 'icd';
 
 /** One subcommand. */
 export interface CommandSpec {
@@ -384,6 +394,7 @@ export function exitCodesFor(cmd: CommandSpec): string {
   if (cmd.exitContract === 'bounds') return BOUNDS_EXIT_CODES;
   if (cmd.exitContract === 'fault-tree') return FAULT_TREE_EXIT_CODES;
   if (cmd.exitContract === 'variability') return VARIABILITY_EXIT_CODES;
+  if (cmd.exitContract === 'icd') return ICD_EXIT_CODES;
   if (cmd.exitContract === 'write') return WRITE_EXIT_CODES;
   if (cmd.exitContract === 'behaviour') return BEHAVIOUR_EXIT_CODES;
   return EXIT_CODES;
@@ -974,6 +985,25 @@ export const COMMANDS: readonly CommandSpec[] = [
     payloadKey: 'variability',
     exitContract: 'variability',
     flags: [],
+  },
+  // The interface control document: one row per connection, its ends, the items
+  // each way, the flows allocated to it and a status. A JUDGING command
+  // (ICD_EXIT_CODES); header of src/semantics/icd.ts.
+  {
+    name: 'icd',
+    question:
+      'For each connection: what do its ports carry each way, which functional exchanges are allocated to it, and which crossing flows are carried by none?',
+    backedBy: 'icdReport (src/semantics/icd.ts)',
+    payloadKey: 'icd',
+    exitContract: 'icd',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'OWNER',
+        doc: 'Only the connections (and flows) under this owner: an id, a qualified name, or a name unique in the model',
+      },
+    ],
   },
 ];
 

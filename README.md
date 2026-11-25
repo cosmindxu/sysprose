@@ -168,6 +168,7 @@ with the function that control runs.
 | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | **State**, **Action** or **General** view → palette *Checks* → **Reachability** → **Run** (`palette-check-run` → `reachReport`) | `npm run sysprose -- reach model.sysml` | `reachReport` — `src/semantics/mc/explore.ts` |
 | Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? | **State** or **Action** view → palette *Checks* → **Behaviour properties** → **Run** (`palette-check-run` → `behaviourReport`) | `npm run sysprose -- check-behaviour model.sysml --element FlightModes --pattern 'pattern=absence, scope=globally, p=state failsafe'` | `behaviourReport` — `src/semantics/mc/patterns.ts` |
 | Which configurations does this product family admit, and does each configuration select validly? | — no view yet | `npm run sysprose -- variability model.sysml` | `variabilityReport` — `src/semantics/variability.ts` |
+| For each connection: what do its ports carry each way, which functional exchanges are allocated to it, and which crossing flows are carried by none? | — no view yet | `npm run sysprose -- icd model.sysml` | `icdReport` — `src/semantics/icd.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -265,7 +266,7 @@ contract failures break the top requirement (`fault-tree`), which configurations
 can reach, which sets of configurations no run leaves, and whether a safety pattern survives all
 of them (`reach`, `check-behaviour`), and it
 writes verdicts back into the file as annotations that go stale when the design moves
-(`evidence-attach`, `evidence-status`). All of them are among the **23 subcommands** listed in the
+(`evidence-attach`, `evidence-status`). All of them are among the **24 subcommands** listed in the
 Develop block below, and every flag is in
 [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md).
 
@@ -347,7 +348,7 @@ npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # property-check · verify · consistency · refine
                        # bounds · fault-tree · evidence-status
                        # evidence-attach · evidence-detach
-                       # reach · check-behaviour · variability
+                       # reach · check-behaviour · variability · icd
                        # `npm run sysprose -- --help` lists them
 ```
 

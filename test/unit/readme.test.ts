@@ -218,6 +218,8 @@ const APP_DOORS: ReadonlyArray<{
   },
   // Variability shipped to the terminal first: no control computes it yet.
   { command: 'variability', controls: [] },
+  // The ICD shipped to the terminal first (the Interconnection overlay is a TODO).
+  { command: 'icd', controls: [] },
 ];
 
 interface Row {
