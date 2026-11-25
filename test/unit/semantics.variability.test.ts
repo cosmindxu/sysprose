@@ -537,13 +537,47 @@ describe('state machines per configuration (V6)', () => {
     expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
   });
 
-  it('a redefined machine the walk cannot take whole is inconclusive, never a claim', () => {
-    const o = rep(`package P {
-  part def Eng { state s { entry state a; state b; state c; transition t first a accept Go then b; } }
-  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s2 :>> s { transition t2 first b accept Go then c; } } } }
-}`);
+  const INM = (bigBody: string, baseBody = 'entry state a; state b; state c; transition t first a accept Go then b;', extra = '') => `package P {
+  part def Eng { state s { ${baseBody} } }
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s :>> Eng::s { ${bigBody} } } ${extra} } }
+}`;
+
+  it('a variant adding a transition inside the owner machine: c is reachable only where it is selected', () => {
+    const o = rep(INM('transition t2 first b accept Go then c;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.severity).toBe('warning');
+    expect(d.message).toContain('the configurations selecting none of eng::big (1 of 2): unreachable state(s) c');
+    expect(d.message).toContain('the configurations selecting eng::big (1 of 2): every state reachable and no transition dead');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('a variant adding a state and its transition inside the owner machine stays silent when all is reachable', () => {
+    const o = rep(INM('state d; transition t2 first b accept Go then d;', 'entry state a; state b; transition t first a accept Go then b;'));
     expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
-    expect(o.diagnostics.some((x) => x.message.includes('inconclusive'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
+  });
+
+  it('a variant redefining a transition target leaves a state dead only in its configuration', () => {
+    const o = rep(INM('transition t :>> Eng::s::t first a accept Go then c;', 'entry state a; state b; state c; transition t first a accept Go then b;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): unreachable state(s) c');
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) b');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('a whole-machine variant and an in-machine variant of the same point are both read', () => {
+    const o = rep(INM('transition t2 first b accept Go then c;', undefined, 'variant part other : Eng { state s :>> Eng::s { entry state a9; state b9; transition t9 first a9 accept Go then b9; } }'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d).toBeDefined();
+    expect(d.message).toContain('eng::other');
+    expect(d.message).toContain('every state reachable and no transition dead');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('a variant redefining a state of the owner machine is still unread: the superset-only line stays', () => {
+    const o = rep(INM('state b :>> Eng::s::b { state inner; }'));
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(true);
+    expect(o.diagnostics.every((x) => x.code !== VARIABILITY_CODES.behaviourDead)).toBe(true);
   });
 
   const VSTATE = (extra: string) => `package P {

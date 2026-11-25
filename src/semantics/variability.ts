@@ -1453,7 +1453,35 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     return undefined;
   };
   const statePoints = new Map<string, { root: ElementRecord; points: Map<string, { name: string; variants: Array<{ key: string; id: string; name: string }> }> }>();
-  const replacers = new Map<string, { o: ElementRecord; reps: Array<{ key: string; name: string; m: ElementRecord; point: string }> }>();
+  type Merge = { moves: Array<{ child: string; drops: string[] }> };
+  const replacers = new Map<string, { o: ElementRecord; reps: Array<{ key: string; name: string; m: ElementRecord; point: string; merge: Merge | null }> }>();
+  /* In-machine variants (var-sm3). A machine of a variant that redefines the point's machine `tg` and refers to its states
+   * or redefines its members is not a whole replacement but an addition: its direct members are merged into a copy of `tg`
+   * (a member redefining a transition of `tg` replaces it). null = a whole machine; a string = a shape not readable. */
+  const mergeOf = (m: ElementRecord, tg: ElementRecord): Merge | null | string => {
+    const inM = new Set<string>([m.id, ...model.descendants(m.id).map((d) => d.id)]);
+    const inT = new Set<string>([tg.id, ...model.descendants(tg.id).map((d) => d.id)]);
+    const ends = (d: ElementRecord): string[] => [...(((d as unknown as { source?: string[] }).source) ?? []), ...(((d as unknown as { target?: string[] }).target) ?? [])];
+    const inner = model.descendants(m.id).filter((d) => STATEISH.has(d.eClass));
+    const refs = inner.some((d) => targets(model, d.id, 'Redefinition').some((t) => inT.has(t.id)) || ends(d).some((x) => inT.has(x) && !inM.has(x)));
+    if (!refs) return null;
+    const moves: Merge['moves'] = [];
+    const direct = new Set(model.children(m.id).map((c) => c.id));
+    for (const d of inner) {
+      if (direct.has(d.id)) continue;
+      if (targets(model, d.id, 'Redefinition').some((t) => inT.has(t.id))) return `it redefines ${d.declaredName ?? 'a member'} nested inside a member of its machine`;
+    }
+    for (const c of model.children(m.id)) {
+      const drops: string[] = [];
+      for (const t of targets(model, c.id, 'Redefinition')) {
+        if (!inT.has(t.id)) continue;
+        if (t.eClass !== 'TransitionUsage' || c.eClass !== 'TransitionUsage' || t.ownerId !== tg.id) return `it redefines ${t.declaredName ?? 'a member'}, which is not a transition of the machine it extends`;
+        drops.push(t.id);
+      }
+      moves.push({ child: c.id, drops });
+    }
+    return { moves };
+  };
   const stateVariantOf = new Map<string, { pointId: string; root: ElementRecord }>();
   for (const p of f.points) {
     const pe = model.get(p.id);
@@ -1471,10 +1499,15 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     const ownMachines = stateMachinesIn(model, v.id).filter(mine);
     // a whole machine of the variant that redefines exactly one machine the point has, and only that
     const replacing = new Map<string, ElementRecord>();
+    const merges = new Map<string, Merge | null>();
     for (const m of ownMachines) {
       const rd = rels(model, m.id, 'Redefinition');
       const tg = targets(model, m.id, 'Redefinition');
-      if (sv === undefined && rd.length === 1 && tg.length === 1 && fixed.has(tg[0].id) && generalizationsOf(model, m.id).every((g) => g.id === tg[0].id || fixed.has(g.id) || isLibrary(g))) replacing.set(m.id, tg[0]);
+      if (sv === undefined && rd.length === 1 && tg.length === 1 && fixed.has(tg[0].id) && generalizationsOf(model, m.id).every((g) => g.id === tg[0].id || fixed.has(g.id) || isLibrary(g))) {
+        const mg = mergeOf(m, tg[0]);
+        if (typeof mg === 'string') why.push(mg);
+        else { replacing.set(m.id, tg[0]); merges.set(m.id, mg); }
+      }
     }
     const inReplacing = (e: ElementRecord): boolean => [...replacing.keys()].some((id) => e.id === id || model.ancestors(e.id).some((a) => a.id === id));
     const inOwn = (e: ElementRecord): boolean => ownMachines.some((m) => m.id === e.id || model.ancestors(e.id).some((a) => a.id === m.id));
@@ -1491,9 +1524,9 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     for (const [mid, o] of replacing) {
       const m = model.get(mid)!;
       const e = replacers.get(o.id) ?? { o, reps: [] };
-      e.reps.push({ key: vkey.get(v.id)!.key, name, m, point: vkey.get(v.id)!.key.split('/')[0] });
+      e.reps.push({ key: vkey.get(v.id)!.key, name, m, point: vkey.get(v.id)!.key.split('/')[0], merge: merges.get(mid) ?? null });
       replacers.set(o.id, e);
-      soft.push({ variant: name, why: `its machine ${m.declaredName ?? ''} redefines the machine ${o.declaredName ?? ''} the point has` });
+      soft.push({ variant: name, why: merges.get(mid) ? `its machine ${m.declaredName ?? ''} adds or redefines members inside the machine ${o.declaredName ?? ''} the point has` : `its machine ${m.declaredName ?? ''} redefines the machine ${o.declaredName ?? ''} the point has` });
     }
     if (sv) {
       const e = statePoints.get(sv.root.id) ?? { root: sv.root, points: new Map() };
@@ -1549,7 +1582,33 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
         const n = f.valid === null ? null : f.valid.filter((sel) => [...sel.values()].includes(x.key)).length;
         if (n !== 0) groups.set(x.key, { label: `the configurations selecting ${x.name}`, count: n, rec: x.m });
       }
-      perConfig.set(oid, { rec: r.o, variants: r.reps.map((x) => x.name), readings: [...groups.values()].map((g) => ({ label: g.label, count: g.count, w: walk(g.rec) })) });
+      const anyMerge = r.reps.some((x) => x.merge !== null);
+      // a walk on a copy: the machines of the variants removed, the selected variant's additions merged into the point's machine
+      const overlay = (apply: (typeof r.reps)[number] | null): Walked | null => {
+        try {
+          const cp = model.clone();
+          if (apply?.merge) {
+            for (const mv of apply.merge.moves) {
+              for (const d of mv.drops) if (cp.has(d)) cp.remove(d);
+              cp.reparent(mv.child, r.o.id);
+            }
+          }
+          for (const x of r.reps) if (cp.has(x.m.id) && cp.remove(x.m.id).length === 0) return null;
+          const rec = cp.get(r.o.id);
+          return rec ? walkIn(cp, rec) : null;
+        } catch { return null; }
+      };
+      if (groups.size > MAX_OVERLAYS) continue;
+      const readings: Reading[] = [];
+      let built = true;
+      for (const [gk, g] of groups) {
+        const x = r.reps.find((y) => y.key === gk);
+        const w = !anyMerge || (x && x.merge === null) ? walk(g.rec) : overlay(x ?? null);
+        if (!w) { built = false; break; }
+        readings.push({ label: g.label, count: g.count, w });
+      }
+      if (!built) continue;
+      perConfig.set(oid, { rec: r.o, variants: r.reps.map((x) => x.name), readings });
     }
     if (f.valid !== null) {
       for (const [rid, e] of statePoints) {
