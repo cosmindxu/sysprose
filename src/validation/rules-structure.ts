@@ -622,6 +622,30 @@ export const specializationKindIncompatible: ValidationRule = {
 };
 
 /**
+ * A value that is exactly one feature chain, as its names: the head (a qualified name, its `::` steps
+ * joined, quotes removed) and the `.`-steps after it. Names are plain (`[A-Za-z_]\w*`) or quoted
+ * (`'a b'`); anything else (calls, operators, indexes) gives `undefined`.
+ */
+export function parseValueChain(text: string): { head: string; rest: string[] } | undefined {
+  const name = "(?:[A-Za-z_]\\w*|'(?:[^'\\\\]|\\\\.)+')";
+  const re = new RegExp(`^${name}(?:::${name})*(?:\\.${name})*$`);
+  const t = text.trim();
+  if (!re.test(t)) return undefined;
+  const parts: string[] = [];
+  const tok = new RegExp(`${name}|::|\\.`, 'g');
+  const sep: string[] = [];
+  for (const m of t.matchAll(tok)) {
+    if (m[0] === '::' || m[0] === '.') sep.push(m[0]);
+    else {
+      parts.push(m[0].startsWith("'") ? m[0].slice(1, -1) : m[0]);
+    }
+  }
+  const dotted = sep.indexOf('.');
+  const headLen = (dotted === -1 ? sep.length : dotted) + 1;
+  return { head: parts.slice(0, headLen).join('::'), rest: parts.slice(headLen) };
+}
+
+/**
  * BD11 `unresolved-value-chain`.
  *
  * Spec §7.6.6 (lines ~3469-3475): "Each qualified name in a feature chain must
@@ -634,7 +658,8 @@ export const specializationKindIncompatible: ValidationRule = {
  * `ref/` code reads value expressions (they cover relationship targets), so this
  * is a rule of its own. Only a value that is exactly one dotted chain of plain
  * names is read, and only where each step's feature has a resolved type and no
- * type is left unresolved; otherwise nothing is concluded.
+ * type is left unresolved; otherwise nothing is concluded. Names may be quoted
+ * (`'my part'.mass`) and the head may be a `::` qualified name (`Pkg::e.mass`).
  */
 export const unresolvedValueChain: ValidationRule = {
   id: 'unresolved-value-chain',
@@ -646,9 +671,11 @@ export const unresolvedValueChain: ValidationRule = {
     for (const el of model.all()) {
       if (!isUserElement(el) || !isKindOf(el.eClass, 'Usage')) continue;
       const v = el.attrs.value;
-      if (typeof v !== 'string' || !/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(v.trim())) continue;
-      const segs = v.trim().split('.');
-      let cur = resolveFullName(model, segs[0]!, el.ownerId, { exclude: el.id });
+      if (typeof v !== 'string') continue;
+      const chain = parseValueChain(v);
+      if (!chain || chain.rest.length === 0) continue;
+      const segs = [chain.head, ...chain.rest];
+      let cur = resolveFullName(model, chain.head, el.ownerId, { exclude: el.id });
       if (!cur || cur.attrs.isLibrary === true || !isKindOf(cur.eClass, 'Usage')) continue;
       for (let i = 1; i < segs.length && cur; i++) {
         const seg = segs[i]!;

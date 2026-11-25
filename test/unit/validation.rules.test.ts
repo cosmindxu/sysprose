@@ -886,6 +886,14 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(await run('part def A; part def B :> A; part def Base { part x : B; part a : A [2]; } part def X :> Base { part c redefines x subsets a; }', 'subset-type-conformance')).toEqual([]);
   });
 
+  it('BD11: chains with quoted names and a qualified head are read', async () => {
+    const decl = "part def E { attribute mass : Real; } part def Car { part 'main engine' : E; attribute ok : Real = 'main engine'.mass; attribute bad : Real = 'main engine'.nosuch; attribute q : Real = P::Car::'main engine'.nosuch2; attribute okq : Real = P::Car::'main engine'.mass; }";
+    const w = await run(decl, 'unresolved-value-chain');
+    expect(w).toHaveLength(2);
+    expect(w.join('\n')).toContain('nosuch');
+    expect(w.join('\n')).toContain('nosuch2');
+  });
+
   it('BD6 disjoint-sum-exceeds: flags disjoint subsets whose lower bounds exceed the superset', async () => {
     const w = await run('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; part rear : W [3] subsets wheels; disjoint front from rear; }', 'disjoint-sum-exceeds');
     expect(w).toHaveLength(1);
