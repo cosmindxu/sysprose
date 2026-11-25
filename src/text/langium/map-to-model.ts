@@ -3169,6 +3169,24 @@ class Mapper {
     // for models saved by the old parser.
     const mults = readableMultiplicities(node.multiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
+    // `part [1] x`: a multiplicity between the keyword and the name. SysML v2 §8.2.2.6.2 UsageDeclaration is
+    // `Identification FeatureSpecializationPart?` — the name comes first, the multiplicity after it — so this is not
+    // SysML, and no reader takes it. Refuse it (the load degrades and the checks abstain) rather than drop the count.
+    const preMults = readableMultiplicities(node.preMult);
+    if (preMults.length) {
+      const code = 'mapper/pre-name-multiplicity';
+      const found = preMults[preMults.length - 1]!;
+      this.diagnostics.push({
+        message: `The multiplicity ${found} before the name ${declaredName ?? ''} is not read: SysML v2 writes it after the name.`,
+        ...posOf(node),
+        severity: 'error',
+        source: 'mapper',
+        code,
+        found,
+        hint: renderHint(code, { found }),
+        ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+      });
+    }
     // `end [0..2] part device`: the cross multiplicity written between `end` and the keyword (§8.2.2.7), kept apart
     // from the multiplicity after the name so each is written back where it stood.
     const endMults = readableMultiplicities(node.endMult);

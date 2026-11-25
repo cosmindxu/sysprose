@@ -132,6 +132,13 @@ const CODES = [
   },
 
   {
+    code: 'mapper/pre-name-multiplicity',
+    source: 'mapper',
+    severity: 'error',
+    when: 'A usage writes its multiplicity between the kind keyword and its name (`part [1] x`). SysML v2 §8.2.2.6.2 UsageDeclaration puts the name first and the multiplicity after it (`part x [1]`); the parser accepts the other order but no reader takes the count, so it would be dropped silently.',
+    hint: 'The multiplicity {found} stands before the name and is not read. Write it after the name (`part x {found}`); the load stays degraded and the checks abstain until you do.',
+  },
+  {
     code: 'mapper/carrier-about-unread',
     source: 'mapper',
     severity: 'error',

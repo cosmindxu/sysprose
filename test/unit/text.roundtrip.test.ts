@@ -1738,6 +1738,24 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     }
   });
 
+  it('refuses a multiplicity written before the name (§8.2.2.6.2), and only that', () => {
+    // `part [0..*] x` parsed and its count was dropped: a reader then took the default.
+    const codes = (src: string) =>
+      parseModel(src).diagnostics.filter((d) => d.severity === 'error').map((d) => d.code);
+    for (const src of [
+      'package A { part def P; part def S { part [0..*] x : P; } }',
+      'package A { part def S { attribute [2] a; } }',
+      'package A { part def S { port [1] q; } }',
+    ]) {
+      expect(codes(src), src).toEqual(['mapper/pre-name-multiplicity']);
+    }
+    // The spec order is read as ever, and the connector end forms keep their multiplicities.
+    expect(codes('package A { part def P; part def S { part x : P [0..*]; part y [2] : P; } }')).toEqual([]);
+    expect(codes('package A { part def S { part a; part b; connection c connect [2] a to [1] b; } }')).toEqual([]);
+    expect(codes('package A { part def S { part a; part b; connect ([1] a, [0..*] b); } }').filter((c) => c === 'mapper/pre-name-multiplicity')).toEqual([]);
+    expect(codes('package A { connection def C { end [0..2] part device; end part hub [1]; } }')).toEqual([]);
+  });
+
   it('refuses a SysproseVerification carrier in the named and visibility-prefixed `about` forms too', () => {
     const codes = (src: string) =>
       parseModel(src).diagnostics.filter((d) => d.severity === 'error').map((d) => d.code);

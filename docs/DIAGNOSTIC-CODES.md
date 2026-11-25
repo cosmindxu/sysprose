@@ -182,6 +182,13 @@ The tokens form a legal declaration, but the model this tool builds has nowhere 
 - **Fires when:** A definition is written with a user-defined keyword and no reserved one (`#situation def Failure;`, SysML 7.27.4, BNF ExtendedDefinition). That is a plain Definition, which this tool has no metaclass for. A usage written so (`#situation batteryLow;`, `#k :>> L = 3;`) is read as the keyword-less feature it would be without the tag.
 - **Hint given:** The definition {found} is not modelled; it is preserved verbatim and re-emitted unchanged on save. Add the reserved keyword of its kind (`#situation occurrence def Failure;`, `#situation part def Failure;`).
 
+### `mapper/pre-name-multiplicity`
+
+- **Severity:** error
+- **Source:** mapper
+- **Fires when:** A usage writes its multiplicity between the kind keyword and its name (`part [1] x`). SysML v2 §8.2.2.6.2 UsageDeclaration puts the name first and the multiplicity after it (`part x [1]`); the parser accepts the other order but no reader takes the count, so it would be dropped silently.
+- **Hint given:** The multiplicity {found} stands before the name and is not read. Write it after the name (`part x {found}`); the load stays degraded and the checks abstain until you do.
+
 ### `mapper/carrier-about-unread`
 
 - **Severity:** error
@@ -1272,4 +1279,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*168 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*169 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
