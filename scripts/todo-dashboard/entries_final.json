@@ -5656,6 +5656,36 @@
  },
  {
   "id": 378,
+  "title": "part [1] x drops its multiplicity",
+  "first_title": "part [1] x drops its multiplicity",
+  "first": "2026-11-25",
+  "first_idx": 146,
+  "closed": "",
+  "closed_idx": null,
+  "tag": "conn-forms review",
+  "cls_first": "FALSE",
+  "cls_last": "FALSE",
+  "optional": false,
+  "split_from": null,
+  "provisional": true
+ },
+ {
+  "id": 379,
+  "title": "A connection written only with end bodies gets \"has 0 endpoint(s)\"",
+  "first_title": "A connection written only with end bodies gets \"has 0 endpoint(s)\"",
+  "first": "2026-11-25",
+  "first_idx": 146,
+  "closed": "",
+  "closed_idx": null,
+  "tag": "conn-forms review",
+  "cls_first": "POLISH",
+  "cls_last": "POLISH",
+  "optional": false,
+  "split_from": null,
+  "provisional": true
+ },
+ {
+  "id": 380,
   "title": "Name the holder in reach's refusal (optional, low)",
   "first_title": "Name the holder in reach's refusal (optional, low)",
   "first": "2026-10-21",
@@ -5670,7 +5700,7 @@
   "provisional": false
  },
  {
-  "id": 379,
+  "id": 381,
   "title": "Read the subsetted feature where an instance redefines a usage that subsets it",
   "first_title": "Read the subsetted feature where an instance redefines a usage that subsets it",
   "first": "2026-10-22",

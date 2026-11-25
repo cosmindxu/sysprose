@@ -4552,9 +4552,9 @@
   "open_raw": 77,
   "open": 77,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 41,
-   "POLISH": 34,
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
    "HELD": 2
   },
   "new": 0,
@@ -4573,6 +4573,134 @@
    "HELD": 0
   },
   "cum_new": 345,
+  "cum_closed": 266
+ },
+ {
+  "idx": 143,
+  "sha": "b77537c",
+  "when": "2026-11-25T14:31:24+01:00",
+  "day": "2026-11-25",
+  "subject": "Variability V6: per-configuration walk of a variant that adds or redefines states/transitions inside the owner's machine",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 345,
+  "cum_closed": 266
+ },
+ {
+  "idx": 144,
+  "sha": "f7f5c4c",
+  "when": "2026-11-25T17:24:25+01:00",
+  "day": "2026-11-25",
+  "subject": "Merge branch 'bd-shapes' into combine-w6",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 345,
+  "cum_closed": 266
+ },
+ {
+  "idx": 145,
+  "sha": "abe9a2e",
+  "when": "2026-11-25T17:24:34+01:00",
+  "day": "2026-11-25",
+  "subject": "Merge branch 'conn-forms' into combine-w6",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 345,
+  "cum_closed": 266
+ },
+ {
+  "idx": 146,
+  "sha": "1a14101",
+  "when": "2026-11-25T17:25:03+01:00",
+  "day": "2026-11-25",
+  "subject": "TODO: two shapes noticed in the conn-forms review",
+  "open_raw": 79,
+  "open": 79,
+  "open_by": {
+   "FALSE": 1,
+   "WEAKER": 41,
+   "POLISH": 35,
+   "HELD": 2
+  },
+  "new": 2,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 1,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
   "cum_closed": 266
  }
 ]
