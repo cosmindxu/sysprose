@@ -41,7 +41,7 @@
 import type { ElementId, ElementRecord, Model } from '@core/index';
 import { findLibraryType } from '../library/resolve';
 import { conforms } from '../semantics/conformance';
-import { endPairs } from '../semantics/port-conformance';
+import { definitionEndsOf, endPairs } from '../semantics/port-conformance';
 import { resolveQualifiedNameFull } from '../semantics';
 import { childNamed, findTypeFeature, resolveFullName } from '../semantics/bind';
 import { evaluate, parseExpr } from '../semantics/expr';
@@ -777,10 +777,11 @@ export const unresolvedValueChain: ValidationRule = {
  *  - no cross multiplicity is written, the definition end allows at most n, the other
  *    end relates exactly one instance, and the related part has more than n at least
  *    (`part a : W [3]` on an end `[0..2]`): all connect to that one instance.
- * Read only: `connect [m] a to [n] b` (binary, the form the grammar reads, with or
- * without `end ::>` names), bounds written as number literals, an end related to a
- * feature owned beside the connection (never a chain). The `connect (a, b, c)` list form
- * and `end [m] … references x` bodies are not read.
+ * Read only: `connect [m] a to [n] b` and its two-end list form `connect ([m] a, [n] b)` (with or
+ * without `end ::>` names), and a connection body of exactly two `end [m] part x references a`
+ * ends (the spec's EndUsagePrefix form, §8.2.2.7; a definition end's `end [m] part x` is read like
+ * `end part x [m]`); bounds written as number literals, an end related to a feature owned beside
+ * the connection (never a chain). A list of three or more ends, and any other body shape, is not read.
  */
 export const connectorEndMultiplicity: ValidationRule = {
   id: 'connector-end-multiplicity',
@@ -791,30 +792,59 @@ export const connectorEndMultiplicity: ValidationRule = {
     const out: Diagnostic[] = [];
     for (const el of model.all()) {
       if (el.attrs.isLibrary === true || el.attrs.staleEnd === true) continue;
-      if (!el.source?.[0] || !el.target?.[0]) continue;
       if (!['ConnectionUsage', 'InterfaceUsage', 'Connector'].includes(el.eClass)) continue;
       const mk = (message: string): void => {
         out.push({ id: `connector-end-multiplicity#${n++}`, ruleId: 'connector-end-multiplicity', severity: 'warning', message, elementId: el.id });
       };
-      const cross = (which: 'source' | 'target'): Range | undefined => {
-        const raw = which === 'source' ? el.attrs.sourceCrossMult : el.attrs.targetCrossMult;
-        return typeof raw === 'string' ? statedRange({ attrs: { multiplicity: raw } } as unknown as ElementRecord) : undefined;
-      };
-      const related = (which: 'source' | 'target'): ElementRecord | undefined => {
-        const rel = model.get(el[which]![0]!);
+      const written = (raw: unknown): Range | undefined =>
+        typeof raw === 'string' ? statedRange({ attrs: { multiplicity: raw } } as unknown as ElementRecord) : undefined;
+      // The two ends, each with the part it relates, the cross multiplicity written on it and the definition end it
+      // redefines. Read from `connect [m] a to [n] b` / `connect ([m] a, [n] b)` (stored on the connection), or from
+      // exactly two `end [m] part x references a` bodies; any other shape is left unread.
+      interface End { rel: ElementRecord; cross: Range | undefined; end: ElementRecord | undefined; label: string }
+      const sameOwner = (id: ElementId | undefined): ElementRecord | undefined => {
+        const rel = id ? model.get(id) : undefined;
         return rel && rel.ownerId === el.ownerId ? rel : undefined;
       };
-      const pairs = endPairs(model, el.id);
-      for (const which of ['source', 'target'] as const) {
-        const rel = related(which);
-        if (!rel) continue;
-        const other = related(which === 'source' ? 'target' : 'source');
-        const c = cross(which);
+      const ends: (End | undefined)[] = [];
+      if (el.source?.[0] && el.target?.[0]) {
+        const pairs = endPairs(model, el.id);
+        (['source', 'target'] as const).forEach((which) => {
+          const rel = sameOwner(el[which]![0]);
+          ends.push(
+            rel && {
+              rel,
+              cross: written(which === 'source' ? el.attrs.sourceCrossMult : el.attrs.targetCrossMult),
+              end: pairs.find((x) => x.related === rel.id)?.end,
+              label: `${which} end ${qualifiedLabel(model, rel)}`,
+            },
+          );
+        });
+      } else {
+        const owned = model.children(el.id).filter((c) => c.attrs.isEnd === true);
+        if (owned.length !== 2) continue;
+        const defEnds = definitionEndsOf(model, el.id);
+        owned.forEach((o, i) => {
+          const refs = model
+            .relationshipsFrom(o.id)
+            .filter((r) => ['ReferenceSubsetting', 'Subsetting', 'Redefinition'].includes(r.eClass));
+          const rel = refs.length === 1 ? sameOwner(refs[0]!.target?.[0]) : undefined;
+          ends.push(
+            rel && {
+              rel,
+              cross: written(o.attrs.endCrossMult),
+              end: o.declaredName !== undefined ? defEnds.find((d) => d.declaredName === o.declaredName) : undefined,
+              label: `${i === 0 ? 'source' : 'target'} end ${qualifiedLabel(model, rel)}`,
+            },
+          );
+        });
+      }
+      for (const [i, me] of ends.entries()) {
+        if (!me) continue;
+        const { rel, cross: c, end, label } = me;
+        const other = ends[1 - i]?.rel;
         const p = rangeOf(model, rel);
-        const end = pairs.find((x) => x.related === rel.id)?.end;
-        const e = end ? statedRange(end) : undefined;
-        const label = `${which === 'source' ? 'source' : 'target'} end ${qualifiedLabel(model, rel)}`;
-        if (c && p && c.lo <= c.hi && (c.hi > p.hi || c.lo > p.hi)) {
+        const e = end ? (written(end.attrs.endCrossMult) ?? statedRange(end)) : undefined;        if (c && p && c.lo <= c.hi && (c.hi > p.hi || c.lo > p.hi)) {
           mk(
             `Connection ${qualifiedLabel(model, el)}: the ${label} is written ${show(c)} but ${qualifiedLabel(model, rel)} has ${show(p)}: an end cannot connect more instances than the part has (§7.13.2).`,
           );

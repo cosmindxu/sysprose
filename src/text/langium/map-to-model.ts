@@ -3169,6 +3169,10 @@ class Mapper {
     // for models saved by the old parser.
     const mults = readableMultiplicities(node.multiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
+    // `end [0..2] part device`: the cross multiplicity written between `end` and the keyword (§8.2.2.7), kept apart
+    // from the multiplicity after the name so each is written back where it stood.
+    const endMults = readableMultiplicities(node.endMult);
+    if (endMults.length) this.model.setAttrs(el.id, { endCrossMult: endMults[endMults.length - 1] });
 
     // Feature value ( = / := ), with its unit split off.
     if (node.valueOp && node.value) {

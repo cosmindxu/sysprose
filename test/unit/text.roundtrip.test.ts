@@ -69,6 +69,7 @@ const KEY_ATTRS = [
   'sendTarget',
   'sourceCrossMult',
   'targetCrossMult',
+  'endCrossMult',
   'payload',
   'clients',
   'suppliers',

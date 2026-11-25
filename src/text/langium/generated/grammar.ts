@@ -5838,6 +5838,37 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                             "$type": "Group",
                             "elements": [
                               {
+                                "$type": "Group",
+                                "elements": [
+                                  {
+                                    "$type": "Assignment",
+                                    "feature": "endMult",
+                                    "operator": "+=",
+                                    "terminal": {
+                                      "$type": "RuleCall",
+                                      "rule": {
+                                        "$ref": "#/rules@56"
+                                      },
+                                      "arguments": []
+                                    }
+                                  },
+                                  {
+                                    "$type": "Assignment",
+                                    "feature": "prefixes",
+                                    "operator": "+=",
+                                    "terminal": {
+                                      "$type": "RuleCall",
+                                      "rule": {
+                                        "$ref": "#/rules@52"
+                                      },
+                                      "arguments": []
+                                    },
+                                    "cardinality": "*"
+                                  }
+                                ],
+                                "cardinality": "?"
+                              },
+                              {
                                 "$type": "Assignment",
                                 "feature": "keyword",
                                 "operator": "=",
@@ -7054,120 +7085,259 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                 "value": "connect"
               },
               {
-                "$type": "Assignment",
-                "feature": "connSrcMult",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@56"
-                  },
-                  "arguments": []
-                },
-                "cardinality": "?"
-              },
-              {
-                "$type": "Group",
+                "$type": "Alternatives",
                 "elements": [
                   {
-                    "$type": "Assignment",
-                    "feature": "connSrcEnd",
-                    "operator": "=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@83"
-                      },
-                      "arguments": []
-                    }
-                  },
-                  {
-                    "$type": "Alternatives",
+                    "$type": "Group",
                     "elements": [
                       {
                         "$type": "Keyword",
-                        "value": "::>"
+                        "value": "("
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "connSrcMult",
+                        "operator": "+=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@56"
+                          },
+                          "arguments": []
+                        },
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Assignment",
+                            "feature": "connSrcEnd",
+                            "operator": "=",
+                            "terminal": {
+                              "$type": "RuleCall",
+                              "rule": {
+                                "$ref": "#/rules@83"
+                              },
+                              "arguments": []
+                            }
+                          },
+                          {
+                            "$type": "Alternatives",
+                            "elements": [
+                              {
+                                "$type": "Keyword",
+                                "value": "::>"
+                              },
+                              {
+                                "$type": "Keyword",
+                                "value": "references"
+                              }
+                            ]
+                          }
+                        ],
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "connectSource",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@77"
+                          },
+                          "arguments": []
+                        }
                       },
                       {
                         "$type": "Keyword",
-                        "value": "references"
+                        "value": ","
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "connTgtMult",
+                        "operator": "+=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@56"
+                          },
+                          "arguments": []
+                        },
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Assignment",
+                            "feature": "connTgtEnd",
+                            "operator": "=",
+                            "terminal": {
+                              "$type": "RuleCall",
+                              "rule": {
+                                "$ref": "#/rules@83"
+                              },
+                              "arguments": []
+                            }
+                          },
+                          {
+                            "$type": "Alternatives",
+                            "elements": [
+                              {
+                                "$type": "Keyword",
+                                "value": "::>"
+                              },
+                              {
+                                "$type": "Keyword",
+                                "value": "references"
+                              }
+                            ]
+                          }
+                        ],
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "connectTarget",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@77"
+                          },
+                          "arguments": []
+                        }
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": ")"
                       }
                     ]
-                  }
-                ],
-                "cardinality": "?"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "connectSource",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@77"
-                  },
-                  "arguments": []
-                }
-              },
-              {
-                "$type": "Keyword",
-                "value": "to"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "connTgtMult",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@56"
-                  },
-                  "arguments": []
-                },
-                "cardinality": "?"
-              },
-              {
-                "$type": "Group",
-                "elements": [
-                  {
-                    "$type": "Assignment",
-                    "feature": "connTgtEnd",
-                    "operator": "=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@83"
-                      },
-                      "arguments": []
-                    }
                   },
                   {
-                    "$type": "Alternatives",
+                    "$type": "Group",
                     "elements": [
                       {
-                        "$type": "Keyword",
-                        "value": "::>"
+                        "$type": "Assignment",
+                        "feature": "connSrcMult",
+                        "operator": "+=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@56"
+                          },
+                          "arguments": []
+                        },
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Assignment",
+                            "feature": "connSrcEnd",
+                            "operator": "=",
+                            "terminal": {
+                              "$type": "RuleCall",
+                              "rule": {
+                                "$ref": "#/rules@83"
+                              },
+                              "arguments": []
+                            }
+                          },
+                          {
+                            "$type": "Alternatives",
+                            "elements": [
+                              {
+                                "$type": "Keyword",
+                                "value": "::>"
+                              },
+                              {
+                                "$type": "Keyword",
+                                "value": "references"
+                              }
+                            ]
+                          }
+                        ],
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "connectSource",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@77"
+                          },
+                          "arguments": []
+                        }
                       },
                       {
                         "$type": "Keyword",
-                        "value": "references"
+                        "value": "to"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "connTgtMult",
+                        "operator": "+=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@56"
+                          },
+                          "arguments": []
+                        },
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Assignment",
+                            "feature": "connTgtEnd",
+                            "operator": "=",
+                            "terminal": {
+                              "$type": "RuleCall",
+                              "rule": {
+                                "$ref": "#/rules@83"
+                              },
+                              "arguments": []
+                            }
+                          },
+                          {
+                            "$type": "Alternatives",
+                            "elements": [
+                              {
+                                "$type": "Keyword",
+                                "value": "::>"
+                              },
+                              {
+                                "$type": "Keyword",
+                                "value": "references"
+                              }
+                            ]
+                          }
+                        ],
+                        "cardinality": "?"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "connectTarget",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@77"
+                          },
+                          "arguments": []
+                        }
                       }
                     ]
                   }
-                ],
-                "cardinality": "?"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "connectTarget",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@77"
-                  },
-                  "arguments": []
-                }
+                ]
               }
             ],
             "cardinality": "?"
