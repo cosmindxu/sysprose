@@ -4456,9 +4456,9 @@
   "open_raw": 79,
   "open": 79,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 41,
-   "POLISH": 36,
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 33,
    "HELD": 2
   },
   "new": 0,
@@ -4478,5 +4478,101 @@
   },
   "cum_new": 345,
   "cum_closed": 264
+ },
+ {
+  "idx": 140,
+  "sha": "c3a0342",
+  "when": "2026-11-25T09:28:25+01:00",
+  "day": "2026-11-25",
+  "subject": "Variability: per-configuration walk of a machine a variant redefines whole and of a variation state's chosen variant (V6 follow-up); other s",
+  "open_raw": 79,
+  "open": 79,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 33,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 345,
+  "cum_closed": 264
+ },
+ {
+  "idx": 141,
+  "sha": "69f2743",
+  "when": "2026-11-25T12:15:42+01:00",
+  "day": "2026-11-25",
+  "subject": "Merge branch 'if-nested' into combine-w5",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 2,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 2,
+   "HELD": 0
+  },
+  "cum_new": 345,
+  "cum_closed": 266
+ },
+ {
+  "idx": 142,
+  "sha": "1ccd680",
+  "when": "2026-11-25T12:15:42+01:00",
+  "day": "2026-11-25",
+  "subject": "Merge branch 'icd-overlay' into combine-w5",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 41,
+   "POLISH": 34,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 345,
+  "cum_closed": 266
  }
 ]
