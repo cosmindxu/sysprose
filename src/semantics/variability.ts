@@ -1553,7 +1553,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     }
     if (f.valid !== null) {
       for (const [rid, e] of statePoints) {
-        if (replacers.has(rid) || [...replacers.values()].some((r) => r.reps.some((x) => x.m.id === rid))) continue;
+        if (!fixed.has(rid) || replacers.has(rid) || [...replacers.values()].some((r) => r.reps.some((x) => x.m.id === rid))) continue;
         const sigs = new Map<string, { removed: string[]; chosen: string[]; count: number }>();
         for (const sel of f.valid) {
           const removed: string[] = [];
