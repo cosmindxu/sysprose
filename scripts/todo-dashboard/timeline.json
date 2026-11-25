@@ -4680,9 +4680,9 @@
   "open_raw": 79,
   "open": 79,
   "open_by": {
-   "FALSE": 1,
-   "WEAKER": 41,
-   "POLISH": 35,
+   "FALSE": 6,
+   "WEAKER": 39,
+   "POLISH": 32,
    "HELD": 2
   },
   "new": 2,
@@ -4702,5 +4702,37 @@
   },
   "cum_new": 347,
   "cum_closed": 266
+ },
+ {
+  "idx": 147,
+  "sha": "0879205",
+  "when": "2026-11-25T19:40:10+01:00",
+  "day": "2026-11-25",
+  "subject": "Refuse a multiplicity written before the name (part [1] x): not SysML (\u00a78.2.2.6.2), and its count was dropped silently; mapper/pre-name-mult",
+  "open_raw": 78,
+  "open": 78,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 41,
+   "POLISH": 35,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 1,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 267
  }
 ]
