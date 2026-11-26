@@ -5106,8 +5106,14 @@ any of these at the language level:
   (the `sysprose variability` enumeration): no valid configuration selects it,
   nothing is said; every valid configuration does, a warning "in every valid
   configuration"; some do, an info "exceeds only in: ..." naming them. When the
-  enumeration is cut or the family is not read, the info "only when `opt::extra`
-  is selected" stays, never a warning. A sum needing none reads "in every
+  enumeration is cut at its cap, an exact bounded search over the same
+  constraints decides the selection instead: none valid, nothing is said; none
+  that avoids it, a warning "in every valid configuration"; else an info naming
+  one valid configuration that has it (a search that runs out of budget keeps
+  the old reading). When the family is not read, the info "only when
+  `opt::extra` is selected" stays, never a warning. More than 14 candidate
+  subsetters of one superset are searched too (exact branch and bound with a
+  node budget; past it the superset is not searched). A sum needing none reads "in every
   configuration".
 - **`enum-value-not-member`.** `attribute c : Color = Color::blue` where `Color`
   has no `blue`, a literal of another enumeration, or a bare number where the
