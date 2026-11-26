@@ -617,7 +617,7 @@ const CODES = [
     code: 'validation/disjoint-sum-exceeds',
     source: 'validation',
     severity: 'warning',
-    when: 'Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset\u2019s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`). Variants of one variation point are alternatives and are never summed together; a sum that needs a variant selected is reported as an info naming the variants (\u00a78.4.2.3), the family constraints not being read.',
+    when: 'Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset\u2019s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`). Variants of one variation point are alternatives and are never summed together; a sum that needs a variant selected is decided against the family constraints (the V4 configuration enumeration): no valid configuration selects the variants, nothing is said; every valid configuration does, a warning "in every valid configuration"; some do, an info "exceeds only in: ..." naming them. A cut enumeration or an undecided family keeps the info naming the variants (\u00a78.4.2.3), never a warning.',
     hint: 'Lower a lower bound, raise the superset\u2019s upper bound, or drop the disjoint declaration.',
   },
   {

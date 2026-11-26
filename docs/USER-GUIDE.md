@@ -5102,9 +5102,13 @@ any of these at the language level:
   Through variants: two features in different variants of one variation point are
   alternatives (one variant is chosen, §8.4.2.3) and are never summed together;
   a feature inside a variant counts only in the configurations that select it,
-  so a sum that needs a variant is an info saying "only when `opt::extra` is
-  selected" (the family's constraints are not read, so it cannot say the
-  selection is valid), while a sum needing none reads "in every configuration".
+  so a sum that needs a variant is decided against the family's constraints
+  (the `sysprose variability` enumeration): no valid configuration selects it,
+  nothing is said; every valid configuration does, a warning "in every valid
+  configuration"; some do, an info "exceeds only in: ..." naming them. When the
+  enumeration is cut or the family is not read, the info "only when `opt::extra`
+  is selected" stays, never a warning. A sum needing none reads "in every
+  configuration".
 - **`enum-value-not-member`.** `attribute c : Color = Color::blue` where `Color`
   has no `blue`, a literal of another enumeration, or a bare number where the
   enumeration specialises no attribute definition (§7.8.2). A warning.

@@ -1296,7 +1296,38 @@ export function decidedSelectionConstraints(model: Model): Map<string, string> {
   return map;
 }
 
+/** One read family's valid configurations, kept beside the report for the rules that ask which configurations select a variant. */
+interface FamilyConfigs {
+  variantIds: Set<string>;
+  valid: Sel[];
+  points: VariabilityPoint[];
+}
+const familyCache = new WeakMap<Model, { rev: number; list: FamilyConfigs[] }>();
+
+/**
+ * Which valid configurations select every one of the variants `variantIds`? Answered from the V4 enumeration
+ * (it reads the family constraints). `null` when no family read here holds all those variants, or when the
+ * enumeration was cut at the cap: nothing is claimed then. Otherwise `total` valid configurations (over the
+ * constraints read; constraints not read could only remove more) and the `selecting` ones as `point = variant` lists.
+ */
+export function configurationsSelecting(model: Model, variantIds: string[]): { total: number; selecting: string[][] } | null {
+  if (variantIds.length === 0) return null;
+  let hit = familyCache.get(model);
+  if (hit === undefined || hit.rev !== model.rev) {
+    variabilityReport(model);
+    hit = familyCache.get(model);
+  }
+  if (hit === undefined) return null;
+  for (const fam of hit.list) {
+    if (!variantIds.every((v) => fam.variantIds.has(v))) continue;
+    const selecting = fam.valid.filter((s) => variantIds.every((v) => [...s.values()].some((k) => k !== null && k.slice(k.indexOf('/') + 1) === v)));
+    return { total: fam.valid.length, selecting: selecting.map((s) => selText(fam.points, s)) };
+  }
+  return null;
+}
+
 export function variabilityReport(model: Model): VariabilityReport {
+  const families: FamilyConfigs[] = [];
   const owners: OwnerReport[] = [];
   const diagnostics: VariabilityDiagnostic[] = [];
   for (const e of model.all()) {
@@ -1319,6 +1350,7 @@ export function variabilityReport(model: Model): VariabilityReport {
     }
     const f = buildFormula(points, read, rows.filter((x) => !x.read).length);
     const analysis = analyse(f, excluded.map((p) => p.name));
+    if (f.valid !== null) families.push({ variantIds: new Set(points.flatMap((p) => p.variants.map((v) => v.key.slice(v.key.indexOf('/') + 1)))), valid: f.valid, points: f.points });
     if (analysis.established) explain(f, analysis);
     const breaksOf = connectionChecker(model, e);
     if (analysis.established && f.valid !== null) {
@@ -1341,6 +1373,7 @@ export function variabilityReport(model: Model): VariabilityReport {
     const behaviour = behaviourOf(model, e, f, name, diagnostics);
     owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: cfgReports, evaluations, behaviour });
   }
+  familyCache.set(model, { rev: model.rev, list: families });
   const count = (s: VariabilitySeverity): number => diagnostics.filter((d) => d.severity === s).length;
   const verdict = verdictOf(owners);
   return { owners, diagnostics, summary: { errors: count('error'), warnings: count('warning'), infos: count('info') }, cap: VARIABILITY_CAP, verdict, exitCode: exitCodeOf(owners, verdict) };
