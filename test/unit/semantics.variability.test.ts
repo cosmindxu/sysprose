@@ -574,10 +574,57 @@ describe('state machines per configuration (V6)', () => {
     expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
   });
 
-  it('a variant redefining a state of the owner machine is still unread: the superset-only line stays', () => {
-    const o = rep(INM('state b :>> Eng::s::b { state inner; }'));
+  const NEST = 'entry state a; state b { entry state x; state y; transition tx first x accept Go then y; } transition t first a accept Go then b;';
+
+  it('V6a: a variant redefining a state of the machine adds its members to it: reachability per configuration', () => {
+    const o = rep(INM('state b :>> Eng::s::b { entry state i1; state i2; state i3; transition ti first i1 accept Go then i2; }', 'entry state a; state b; transition t first a accept Go then b;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('walked per configuration');
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): every state reachable and no transition dead');
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) i3');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('V6a: a correct state redefinition stays silent about dead things', () => {
+    const o = rep(INM('state b :>> Eng::s::b { entry state i1; state i2; transition ti first i1 accept Go then i2; }', 'entry state a; state b; transition t first a accept Go then b;'));
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
+  });
+
+  it('V6a: a state redefinition bringing an entry to a state that has one stays superset-only', () => {
+    const o = rep(INM('state b :>> Eng::s::b { entry state i1; state i2; }', 'entry state a; state b { entry state x; state y; } transition t first a accept Go then b;'));
     expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(true);
-    expect(o.diagnostics.every((x) => x.code !== VARIABILITY_CODES.behaviourDead)).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(false);
+  });
+
+  it('V6b: a redefinition nested two states deep: y is unreachable only where the transition is redefined', () => {
+    const o = rep(INM('state b :>> Eng::s::b { transition tx :>> Eng::s::b::tx first x accept Go then x; }', NEST));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): every state reachable and no transition dead');
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) y');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  const TWO = (big: string, g2: string) => `package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s :>> Eng::s { ${big} } } }
+    variation part gear : Eng { variant part g1 : Eng; variant part g2 : Eng { state s :>> Eng::s { ${g2} } } } }
+}`;
+
+  it('V6c: variants of two variation points redefining the same machine are overlaid per configuration', () => {
+    const o = rep(TWO('transition t2 first b accept Go then a;', 'state c; transition t3 first b accept Go then c;'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('selecting eng::big and gear::g2 (1 of 4): every state reachable and no transition dead');
+    expect(d.message).not.toContain('conflict');
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+  });
+
+  it('V6c: two selected variants redefining the same transition differently are a conflict for that configuration, never a pick', () => {
+    const o = rep(TWO('transition t4 :>> Eng::s::t first a accept Go then a;', 'transition t5 :>> Eng::s::t first a accept Go then b;'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('selecting eng::big and gear::g2 (1 of 4): conflict (eng::big and gear::g2 both redefine or fill the same member');
+    expect(d.message).toContain('selecting eng::big (1 of 4): unreachable state(s) b');
+    expect(o.owners[0].behaviour.machines[0].readings!.some((r) => r.why?.includes('both redefine'))).toBe(true);
   });
 
   const VSTATE = (extra: string) => `package P {
