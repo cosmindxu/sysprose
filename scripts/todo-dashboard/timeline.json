@@ -5032,6 +5032,102 @@
   "open_raw": 77,
   "open": 77,
   "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 158,
+  "sha": "9336faf",
+  "when": "2026-11-26T18:39:07+01:00",
+  "day": "2026-11-26",
+  "subject": "connections: the ends of a connection/interface definition held to 1..1 after the name (\u00a77.13.2), chains through many-instance parts counted",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 159,
+  "sha": "a838530",
+  "when": "2026-11-26T21:32:00+01:00",
+  "day": "2026-11-26",
+  "subject": "Merge branch 'var-sm6' into combine-w10",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 160,
+  "sha": "3653080",
+  "when": "2026-11-26T21:32:51+01:00",
+  "day": "2026-11-26",
+  "subject": "Merge branch 'bd-solver' into combine-w10",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
    "FALSE": 0,
    "WEAKER": 41,
    "POLISH": 34,
