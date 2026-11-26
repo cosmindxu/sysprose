@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 195
-- **Tests:** 6284 total — 6284 passed, 0 failed, 0 skipped
+- **Tests:** 6295 total — 6295 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -137,7 +137,7 @@
 | test/unit/semantics.mc.reach.test.ts | 147 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.redefinition-merge.test.ts | 2 | 0 | 0 |
-| test/unit/semantics.mc.redefinition.test.ts | 5 | 0 | 0 |
+| test/unit/semantics.mc.redefinition.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.mc.refine.test.ts | 7 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 40 | 0 | 0 |
@@ -164,7 +164,7 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
-| test/unit/semantics.variability.test.ts | 70 | 0 | 0 |
+| test/unit/semantics.variability.test.ts | 74 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
@@ -202,5 +202,5 @@
 | test/unit/validation.connection.test.ts | 20 | 0 | 0 |
 | test/unit/validation.exchange-allocation.test.ts | 21 | 0 | 0 |
 | test/unit/validation.interfaces.test.ts | 16 | 0 | 0 |
-| test/unit/validation.rules.test.ts | 126 | 0 | 0 |
+| test/unit/validation.rules.test.ts | 128 | 0 | 0 |
 | test/unit/validation.variability.test.ts | 19 | 0 | 0 |
