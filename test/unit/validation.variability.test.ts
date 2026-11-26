@@ -169,6 +169,14 @@ describe('validation — variability spec fences (warnings)', () => {
     expect(run(`package P { ${T} part v { part sm : T; variation part e : T { variant sm; } } }`, R)).toEqual([]);
   });
 
+  it('V3 indirect: a variation usage specializing a plain definition that itself specializes a variation definition is legal (l.17210 reads the usage own ownedSpecialization only)', () => {
+    const R = 'variation-usage-typed-by-variation';
+    const T = 'part def T; variation part def TC :> T { variant part m : T; }';
+    expect(run(`package P { ${T} part def Mid :> TC; part v { variation part tr : Mid { variant part z : T; } } }`, R)).toEqual([]);
+    // the direct case stays fenced
+    expect(run(`package P { ${T} part v { variation part tr : TC { variant part z : T; } } }`, R)).toHaveLength(1);
+  });
+
   it('a conforming variant, a reference-form variant and an unresolved type stay silent', () => {
     const src = `package P { part def Engine; part def Small :> Engine; part sm : Small;
       variation part def EC :> Engine { variant part a : Small; variant part b : Engine; }

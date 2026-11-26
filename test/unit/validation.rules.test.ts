@@ -931,7 +931,7 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     const d = await run2('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::extra; }');
     expect(d).toHaveLength(1);
     expect(d[0]!.severity).toBe('info');
-    expect(d[0]!.message).toContain('only when');
+    expect(d[0]!.message).toContain('only in');
     expect(d[0]!.message).toContain('extra');
     // a variant whose sum fits stays silent
     expect(
@@ -941,6 +941,24 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     const e = await run2('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; part rear : W [3] subsets wheels; disjoint front from rear; }');
     expect(e[0]!.severity).toBe('warning');
     expect(e[0]!.message).toContain('in every configuration');
+  });
+
+  it('BD6 under the family constraints: excluded selection silent, forced selection warns, partial names the configurations', async () => {
+    const run2 = async (c: string) => {
+      const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::extra; ${c} } }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    // no valid configuration selects extra: the sum never arises
+    expect(await run2('assert constraint c { not (opt == opt::extra) }')).toEqual([]);
+    // every valid configuration selects extra: a warning
+    const w = await run2('assert constraint c { opt == opt::extra }');
+    expect(w).toHaveLength(1);
+    expect(w[0]!.severity).toBe('warning');
+    expect(w[0]!.message).toContain('in every valid configuration');
+    // some do: an info naming the configurations
+    const i = await run2('');
+    expect(i[0]!.severity).toBe('info');
+    expect(i[0]!.message).toContain('exceeds only in: opt = ');
   });
 
   it('BD7 enum-value-not-member: flags a literal the enum lacks, another enum literal, a number', async () => {

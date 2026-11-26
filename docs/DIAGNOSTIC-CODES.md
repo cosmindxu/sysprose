@@ -600,7 +600,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset’s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`). Variants of one variation point are alternatives and are never summed together; a sum that needs a variant selected is reported as an info naming the variants (§8.4.2.3), the family constraints not being read.
+- **Fires when:** Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset’s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`). Variants of one variation point are alternatives and are never summed together; a sum that needs a variant selected is decided against the family constraints (the V4 configuration enumeration): no valid configuration selects the variants, nothing is said; every valid configuration does, a warning "in every valid configuration"; some do, an info "exceeds only in: ..." naming them. A cut enumeration or an undecided family keeps the info naming the variants (§8.4.2.3), never a warning.
 - **Hint given:** Lower a lower bound, raise the superset’s upper bound, or drop the disjoint declaration.
 
 ### `validation/enum-value-not-member`

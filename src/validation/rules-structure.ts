@@ -45,6 +45,7 @@ import { definitionEndsOf, endPairs } from '../semantics/port-conformance';
 import { resolveQualifiedNameFull } from '../semantics';
 import { childNamed, findTypeFeature, resolveFullName } from '../semantics/bind';
 import { evaluate, parseExpr } from '../semantics/expr';
+import { configurationsSelecting } from '../semantics/variability';
 import type { ExprNode } from '../semantics/expr';
 import { effectiveFeaturesWithLibrary } from '../semantics/featuring';
 import { effectiveNameOf, generalizationsOf } from '../semantics/inheritance';
@@ -342,8 +343,11 @@ function guardsCompatible(a: ElementRecord[], b: ElementRecord[]): boolean {
  * wrongly taken over alternatives before). A feature inside a variant exists only in
  * the configurations that select it: a sum that needs variants is reported as an
  * `info` naming them ("exceeds only when ... are selected"), because the
- * constraints of the family may exclude that selection and this rule does not read
- * them; a sum that needs none is the warning and holds "in every configuration".
+ * constraints of the family may exclude that selection. The V4 configuration enumeration (it reads the
+ * family constraints) then decides: no valid configuration selects them → silent; every valid one does →
+ * warning "in every valid configuration"; some → info "exceeds only in: ...". A cut enumeration or an
+ * undecided family keeps the info reading, never a warning. A sum that needs no variant is the warning
+ * and holds "in every configuration".
  */
 export const disjointSumExceeds: ValidationRule = {
   id: 'disjoint-sum-exceeds',
@@ -404,12 +408,29 @@ export const disjointSumExceeds: ValidationRule = {
       const names = best.map((s) => `${featureLabel(model, model.require(s))} ${show({ lo: lowers.get(s)!, hi: statedRange(model.require(s))!.hi })}`);
       const needed = new Map<ElementId, ElementRecord>();
       for (const g of [...supGuard, ...best.flatMap((s) => guards.get(s)!)]) needed.set(g.id, g);
-      const when = needed.size === 0 ? 'in every configuration' : `only when ${[...needed.values()].map((v) => qualifiedLabel(model, v)).join(', ')} ${needed.size === 1 ? 'is' : 'are'} selected`;
+      let severity: 'warning' | 'info' = needed.size === 0 ? 'warning' : 'info';
+      let when = needed.size === 0 ? 'in every configuration' : `only when ${[...needed.values()].map((v) => qualifiedLabel(model, v)).join(', ')} ${needed.size === 1 ? 'is' : 'are'} selected`;
+      let note = needed.size === 0 ? '' : ' (the family constraints are not read here)';
+      if (needed.size > 0) {
+        // The V4 enumeration reads the family constraints: which valid configurations select the needed variants?
+        const fam = configurationsSelecting(model, [...needed.keys()]);
+        if (fam !== null && fam.total > 0) {
+          if (fam.selecting.length === 0) continue; // no valid configuration selects them: the sum never arises
+          if (fam.selecting.length === fam.total) {
+            severity = 'warning';
+            when = 'in every valid configuration';
+            note = '';
+          } else if (fam.selecting.length <= 10) {
+            when = `exceeds only in: ${fam.selecting.map((c) => c.join(', ')).join('; ')}`;
+            note = '';
+          }
+        }
+      }
       out.push({
         id: `disjoint-sum-exceeds#${n++}`,
         ruleId: 'disjoint-sum-exceeds',
-        severity: needed.size === 0 ? 'warning' : 'info',
-        message: `${names.join(', ')} are disjoint and subset ${qualifiedLabel(model, sup)} ${show(hi)}: their lower bounds add up to ${bestSum}, above its upper bound ${hi.hi}, so they cannot all hold (§7.6.1, KerML disjoining), ${when}${needed.size === 0 ? '' : ' (the family constraints are not read here)'}.`,
+        severity,
+        message: `${names.join(', ')} are disjoint and subset ${qualifiedLabel(model, sup)} ${show(hi)}: their lower bounds add up to ${bestSum}, above its upper bound ${hi.hi}, so they cannot all hold (§7.6.1, KerML disjoining), ${when}${note}.`,
         elementId: best[0]!,
       });
     }
