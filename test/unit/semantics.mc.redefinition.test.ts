@@ -254,3 +254,57 @@ describe('redefinitions and two general machines equal their flattened twin (T-1
     );
   });
 });
+
+// sm-inherit I1: a machine usage that redefines an inherited machine usage is walked on the effective machine
+// (Part 1 §7.13: the redefining usage replaces the redefined one and keeps its members).
+describe('a machine usage redefining an inherited machine usage is walked whole (sm-inherit I1)', () => {
+  const base = `part def Eng { exhibit state s { entry state a; state b; state c; transition t1 first a accept go then b; } }`;
+  const walk = async (text: string, qn: string) => {
+    const model = (await loadModelText(text, { fileName: 'inh.sysml', library: 'none' })).model!;
+    const m = reachReport(model).machines.find((r) => r.machine.id === idOf(model, qn))!;
+    expect(m, text).toBeDefined();
+    return m;
+  };
+  const names = (xs: readonly { qualifiedName?: string }[]): string[] => xs.map((x) => x.qualifiedName ?? '').sort();
+
+  it('a dead state only in the inherited part stays dead on both machines, the walk exhaustive', async () => {
+    const text = `package P { ${base} part def Eng2 :> Eng { exhibit state s :>> Eng::s { state d; transition t2 first b accept g2 then d; } } }`;
+    for (const qn of ['P::Eng::s', 'P::Eng2::s']) {
+      const m = await walk(text, qn);
+      expect(m.exhaustive, qn).toBe(true);
+      expect(m.unsupported, qn).toEqual([]);
+      expect(names(m.states.unreachable), qn).toEqual(['P::Eng::s::c']);
+    }
+    expect((await walk(text, 'P::Eng2::s')).states.total).toBe(4);
+  });
+
+  it('a dead state only in the redefining part is reported on the redefining machine alone', async () => {
+    const text = `package P { ${base} part def Eng2 :> Eng { exhibit state s :>> Eng::s { state d; state e; transition t2 first b accept g2 then d; } } }`;
+    const m = await walk(text, 'P::Eng2::s');
+    expect(m.exhaustive).toBe(true);
+    expect(names(m.states.unreachable)).toEqual(['P::Eng2::s::e', 'P::Eng::s::c'].sort());
+    expect(names((await walk(text, 'P::Eng::s')).states.unreachable)).toEqual(['P::Eng::s::c']);
+  });
+
+  it('the redefining part can make an inherited dead state reachable, so it is not reported dead there', async () => {
+    const text = `package P { ${base} part def Eng2 :> Eng { exhibit state s :>> Eng::s { transition t2 first b accept g2 then c; } } }`;
+    expect(names((await walk(text, 'P::Eng::s')).states.unreachable)).toEqual(['P::Eng::s::c']);
+    const m = await walk(text, 'P::Eng2::s');
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.unreachable).toEqual([]);
+  });
+
+  it('a state redefined by name (not the same name) is read too', async () => {
+    const text = `package P { ${base} part def Eng2 :> Eng { exhibit state s2 :>> s { state d; transition t2 first b accept g2 then d; } } }`;
+    const m = await walk(text, 'P::Eng2::s2');
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.total).toBe(4);
+  });
+
+  it('a clash on a name the general already holds stays refused with the reason, never a silent claim', async () => {
+    const text = `package P { ${base} part def Eng2 :> Eng { exhibit state s :>> Eng::s { state a; transition t2 first b accept g2 then a; } } }`;
+    const m = await walk(text, 'P::Eng2::s');
+    expect(m.exhaustive).toBe(false);
+    expect(m.unsupported.length).toBeGreaterThan(0);
+  });
+});

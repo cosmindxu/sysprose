@@ -557,6 +557,22 @@ function mergedFrom(model: Model, id: ElementId): ElementRecord | undefined {
   return out ?? undefined;
 }
 
+/**
+ * The machine usage `id` redefines, when `id` is a machine usage (not a state def) with exactly one redefinition whose
+ * target is a non-library machine usage outside `id`. Undefined for anything else (a subsetting, two redefinitions, a
+ * target that is a definition, a nested state of a machine: those keep the readings they had).
+ */
+function redefinedMachineUsage(model: Model, id: ElementId): ElementRecord | undefined {
+  const m = model.get(id);
+  if (m === undefined || (m.eClass !== 'StateUsage' && m.eClass !== 'ExhibitStateUsage')) return undefined;
+  const rels = model.relationshipsFrom(id).filter((r) => r.eClass === 'Redefinition');
+  const to = rels.length === 1 ? rels[0].target?.[0] : undefined;
+  const t = to === undefined ? undefined : model.get(to);
+  if (t === undefined || t.id === id || (t.eClass !== 'StateUsage' && t.eClass !== 'ExhibitStateUsage') || t.attrs.isLibrary === true) return undefined;
+  for (let p: ElementId | null | undefined = t.ownerId; p != null; p = model.get(p)?.ownerId) if (p === id) return undefined;
+  return t;
+}
+
 /** The longest chain of general machines read through; a longer one is refused as a `cycle`. */
 const MAX_GENERAL_CHAIN = 8;
 
@@ -594,11 +610,18 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
     if (chain.length === 0) cache.inherited.set(id, r);
     return r;
   };
-  const generals =
+  const generals: ElementRecord[] =
     m === undefined || (m.eClass !== 'StateDefinition' && m.eClass !== 'StateUsage' && m.eClass !== 'ExhibitStateUsage')
       ? []
       : model.typesOf(id).filter((g) => g.eClass === 'StateDefinition' && g.attrs.isLibrary !== true);
-  const reads = generals.length > 0 && (m!.eClass === 'StateDefinition' || (own.transitions.length > 0 && isMachineRoot(model, m!)));
+  // A machine USAGE that redefines another machine usage (`exhibit state s :>> Eng::s` in `Eng2 :> Eng`) is read
+  // through the usage it redefines, like a `state def` through its general (Part 1 §7.13: a redefining usage
+  // replaces the redefined one and keeps its members; the redefined usage is not an ancestor of this one).
+  const redefined = redefinedMachineUsage(model, id);
+  if (redefined !== undefined && !generals.some((g) => g.id === redefined.id)) generals.push(redefined);
+  const reads =
+    generals.length > 0 &&
+    (m!.eClass === 'StateDefinition' || ((own.transitions.length > 0 || redefined !== undefined) && isMachineRoot(model, m!)));
   if (!reads) {
     cache.inherited.set(id, own);
     return own;

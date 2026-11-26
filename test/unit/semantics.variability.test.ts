@@ -521,8 +521,8 @@ describe('state machines per configuration (V6)', () => {
   part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s :>> Eng::s { ${bigBody} } } } }
 }`;
 
-  it('a variant that redefines the machine: c is unreachable only where the redefinition is not selected', () => {
-    const o = rep(REDEF('entry state a2; state b2; state c2; transition t2 first a2 accept Go then b2; transition t3 first b2 accept Go then c2;'));
+  it('a variant that redefines the machine (it keeps the members it redefines, sm-inherit): c is unreachable only where the redefinition is not selected', () => {
+    const o = rep(REDEF('transition t2 first b accept Go then c;'));
     const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
     expect(d.severity).toBe('warning');
     expect(d.message).toContain('walked per configuration');
@@ -532,7 +532,7 @@ describe('state machines per configuration (V6)', () => {
   });
 
   it('a correct redefinition stays silent about dead things', () => {
-    const o = rep(REDEF('entry state a2; state b2; transition t2 first a2 accept Go then b2;', 'entry state a; state b; transition t first a accept Go then b;'));
+    const o = rep(REDEF('state d; transition t2 first b accept Go then d;', 'entry state a; state b; transition t first a accept Go then b;'));
     expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
     expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
   });
