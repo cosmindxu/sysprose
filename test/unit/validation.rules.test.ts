@@ -918,6 +918,31 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(await run(car('disjoint front from rear;', '[0..3]', '[0..3]'), 'disjoint-sum-exceeds')).toEqual([]);
   });
 
+  it('BD6 through variants: alternatives are not summed; a sum needing a variant is an info naming it', async () => {
+    const run2 = async (body: string) => {
+      const r = await loadModelText(`package P { ${body} }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    // two variants of one point are alternatives: never present together, so no sum (a false positive before)
+    expect(
+      await run2('part def W; part def Car { part wheels : W [4]; variation part opt { variant part a : W [3] subsets wheels; variant part b : W [3] subsets wheels; disjoint a from b; } }'),
+    ).toEqual([]);
+    // a fixed subsetter plus a variant's: exceeds only when the variant is selected
+    const d = await run2('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::extra; }');
+    expect(d).toHaveLength(1);
+    expect(d[0]!.severity).toBe('info');
+    expect(d[0]!.message).toContain('only when');
+    expect(d[0]!.message).toContain('extra');
+    // a variant whose sum fits stays silent
+    expect(
+      await run2('part def W; part def Car { part wheels : W [8]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; } disjoint front from opt::extra; }'),
+    ).toEqual([]);
+    // no variants: the warning says it holds in every configuration
+    const e = await run2('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; part rear : W [3] subsets wheels; disjoint front from rear; }');
+    expect(e[0]!.severity).toBe('warning');
+    expect(e[0]!.message).toContain('in every configuration');
+  });
+
   it('BD7 enum-value-not-member: flags a literal the enum lacks, another enum literal, a number', async () => {
     const enums = 'enum def Color { red; green; } enum def Size { big; }';
     expect(await run(`${enums} part def X { attribute c : Color = Color::blue; }`, 'enum-value-not-member')).toHaveLength(1);

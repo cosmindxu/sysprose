@@ -150,6 +150,25 @@ describe('validation — variability spec fences (warnings)', () => {
     expect(d[0].message).toContain('§8.4.2.3');
   });
 
+  it('V3: the fence fires for every way a variation usage specializes a variation: subsetting, redefinition, nested typing', () => {
+    const R = 'variation-usage-typed-by-variation';
+    const T = 'part def T; variation part def TC :> T { variant part m : T; }';
+    expect(run(`package P { ${T} part v { variation part base : T { variant part m : T; } variation part tr :> base; } }`, R)).toHaveLength(1);
+    expect(run(`package P { ${T} part v { variation part base : T { variant part m : T; } variation part tr ::> base; } }`, R)).toHaveLength(1);
+    expect(run(`package P { ${T} part def A { variation part base : T { variant part m : T; } } part def B :> A { variation part base2 :>> base; } }`, R)).toHaveLength(1);
+    expect(run(`package P { ${T} part v { variation part tr :> TC; } }`, R)).toHaveLength(1);
+    expect(run(`package P { ${T} part v { part w : T { variation part tr : TC; } } }`, R)).toHaveLength(1);
+    expect(run(`package P { ${T} part v { variation part tr : TC { variant part z : T; } } }`, R)).toHaveLength(1);
+  });
+
+  it('V3: a plain usage subsetting or redefining a variation, a variation over a plain usage, and a reference-form variant stay silent', () => {
+    const R = 'variation-usage-typed-by-variation';
+    const T = 'part def T;';
+    expect(run(`package P { ${T} part v { variation part base : T { variant part m : T; } part tr :> base; } }`, R)).toEqual([]);
+    expect(run(`package P { ${T} part v { part base : T; variation part tr :> base { variant part m : T; } } }`, R)).toEqual([]);
+    expect(run(`package P { ${T} part v { part sm : T; variation part e : T { variant sm; } } }`, R)).toEqual([]);
+  });
+
   it('a conforming variant, a reference-form variant and an unresolved type stay silent', () => {
     const src = `package P { part def Engine; part def Small :> Engine; part sm : Small;
       variation part def EC :> Engine { variant part a : Small; variant part b : Engine; }

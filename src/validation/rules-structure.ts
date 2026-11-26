@@ -305,6 +305,24 @@ export const subsetTypeConformance: ValidationRule = {
   },
 };
 
+/** The variants (usages marked `variant`) a feature sits in, innermost first, itself included: what must be selected for it to exist. */
+function variantGuard(model: Model, el: ElementRecord): ElementRecord[] {
+  const out: ElementRecord[] = [];
+  const seen = new Set<string>();
+  let cur: ElementRecord | undefined = el;
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (cur.attrs.isVariant === true && isKindOf(cur.eClass, 'Usage')) out.push(cur);
+    cur = cur.ownerId !== null ? model.get(cur.ownerId) : undefined;
+  }
+  return out;
+}
+
+/** Can two guards hold in one configuration? Not when they name two different variants of the one variation point (a sibling pair: one is chosen, §8.4.2.3). */
+function guardsCompatible(a: ElementRecord[], b: ElementRecord[]): boolean {
+  return !a.some((x) => b.some((y) => x.id !== y.id && x.ownerId === y.ownerId));
+}
+
 /**
  * BD6 `disjoint-sum-exceeds`.
  *
@@ -317,6 +335,15 @@ export const subsetTypeConformance: ValidationRule = {
  * superset's upper bound. (`wheels [4]` with `front [3]` and `rear [3]` disjoint
  * from each other would need six.) Only bounds written as literals are read; a
  * superset with no stated multiplicity gives no finding.
+ *
+ * Through variants (§7.6.1 variation, §8.4.2.3: exactly one variant of a variation
+ * point is chosen): features that sit in different variants of one variation point are
+ * never present together, so they are left out of one another's sum (the sum was
+ * wrongly taken over alternatives before). A feature inside a variant exists only in
+ * the configurations that select it: a sum that needs variants is reported as an
+ * `info` naming them ("exceeds only when ... are selected"), because the
+ * constraints of the family may exclude that selection and this rule does not read
+ * them; a sum that needs none is the warning and holds "in every configuration".
  */
 export const disjointSumExceeds: ValidationRule = {
   id: 'disjoint-sum-exceeds',
@@ -358,6 +385,8 @@ export const disjointSumExceeds: ValidationRule = {
         if (r && r.lo <= r.hi) lowers.set(s, r.lo);
       }
       const cand = subs.filter((s) => lowers.has(s));
+      const guards = new Map<ElementId, ElementRecord[]>(cand.map((s) => [s, variantGuard(model, model.require(s))]));
+      const supGuard = variantGuard(model, sup);
       // The heaviest set of pairwise-disjoint subsetters (a clique), by exhaustive search over a small set.
       let best: ElementId[] = [];
       let bestSum = 0;
@@ -367,17 +396,20 @@ export const disjointSumExceeds: ValidationRule = {
           best = chosen;
         }
         rest.forEach((s, i) => {
-          if (chosen.every((c) => disjoint.get(c)?.has(s))) search([...chosen, s], rest.slice(i + 1), sum + lowers.get(s)!);
+          if (chosen.every((c) => disjoint.get(c)?.has(s) && guardsCompatible(guards.get(c)!, guards.get(s)!)) && guardsCompatible(supGuard, guards.get(s)!)) search([...chosen, s], rest.slice(i + 1), sum + lowers.get(s)!);
         });
       };
       if (cand.length <= 14) search([], cand, 0);
       if (best.length < 2 || bestSum <= hi.hi) continue;
       const names = best.map((s) => `${featureLabel(model, model.require(s))} ${show({ lo: lowers.get(s)!, hi: statedRange(model.require(s))!.hi })}`);
+      const needed = new Map<ElementId, ElementRecord>();
+      for (const g of [...supGuard, ...best.flatMap((s) => guards.get(s)!)]) needed.set(g.id, g);
+      const when = needed.size === 0 ? 'in every configuration' : `only when ${[...needed.values()].map((v) => qualifiedLabel(model, v)).join(', ')} ${needed.size === 1 ? 'is' : 'are'} selected`;
       out.push({
         id: `disjoint-sum-exceeds#${n++}`,
         ruleId: 'disjoint-sum-exceeds',
-        severity: 'warning',
-        message: `${names.join(', ')} are disjoint and subset ${qualifiedLabel(model, sup)} ${show(hi)}: their lower bounds add up to ${bestSum}, above its upper bound ${hi.hi}, so they cannot all hold (§7.6.1, KerML disjoining).`,
+        severity: needed.size === 0 ? 'warning' : 'info',
+        message: `${names.join(', ')} are disjoint and subset ${qualifiedLabel(model, sup)} ${show(hi)}: their lower bounds add up to ${bestSum}, above its upper bound ${hi.hi}, so they cannot all hold (§7.6.1, KerML disjoining), ${when}${needed.size === 0 ? '' : ' (the family constraints are not read here)'}.`,
         elementId: best[0]!,
       });
     }

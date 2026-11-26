@@ -519,7 +519,7 @@ const CODES = [
     code: 'validation/variation-usage-typed-by-variation',
     source: 'validation',
     severity: 'warning',
-    when: 'A variation usage is typed by a variation definition (`variation part e : EngineChoices`). SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.',
+    when: 'A variation usage is typed by a variation definition (`variation part e : EngineChoices`), or subsets, reference-subsets or redefines a variation definition or a variation usage (`variation part e :> base`, `variation part :>> base`); a `variant x;` reference form is not read. SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.',
     hint: 'Type the usage by a non-variation definition and list the variants in the usage, or make it a plain usage typed by the variation definition.',
   },
   {
@@ -617,7 +617,7 @@ const CODES = [
     code: 'validation/disjoint-sum-exceeds',
     source: 'validation',
     severity: 'warning',
-    when: 'Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset\u2019s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`).',
+    when: 'Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset\u2019s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`). Variants of one variation point are alternatives and are never summed together; a sum that needs a variant selected is reported as an info naming the variants (\u00a78.4.2.3), the family constraints not being read.',
     hint: 'Lower a lower bound, raise the superset\u2019s upper bound, or drop the disjoint declaration.',
   },
   {

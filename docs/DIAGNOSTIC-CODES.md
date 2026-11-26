@@ -502,7 +502,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A variation usage is typed by a variation definition (`variation part e : EngineChoices`). SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.
+- **Fires when:** A variation usage is typed by a variation definition (`variation part e : EngineChoices`), or subsets, reference-subsets or redefines a variation definition or a variation usage (`variation part e :> base`, `variation part :>> base`); a `variant x;` reference form is not read. SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.
 - **Hint given:** Type the usage by a non-variation definition and list the variants in the usage, or make it a plain usage typed by the variation definition.
 
 ### `validation/requirement-subject`
@@ -600,7 +600,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset’s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`).
+- **Fires when:** Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset’s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`). Variants of one variation point are alternatives and are never summed together; a sum that needs a variant selected is reported as an info naming the variants (§8.4.2.3), the family constraints not being read.
 - **Hint given:** Lower a lower bound, raise the superset’s upper bound, or drop the disjoint declaration.
 
 ### `validation/enum-value-not-member`

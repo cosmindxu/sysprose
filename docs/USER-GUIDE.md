@@ -4982,7 +4982,12 @@ profile; in short:
   TransmissionChoices;` takes its variants from the definition). Its **variants**
   are its `variant` usages; `variant smallEngine;` (the reference form) is named
   by the usage it references (SysML v2 `Usage::namingFeature()`), so
-  `engine::smallEngine` names that variant everywhere a name is read. The **superset owner** is the definition or usage
+  `engine::smallEngine` names that variant everywhere a name is read.
+  A usage that is itself `variation` may not specialize a variation definition
+  or usage (§8.4.2.3, `validateUsageVariationSpecialization`); the warning
+  `variation-usage-typed-by-variation` fires for typing, subsetting, reference
+  subsetting and redefinition alike (the `variation part x : TransmissionChoices`
+  form of Annex A.12 contradicts that text, and the text is followed). The **superset owner** is the definition or usage
   that holds the points.
 - **Optional or not.** No multiplicity or `[1]` means exactly one variant;
   `[0..1]` means at most one. Another multiplicity on a point is not read.
@@ -5094,6 +5099,12 @@ any of these at the language level:
 - **`disjoint-sum-exceeds`.** `front [3]` and `rear [3]` both subset `wheels [4]`
   and `disjoint front from rear;`: six values cannot fit in four (§7.6.1, KerML
   disjoining). Only lower bounds written as literals are summed. A warning.
+  Through variants: two features in different variants of one variation point are
+  alternatives (one variant is chosen, §8.4.2.3) and are never summed together;
+  a feature inside a variant counts only in the configurations that select it,
+  so a sum that needs a variant is an info saying "only when `opt::extra` is
+  selected" (the family's constraints are not read, so it cannot say the
+  selection is valid), while a sum needing none reads "in every configuration".
 - **`enum-value-not-member`.** `attribute c : Color = Color::blue` where `Color`
   has no `blue`, a literal of another enumeration, or a bare number where the
   enumeration specialises no attribute definition (§7.8.2). A warning.
