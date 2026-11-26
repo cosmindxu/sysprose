@@ -1775,6 +1775,23 @@ describe('BD5 connector-end-multiplicity', () => {
     // three ends in a list are not read (a syntax error, nothing checked)
     expect(await run('part def W; part def S { part a : W [2]; part b : W; part c : W; connect ([9] a, b, c); }')).toEqual([]);
   });
+  it('reads a body of three or more ends end by end, and a many-instance other end (n-ary, C2)', async () => {
+    const pre = 'part def W; part def H; part def G;';
+    // n-ary: an end above its own part, and a usage above the definition end, on the third end
+    expect(await run(`${pre} part def S { part a : W [2]; part b : H; part g : G [2]; connection c { end part x references a; end part y references b; end [3] part z references g; } }`)).toHaveLength(1);
+    const d = `${pre} connection def T { end part x : W; end part y : H; end part z [0..1] : G; }`;
+    expect(await run(`${d} part def S { part a : W; part b : H; part g : G; connection c : T { end part x references a; end part y references b; end [2] part z references g; } }`)).toHaveLength(1);
+    // no cross multiplicity: three parts on a [0..1] end with all other ends single
+    expect(await run(`${d} part def S { part a : W; part b : H; part g : G [3]; connection c : T { end part x references a; end part y references b; end part z references g; } }`)).toHaveLength(1);
+    // legal n-ary: within the part, and the other ends are many enough to take the instances
+    expect(await run(`${pre} part def S { part a : W [2]; part b : H; part g : G [2]; connection c { end [2] part x references a; end part y references b; end [2] part z references g; } }`)).toEqual([]);
+    expect(await run(`${d} part def S { part a : W [2]; part b : H; part g : G [2]; connection c : T { end part x references a; end part y references b; end part z references g; } }`)).toEqual([]);
+    // C2: the other end has several instances; 4 parts on a [0..2] end need more than 2 tuples when the other has 1..1, 2 tuples suffice
+    const e = `${pre} connection def U { end part x [0..2] : W; end part y : H; }`;
+    expect(await run(`${e} part def S { part a : W [5]; part b : H [2]; connection c : U connect a to b; }`)).toHaveLength(1);
+    expect(await run(`${e} part def S { part a : W [4]; part b : H [2]; connection c : U connect a to b; }`)).toEqual([]);
+    expect(await run(`${e} part def S { part a : W [5]; part b : H [0..*]; connection c : U connect a to b; }`)).toEqual([]);
+  });
   it('reads end [m] before the keyword on a definition end like end part x [m]', async () => {
     const d = (end: string) => `part def W; part def H; connection def DC { ${end} end part hub : H [1]; }`;
     const use = 'part def S { part ds : W [3]; part hub : H; connection c : DC connect ds to hub; }';

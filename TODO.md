@@ -1862,16 +1862,20 @@ and §21.4–21.11.
       functions on two components that no connection carries, in a scope that allocates flows (§20.4);
       `function-port-allocation` judges `allocate fn.p to comp.q` (§20.3). The ICD
       table is `sysprose icd` (one row per connection). The Interconnection overlay is done
-      (src/ui/icd-overlay.ts: connections coloured by ICD status, flows on hover). Still open: a function parameter with no port realisation at all (not judged: opt-in only where written).
+      (src/ui/icd-overlay.ts: connections coloured by ICD status, flows on hover). A function parameter with no port realisation at all is deliberately not judged (conn-lists, N2): neither SysML v2 nor Arcadia §20.3 as the rule reads it requires every parameter to be allocated, so a missing allocation is no finding; there is no refusal message to improve, the rule is silent unless `allocate fn.p to comp.q` is written.
       [xalloc]
 - [ ] **Cross multiplicity on the other connector forms.** `connect [m] a to [n] b` is stored
       (`sourceCrossMult`/`targetCrossMult`), written back and checked (`connector-end-multiplicity`,
       §7.13.2). Now also read (conn-forms): the two-end list form `connect ([1] hub ::> x, [0..*] y ::> z)`, `end [m] part x
       references y` bodies of exactly two ends, and the spec's `end [0..2] part device` form (stored as `endCrossMult`).
-      Still open: a list of three or more ends (a syntax error, no model home for the third end), a post-name
-      multiplicity on a usage body end (the end's own, not read), and a definition end's cross multiplicity against a
-      usage written without one when the other end has more than one instance (the cross-multiplicity semantics there
-      depend on how the many instances pair up; not judged). [if-compat]
+      Done (conn-lists): a connection body of three or more `end … references` ends is read end by end (each cross
+      multiplicity against its own part and the definition end; the unwritten-multiplicity case against the product of the
+      other ends' upper bounds), and a definition end's inherited multiplicity is checked when the other end has several
+      instances (`part a : W [5]` on `[0..2]` against `[2]` others). Still open: the list form of three or more ends (a
+      syntax error: the model keeps two ends as `source`/`target`, so a third has no home), pairwise port compatibility
+      of an n-ary connection (§7.12.1 speaks of two ends; `connection-compatibility` abstains), and a post-name
+      multiplicity on a usage body end (the end's own, not read). [if-compat]
+[if-compat]
 - [x] **Compare the undirected features and the nested ports of two connected ports.** Done: `portMismatches`
       descends into nested ports (depth 6, pair cycle guard, conjugation composed along the path) and checks
       undirected attribute/item features by name and conforming definition. Parts and references are compared too
