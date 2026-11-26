@@ -617,7 +617,8 @@ function inheritedRegion(model: Model, id: ElementId, chain: readonly ElementId[
   // A machine USAGE that redefines another machine usage (`exhibit state s :>> Eng::s` in `Eng2 :> Eng`) is read
   // through the usage it redefines, like a `state def` through its general (Part 1 §7.13: a redefining usage
   // replaces the redefined one and keeps its members; the redefined usage is not an ancestor of this one).
-  const redefined = redefinedMachineUsage(model, id);
+  // (A state whose body `ownRegion` already merges from the state it redefines, {@link mergedFrom}, is not read twice.)
+  const redefined = mergedFrom(model, id) === undefined ? redefinedMachineUsage(model, id) : undefined;
   if (redefined !== undefined && !generals.some((g) => g.id === redefined.id)) generals.push(redefined);
   const reads =
     generals.length > 0 &&
