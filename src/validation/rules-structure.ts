@@ -992,6 +992,8 @@ export const unresolvedValueChain: ValidationRule = {
  * A chain end (`a.p`) is counted as the product of the multiplicities along the chain (KerML feature chaining); an unbounded or
  * undecided factor leaves it unread. The ends of a connection/interface DEFINITION are held to 1..1 after the name too (§7.13.2:
  * "end features of a connection definition or usage ... must have multiplicity 1..1"; the cross multiplicity precedes the keyword).
+ * A cross subsetting (`crosses` / `=>`, §7.13.2 l.4955-4970, verified by reading) makes the cross feature's own multiplicity the end's cross
+ * multiplicity: a written one that does not lie within the cross feature's stated literal range is flagged.
  */
 export const connectorEndMultiplicity: ValidationRule = {
   id: 'connector-end-multiplicity',
@@ -1009,6 +1011,19 @@ export const connectorEndMultiplicity: ValidationRule = {
       };
       const written = (raw: unknown): Range | undefined =>
         typeof raw === 'string' ? statedRange({ attrs: { multiplicity: raw } } as unknown as ElementRecord) : undefined;
+      // A cross subsetting (`end [0..1] part hub : Hub crosses device.connectingHub`, §7.13.2 l.4955-4970, verified by reading):
+      // the cross feature's own multiplicity IS the end's cross multiplicity, so the one written before the keyword must lie
+      // within it (a chain target is read as its last feature, the cross feature). A cross feature with no stated or a
+      // non-literal multiplicity, an unresolved target, or an end with no written cross multiplicity is left unchecked.
+      for (const o of model.children(el.id).filter((c) => c.attrs.isEnd === true)) {
+        const crossRel = model.relationshipsFrom(o.id).find((r) => r.eClass === 'CrossSubsetting');
+        const crossTarget = crossRel?.target?.[0] ? model.get(crossRel.target[0]) : undefined;
+        const w = written(o.attrs.endCrossMult);
+        const cf = crossTarget ? statedRange(crossTarget) : undefined;
+        if (w && cf && w.lo <= w.hi && cf.lo <= cf.hi && (w.lo < cf.lo || w.hi > cf.hi)) {
+          mk(`${isDef ? 'Connection definition' : 'Connection'} ${qualifiedLabel(model, el)}: the end ${o.declaredName ?? qualifiedLabel(model, o)} is written ${show(w)} but its cross feature ${qualifiedLabel(model, crossTarget!)} has ${show(cf)}: the cross feature's multiplicity is the end's cross multiplicity, so the written one must lie within it (§7.13.2).`);
+        }
+      }
       if (isDef) {
         // §7.13.2 (verified by reading): the end features of a connection definition "must have multiplicity 1..1" too; the
         // spec's own example writes the cross multiplicity before the keyword (`end [0..1] part hub : Hub`). A multiplicity

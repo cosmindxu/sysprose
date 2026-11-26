@@ -1874,6 +1874,22 @@ describe('BD5 connector-end-multiplicity', () => {
     const r = await loadModelText(`package P { ${body} }`);
     return runRule(r.model!, 'connector-end-multiplicity').map((d) => d.message);
   };
+  describe('cross subsetting (`crosses` / `=>`, §7.13.2)', () => {
+    const base = 'part def Hub { ref part connectedDevices [1..*] : Device; } part def Device { ref part connectingHub [0..1] : Hub; }';
+    it('flags a written cross multiplicity outside the cross feature multiplicity (keyword and symbol, definition and usage)', async () => {
+      const w = await run(`${base} connection def DC { end [2] part hub : Hub crosses device.connectingHub; end part device : Device; }`);
+      expect(w).toHaveLength(1);
+      expect(w[0]).toContain('connectingHub');
+      expect(await run(`${base} connection def DC { end [0..3] part hub : Hub => device.connectingHub; end part device : Device; }`)).toHaveLength(1);
+      expect(await run(`${base} part d : Device; connection c { end [5] part hub : Hub => d.connectingHub; end part device : Device; }`)).toHaveLength(1);
+    });
+    it('is silent on a multiplicity within the cross feature, one not written, an unresolved target and a non-literal bound', async () => {
+      expect(await run(`${base} connection def DC { end [0..1] part hub : Hub crosses device.connectingHub; end [1..*] part device : Device => hub.connectedDevices; }`)).toEqual([]);
+      expect(await run(`${base} connection def DC { end part hub : Hub crosses device.connectingHub; end part device : Device; }`)).toEqual([]);
+      expect(await run(`${base} connection def DC { end [7] part hub : Hub crosses device.gone; end part device : Device; }`)).toEqual([]);
+      expect(await run('attribute n : ScalarValues::Integer; part def Hub; part def Device { ref part connectingHub [n] : Hub; } connection def DC { end [7] part hub : Hub crosses device.connectingHub; end part device : Device; }')).toEqual([]);
+    });
+  });
   it('flags an end multiplicity above the connected part', async () => {
     const w = await run('part def W; part def H; part def S { part wheels : W [4]; part hub : H; connection c connect [5] wheels to [1] hub; }');
     expect(w).toHaveLength(1);

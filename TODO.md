@@ -1883,13 +1883,11 @@ and §21.4–21.11.
       or non-literal factor stays unchecked); the ends a `connection def`/`interface def` owns are held to 1..1 after the name
       (§7.13.2 says "end features ... of a connection definition or usage ... must have multiplicity 1..1"; the cross multiplicity
       goes before the keyword, as in the spec's `end [0..1] part hub : Hub`), flagged once where written.
-      Still open: a cross-feature (`crosses`, §7.13.2 l.4955-4970 and the KerML B1 example) reading of an end. The cross feature's
-      own multiplicity IS the end's cross multiplicity, so `end part hub : Hub crosses device.connectingHub` would make a checkable
-      reading (a usage's `[m]` narrowing `connectingHub`'s `[0..1]`), but the engine does not read it: `crosses` is accepted as a
-      generic specialisation keyword and stored as a Subsetting (`end part hub : Hub :> Device::connectingHub` on the way back,
-      a different statement), and the spec's `=>` form is a syntax error. The grammar/mapper needs a CrossSubsetting kind
-      (a new relationship, round-trip, and the cross multiplicity taken from the chain's last feature) before the check can be
-      written; no sound reading is possible on the Subsetting it is stored as today.
+      Done (crosses): `crosses` and `=>` are read as a CrossSubsetting (its own relationship, a kind of Subsetting for typing),
+      written back in the spelling that was read, and warned (`mapper/cross-subsetting-non-end`) on a non-end feature (§7.13.2);
+      `connector-end-multiplicity` holds a written cross multiplicity within the cross feature's stated range. Still open: the
+      spec's validateCrossSubsettingCrossedFeature (the chain must be the OTHER end then the cross feature) and the implied cross
+      features of ends that write none are not read; a cross subsetting that is not inlined on its source's line has no statement form.
 [if-compat]
 - [x] **Compare the undirected features and the nested ports of two connected ports.** Done: `portMismatches`
       descends into nested ports (depth 6, pair cycle guard, conjugation composed along the path) and checks
