@@ -1671,7 +1671,11 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
   // Finalise what is readable: only while no variant is unread, and (for a variation state) the configurations are known.
   type Reading = { label: string; count: number | null; w: Walked };
   const perConfig = new Map<string, { rec: ElementRecord; variants: string[]; readings: Reading[] }>();
-  const MAX_OVERLAYS = 16;
+  // var-sm6 R2: no fixed group count. One overlay is built and walked at a time (lazily, one per distinct selected-variant
+  // set), under a work budget: distinct overlays x elements of the machine. Past it the machine keeps its superset-only
+  // line (never a partial per-configuration claim: a claim per configuration needs every walk; a cut stays inconclusive).
+  const OVERLAY_WORK_BUDGET = 4096;
+  const overBudget = (groupCount: number, root: ElementRecord): boolean => groupCount * (model.descendants(root.id).length + 1) > OVERLAY_WORK_BUDGET;
   if (hard.length === 0) {
     const conflict = new Set<string>();
     for (const [oid, r] of replacers) {
@@ -1731,7 +1735,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
           return rec ? walkIn(cp, rec) : null;
         } catch { return null; }
       };
-      if (groups.size > MAX_OVERLAYS) continue;
+      if (overBudget(groups.size, r.o)) continue;
       const readings: Reading[] = [];
       let built = true;
       for (const g of groups.values()) {
@@ -1766,7 +1770,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
           g.count++;
           sigs.set(sig, g);
         }
-        if (sigs.size > MAX_OVERLAYS) { for (const pt of e.points.values()) for (const v of pt.variants) soft.push({ variant: v.name, why: `more than ${MAX_OVERLAYS} distinct choices of the variation state(s) in the machine` }); continue; }
+        if (overBudget(sigs.size, e.root)) { for (const pt of e.points.values()) for (const v of pt.variants) soft.push({ variant: v.name, why: `${sigs.size} distinct choices of the variation state(s) in the machine is over the walk budget (${OVERLAY_WORK_BUDGET} element walks)` }); continue; }
         const readings: Reading[] = [];
         let built = true;
         for (const g of sigs.values()) {

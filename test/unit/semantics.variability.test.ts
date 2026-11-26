@@ -731,6 +731,36 @@ describe('state machines per configuration (V6)', () => {
     expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) c');
   });
 
+  // var-sm6 R2: no fixed 16-group cap; a work budget instead.
+  const MANY = (n: number, pad = 0) => `package P {
+  part def Eng { state s { entry state a; state b; state c; ${Array.from({ length: pad }, (_, i) => `state p${i};`).join(' ')} transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { ${Array.from({ length: n }, (_, i) => `variant part v${i} : Eng { state s :>> Eng::s { transition t${i} first b accept Go then c; } }`).join(' ')} } }
+}`;
+
+  it('var-sm6 R2: more than 16 groups are walked per configuration (c unreachable only where no variant is selected)', () => {
+    const o = rep(MANY(20));
+    const d = o.diagnostics.find((x) => x.message.includes('the state machine P::Eng::s is walked per configuration'))!;
+    expect(d).toBeDefined();
+    expect(d.message).toContain('selecting eng::v19 (1 of 20): every state reachable');
+    expect(o.owners[0].behaviour.machines[0].readings!.length).toBe(20);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('var-sm6 R2: past 16 groups a dead state is still found in one configuration only', () => {
+    const src = MANY(19).replace('variant part v0 : Eng { state s :>> Eng::s { transition t0 first b accept Go then c; } }', 'variant part v0 : Eng { state s :>> Eng::s { state z; } }');
+    const o = rep(src);
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('selecting eng::v0 (1 of 19): unreachable state(s) c, z');
+    expect(d.message).toContain('selecting eng::v5 (1 of 19): every state reachable');
+  });
+
+  it('var-sm6 R2: a family past the walk budget keeps the superset-only info, no per-configuration claim', () => {
+    const o = rep(MANY(20, 200));
+    expect(perConfig(o, 'P::Eng::s')).toBeUndefined();
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('v0'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead && x.message.includes('walked per configuration'))).toBe(false);
+  });
+
   // sm-inherit I2: Eng2::s redefines Eng::s and owns a step, so it is walked on the effective machine; a variant redefining
   // a member Eng2::s only inherits from Eng::s is overlaid on that effective machine.
   const I2 = (body: string, extra = '') => `package P {
