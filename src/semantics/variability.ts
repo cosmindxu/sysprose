@@ -1394,6 +1394,18 @@ const familyCache = new WeakMap<Model, { rev: number; list: FamilyConfigs[]; cut
  */
 export function solveCutFamily(model: Model, variantIds: string[]): { witness: string[]; every: boolean } | 'excluded' | null {
   if (variantIds.length === 0) return null;
+  return solveCutAny(model, [variantIds]);
+}
+
+/**
+ * Like `solveCutFamily` for a disjunction: is there a valid configuration selecting every variant of AT LEAST ONE of
+ * the `groups` (`witness`), and does every valid configuration do so (`every`)? Same answers and fences (`null` on an
+ * unread constraint, an unknown variant, no cut family holding every variant, or budget; `'excluded'` when no valid
+ * configuration selects any group completely). Every group must be non-empty.
+ */
+export function solveCutAny(model: Model, groups: string[][]): { witness: string[]; every: boolean } | 'excluded' | null {
+  if (groups.length === 0 || groups.some((g) => g.length === 0)) return null;
+  const all = [...new Set(groups.flat())];
   let hit = familyCache.get(model);
   if (hit === undefined || hit.rev !== model.rev) {
     variabilityReport(model);
@@ -1401,15 +1413,20 @@ export function solveCutFamily(model: Model, variantIds: string[]): { witness: s
   }
   if (hit === undefined) return null;
   for (const fam of hit.cut) {
-    if (!variantIds.every((v) => fam.variantIds.has(v))) continue;
+    if (!all.every((v) => fam.variantIds.has(v))) continue;
     if (fam.unread > 0) return null;
-    const atoms: Ast[] = [];
-    for (const v of variantIds) {
+    const atomOf = (v: string): Ast | null => {
       const pv = fam.points.flatMap((p) => p.variants.map((x) => ({ p, x }))).find((q) => q.x.key.slice(q.x.key.indexOf('/') + 1) === v);
-      if (!pv) return null;
-      atoms.push({ k: 'atom', point: pv.p.id, variant: pv.x.key });
+      return pv ? { k: 'atom', point: pv.p.id, variant: pv.x.key } : null;
+    };
+    const conj: Ast[] = [];
+    for (const g of groups) {
+      const atoms = g.map(atomOf);
+      if (atoms.some((x) => x === null)) return null;
+      const as = atoms as Ast[];
+      conj.push(as.length === 1 ? as[0]! : { k: 'op', op: 'and', args: as });
     }
-    const keep: Ast = atoms.length === 1 ? atoms[0]! : { k: 'op', op: 'and', args: atoms };
+    const keep: Ast = conj.length === 1 ? conj[0]! : { k: 'op', op: 'or', args: conj };
     const yes = solveSel(fam.points, fam.read, keep);
     if (yes.status === 'unsat') return 'excluded';
     if (yes.status !== 'sat') return null;
