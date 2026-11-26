@@ -4744,9 +4744,9 @@
   "open_raw": 77,
   "open": 77,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 41,
-   "POLISH": 34,
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
    "HELD": 2
   },
   "new": 0,
@@ -4762,6 +4762,102 @@
    "FALSE": 0,
    "WEAKER": 0,
    "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 149,
+  "sha": "0e72664",
+  "when": "2026-11-26T01:58:56+01:00",
+  "day": "2026-11-26",
+  "subject": "Connector end multiplicity: bodies of three or more ends read end by end; inherited definition-end multiplicity checked against many-instanc",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 150,
+  "sha": "a0e28ea",
+  "when": "2026-11-26T05:37:05+01:00",
+  "day": "2026-11-26",
+  "subject": "Merge var-sm4",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 151,
+  "sha": "dac55ce",
+  "when": "2026-11-26T05:37:16+01:00",
+  "day": "2026-11-26",
+  "subject": "Merge bd-vals",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 41,
+   "POLISH": 34,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
    "HELD": 0
   },
   "cum_new": 347,
