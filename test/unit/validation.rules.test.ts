@@ -961,6 +961,30 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(i[0]!.message).toContain('exceeds only in: opt = ');
   });
 
+  it('BD6 per configuration: every exceeding clique is reported, each with its own configurations', async () => {
+    const run2 = async (c: string) => {
+      const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part x : W [3] subsets wheels; variant part y : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::x; disjoint front from opt::y; ${c} } }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    // two cliques (front+x, front+y), each exceeding in its own configuration: both reported (one was missed before)
+    const d = await run2('');
+    expect(d).toHaveLength(2);
+    expect(d.every((x) => x.severity === 'info')).toBe(true);
+    expect(d.some((x) => x.message.includes('opt = opt::x')) && d.some((x) => x.message.includes('opt = opt::y'))).toBe(true);
+    // the constraint removes y: only the x clique remains
+    const e = await run2('assert constraint c { not (opt == opt::y) }');
+    expect(e).toHaveLength(1);
+    expect(e[0]!.message).toContain('opt = opt::x');
+    // a configuration forced to x: that clique is a warning, y silent
+    const f = await run2('assert constraint c { opt == opt::x }');
+    expect(f).toHaveLength(1);
+    expect(f[0]!.severity).toBe('warning');
+    expect(f[0]!.message).toContain('in every valid configuration');
+    // a sum that fits in every configuration stays silent
+    const r = await loadModelText('package P { part def W; part def Car { part wheels : W [8]; part front : W [3] subsets wheels; variation part opt { variant part x : W [3] subsets wheels; variant part y : W [3] subsets wheels; } disjoint front from opt::x; disjoint front from opt::y; } }');
+    expect(runRule(r.model!, 'disjoint-sum-exceeds')).toEqual([]);
+  });
+
   it('BD7 enum-value-not-member: flags a literal the enum lacks, another enum literal, a number', async () => {
     const enums = 'enum def Color { red; green; } enum def Size { big; }';
     expect(await run(`${enums} part def X { attribute c : Color = Color::blue; }`, 'enum-value-not-member')).toHaveLength(1);

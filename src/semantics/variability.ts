@@ -1327,6 +1327,29 @@ export function configurationsSelecting(model: Model, variantIds: string[]): { t
   return null;
 }
 
+/**
+ * Every valid configuration of the read family holding all of `variantIds`, as the set of variant ids it selects and its
+ * `point = variant` text. `null` when no family read here holds all those variants or the enumeration was cut (nothing
+ * is claimed then). Lets a rule judge a property per configuration rather than only for the ones selecting given variants.
+ */
+export function familyConfigurations(model: Model, variantIds: string[]): { kept: Set<string>; label: string[] }[] | null {
+  if (variantIds.length === 0) return null;
+  let hit = familyCache.get(model);
+  if (hit === undefined || hit.rev !== model.rev) {
+    variabilityReport(model);
+    hit = familyCache.get(model);
+  }
+  if (hit === undefined) return null;
+  for (const fam of hit.list) {
+    if (!variantIds.every((v) => fam.variantIds.has(v))) continue;
+    return fam.valid.map((s) => ({
+      kept: new Set([...s.values()].filter((k): k is string => k !== null).map((k) => k.slice(k.indexOf('/') + 1))),
+      label: selText(fam.points, s),
+    }));
+  }
+  return null;
+}
+
 export function variabilityReport(model: Model): VariabilityReport {
   const families: FamilyConfigs[] = [];
   const owners: OwnerReport[] = [];
