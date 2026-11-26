@@ -3476,12 +3476,33 @@ export interface ReachOptions extends ExploreOptions {
  * (`propertiesOf`, `./patterns`).
  */
 export function ownsMachine(model: Model, el: ElementRecord): boolean {
+  return ownsMachineAt(model, el, 0);
+}
+
+function ownsMachineAt(model: Model, el: ElementRecord, depth: number): boolean {
   if (el.attrs.isLibrary === true) return false;
   if (model.children(el.id).some((c) => c.eClass === 'TransitionUsage')) return true;
-  return (
+  if (
     (isTruthy(el.attrs.parallel) || isTruthy(el.attrs.isParallel)) &&
     model.descendants(el.id).some((d) => d.eClass === 'TransitionUsage')
-  );
+  ) {
+    return true;
+  }
+  // A machine USAGE that redefines a machine usage (`exhibit state s :>> Eng::s;` in `Eng2 :> Eng`) and owns no step of
+  // its own is that machine (SysML v2 Part 1 §7.6: a redefining usage replaces the redefined one and keeps its
+  // features): `inheritedRegion` (./config) already gives its effective members. One redefinition, a non-library
+  // machine usage that is a machine root, no cycle.
+  if ((el.eClass !== 'StateUsage' && el.eClass !== 'ExhibitStateUsage') || depth > 8) return false;
+  const rels = model.relationshipsFrom(el.id).filter((r) => r.eClass === 'Redefinition');
+  const to = rels.length === 1 ? rels[0].target?.[0] : undefined;
+  const t = to === undefined ? undefined : model.get(to);
+  if (t === undefined || t.id === el.id || (t.eClass !== 'StateUsage' && t.eClass !== 'ExhibitStateUsage')) return false;
+  for (let p: ElementId | null | undefined = t.ownerId; p != null; p = model.get(p)?.ownerId) {
+    if (p === el.id) return false;
+    const o = model.get(p);
+    if (o && o.attrs.isLibrary !== true && model.children(p).some((c) => c.eClass === 'TransitionUsage')) return false;
+  }
+  return ownsMachineAt(model, t, depth + 1);
 }
 
 /**

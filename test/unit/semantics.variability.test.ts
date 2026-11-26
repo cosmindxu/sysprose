@@ -699,14 +699,66 @@ describe('state machines per configuration (V6)', () => {
     expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
   });
 
-  it('R3: a variant redefining a machine that itself redefines an inherited one but owns no step is not a machine of its own: superset-only, nothing claimed', () => {
+  it('var-sm6 R1: a variant redefining a machine that itself redefines an inherited one and owns no step is walked per configuration', () => {
     const o = rep(`package P {
-  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
-  part def Eng2 :> Eng { state s :>> Eng::s { state d; } }
-  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng2::s { state c; transition t2 first b accept Go then c; } } } }
+  part def Eng { exhibit state s { entry state a; state b; state c; transition t first a accept Go then b; } }
+  part def Eng2 :> Eng { exhibit state s :>> Eng::s; }
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng2::s { state e; transition t2 first b accept Go then e; } } } }
 }`);
-    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(true);
-    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('selecting eng::big'))).toBe(false);
+    const d = perConfig(o, 'P::Eng2::s')!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): unreachable state(s) c');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('var-sm6 R1: a state the variant adds is reachable only in its configuration, through the empty redefining usage', () => {
+    const o = rep(`package P {
+  part def Eng { exhibit state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Eng2 :> Eng { exhibit state s :>> Eng::s; }
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng2::s { state e; transition t2 first b accept Go then e; } } } }
+}`);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('selecting eng::big (1 of 2): every state reachable'))).toBe(true);
+  });
+
+  it('var-sm6 R1: a variant leaving an inherited state unreachable shows it only for its configuration', () => {
+    const o = rep(`package P {
+  part def Eng { exhibit state s { entry state a; state b; state c; transition t first a accept Go then b; transition u first b accept Go then c; } }
+  part def Eng2 :> Eng { exhibit state s :>> Eng::s; }
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng2::s { transition u :>> Eng::s::u first b accept Go then b; } } } }
+}`);
+    const d = perConfig(o, 'P::Eng2::s')!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): every state reachable');
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) c');
+  });
+
+  // var-sm6 R2: no fixed 16-group cap; a work budget instead.
+  const MANY = (n: number, pad = 0) => `package P {
+  part def Eng { state s { entry state a; state b; state c; ${Array.from({ length: pad }, (_, i) => `state p${i};`).join(' ')} transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { ${Array.from({ length: n }, (_, i) => `variant part v${i} : Eng { state s :>> Eng::s { transition t${i} first b accept Go then c; } }`).join(' ')} } }
+}`;
+
+  it('var-sm6 R2: more than 16 groups are walked per configuration (c unreachable only where no variant is selected)', () => {
+    const o = rep(MANY(20));
+    const d = o.diagnostics.find((x) => x.message.includes('the state machine P::Eng::s is walked per configuration'))!;
+    expect(d).toBeDefined();
+    expect(d.message).toContain('selecting eng::v19 (1 of 20): every state reachable');
+    expect(o.owners[0].behaviour.machines[0].readings!.length).toBe(20);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('var-sm6 R2: past 16 groups a dead state is still found in one configuration only', () => {
+    const src = MANY(19).replace('variant part v0 : Eng { state s :>> Eng::s { transition t0 first b accept Go then c; } }', 'variant part v0 : Eng { state s :>> Eng::s { state z; } }');
+    const o = rep(src);
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('selecting eng::v0 (1 of 19): unreachable state(s) c, z');
+    expect(d.message).toContain('selecting eng::v5 (1 of 19): every state reachable');
+  });
+
+  it('var-sm6 R2: a family past the walk budget keeps the superset-only info, no per-configuration claim', () => {
+    const o = rep(MANY(20, 200));
+    expect(perConfig(o, 'P::Eng::s')).toBeUndefined();
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('v0'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead && x.message.includes('walked per configuration'))).toBe(false);
   });
 
   // sm-inherit I2: Eng2::s redefines Eng::s and owns a step, so it is walked on the effective machine; a variant redefining
