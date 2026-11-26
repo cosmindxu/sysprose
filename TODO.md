@@ -1871,8 +1871,10 @@ and §21.4–21.11.
       Done (conn-lists): a connection body of three or more `end … references` ends is read end by end (each cross
       multiplicity against its own part and the definition end; the unwritten-multiplicity case against the product of the
       other ends' upper bounds), and a definition end's inherited multiplicity is checked when the other end has several
-      instances (`part a : W [5]` on `[0..2]` against `[2]` others). Still open: the list form of three or more ends (a
-      syntax error: the model keeps two ends as `source`/`target`, so a third has no home), pairwise port compatibility
+      instances (`part a : W [5]` on `[0..2]` against `[2]` others). Done (conn-nary): the list form of three or more ends
+      `connect ([m] a, b ::> x, c)` maps each end to an owned end feature (reference subsetting + `endCrossMult`, `naryList`
+      kept for the writer), is checked end by end and round-trips; a bare statement `connect (a, b, c)` takes no multiplicity.
+      Still open: pairwise port compatibility
       of an n-ary connection (§7.12.1 speaks of two ends; `connection-compatibility` abstains), and a post-name
       multiplicity on a usage body end (the end's own, not read). [if-compat]
 [if-compat]

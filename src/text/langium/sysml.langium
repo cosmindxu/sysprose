@@ -136,7 +136,7 @@ PrefixMetadata infers PrefixMetadata:
 // ─────────────────────── endpoint-bearing statements ─────────────────
 
 ConnectStmt infers Connect:
-    (visibility=Visibility)? 'connect' ('(')? source=QualifiedName ('to' | ',') target=QualifiedName (')')? (body=Body | ';')?;
+    (visibility=Visibility)? 'connect' ('(')? source=QualifiedName ('to' | ',') target=QualifiedName (',' moreEnds+=QualifiedName)* (')')? (body=Body | ';')?;
 
 // `bind a = b;`  /  `bind a = b { … }`  (BindingConnector shorthand).
 BindStmt infers Bind:
@@ -533,10 +533,11 @@ fragment DeclMiddle:
     // SysML v2 §8.2.2.13 ConnectorEnd: an end may name the definition end it
     // redefines, `connect sender ::> a.p to receiver references b.q`.
     // The list form `connect ([1] hub ::> x, [0..*] y ::> z)` (§8.2.2.13 NaryConnectorPart) is read for exactly two
-    // ends, as the binary form; a longer list stays a syntax error.
+    // ends, as the binary form; a list of three or more keeps the ends beyond the second in `connMore` (NaryEnd).
     ('connect'
         ( '(' (connSrcMult+=Multiplicity)? (connSrcEnd=Name ('::>' | 'references'))? connectSource=QualifiedName
-          ',' (connTgtMult+=Multiplicity)? (connTgtEnd=Name ('::>' | 'references'))? connectTarget=QualifiedName ')'
+          ',' (connTgtMult+=Multiplicity)? (connTgtEnd=Name ('::>' | 'references'))? connectTarget=QualifiedName
+          (',' connMore+=NaryEnd)* ')'
         | (connSrcMult+=Multiplicity)? (connSrcEnd=Name ('::>' | 'references'))? connectSource=QualifiedName
           'to' (connTgtMult+=Multiplicity)? (connTgtEnd=Name ('::>' | 'references'))? connectTarget=QualifiedName ))?
     ('to' (sendMult+=Multiplicity)? sendTarget=QualifiedName)?
@@ -545,6 +546,10 @@ fragment DeclMiddle:
     | ctrl='until' ctrlCond=Expression
     | ctrl='for' ctrlVar=Name (':' ctrlType=QualifiedName)? 'in' ctrlColl=Expression
     | ctrl='loop' )?;
+
+// One further end of the list form `connect (a, b, [m] c ::> d)` (§8.2.2.13 NaryConnectorPart), the third onwards.
+NaryEnd infers NaryEnd:
+    (mult+=Multiplicity)? (endName=Name ('::>' | 'references'))? ref=QualifiedName;
 
 fragment DeclTailRest:
     DeclMiddle (body=Body | ';')?;

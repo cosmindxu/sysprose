@@ -5089,7 +5089,7 @@ any of these at the language level:
 - **`connector-end-multiplicity`.** `connect [5] wheels to hub` over `wheels : Wheel [4]`
   asks an end for more instances than the part has; a usage's cross multiplicity may also
   only narrow the one on the connection definition's end it redefines (§7.13.2). Only the
-  binary `connect [m] a to [n] b` form, its two-end list form `connect ([m] a, [n] b)` and a body of two
+  binary `connect [m] a to [n] b` form, its list form `connect ([m] a, [n] b, [k] c)` of two or more ends and a body of two or more
   `end [m] part x references a` ends (the multiplicity may stand before the keyword, `end [0..2] part device`),
   with number-literal bounds, are read; a warning.
 - **`subset-type-conformance`.** `part b : B subsets a` over `part a : A`, where

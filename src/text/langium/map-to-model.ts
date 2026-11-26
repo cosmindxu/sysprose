@@ -1446,7 +1446,8 @@ class Mapper {
           // A subsetting written as a path (`part p2 :> q.p1;`) keeps the path as written (`attrs.chain`, like a
           // `satisfy`'s `sourceChain`): the target is the feature the path ends in (Q's p1), and the sentences and the
           // saved text say the path the author wrote.
-          const chain = req.op === ':>' && !isDefinition(el.eClass) && req.ref.includes('.') ? { chain: req.ref.trim() } : undefined;
+          const naryEnd = req.op === '::>' && el.attrs.isEnd === true && el.ownerId != null && this.model.get(el.ownerId)?.attrs.naryList === true;
+          const chain = (req.op === ':>' || naryEnd) && !isDefinition(el.eClass) && req.ref.includes('.') ? { chain: req.ref.trim() } : undefined;
           const rel = this.create(
             relClassForOp(req.op, isDefinition(el.eClass)),
             { ownerId: el.id, source: [el.id], target: [targetId], ...(chain ? { attrs: chain } : {}) },
@@ -2394,9 +2395,32 @@ class Mapper {
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);
   }
 
+  /** The owned end features of a list-form connection of three or more ends (see the call sites). */
+  private createNaryEnds(
+    el: ElementRecord,
+    ends: { ref: string; name?: string; mult: Multiplicity[] }[],
+    node: AstNode,
+  ): void {
+    this.model.setAttrs(el.id, { naryList: true });
+    for (const e of ends) {
+      const mults = readableMultiplicities(e.mult);
+      const endEl = this.create('ReferenceUsage', {
+        ownerId: el.id,
+        ...(e.name ? { declaredName: e.name } : {}),
+        attrs: { isEnd: true, ...(mults.length ? { endCrossMult: mults[mults.length - 1]! } : {}) },
+      });
+      this.deferredSpecs.push({ elementId: endEl.id, op: '::>', ref: e.ref, node });
+    }
+  }
+
   private mapConnect(node: Connect, ownerId: ElementId | null): void {
     const srcRef = node.source;
     const tgtRef = node.target;
+    if (node.moreEnds.length > 0 && srcRef && tgtRef) {
+      const el = this.create('ConnectionUsage', { ownerId: ownerId ?? undefined, source: [], target: [], attrs: {} });
+      this.createNaryEnds(el, [srcRef, tgtRef, ...node.moreEnds].map((ref) => ({ ref, mult: [] })), node);
+      return;
+    }
     const el = this.create('ConnectionUsage', {
       ownerId: ownerId ?? undefined,
       source: [],
@@ -3199,7 +3223,16 @@ class Mapper {
     }
 
     // Inline `connection c connect A to B` / `interface i connect A to B`.
-    if (node.connectSource !== undefined || node.connectTarget !== undefined) {
+    if (node.connMore !== undefined && node.connMore.length > 0 && node.connectSource !== undefined && node.connectTarget !== undefined) {
+      // The list form of three or more ends (§8.2.2.13 NaryConnectorPart): each end becomes an owned end feature with a
+      // reference subsetting to its part and its cross multiplicity stored, the shape an `end [m] x references a;` body
+      // produces, so the end-by-end readings apply. `naryList` keeps the written form for the serializer.
+      this.createNaryEnds(el, [
+        { ref: node.connectSource, name: node.connSrcEnd, mult: node.connSrcMult },
+        { ref: node.connectTarget, name: node.connTgtEnd, mult: node.connTgtMult },
+        ...node.connMore.map((m) => ({ ref: m.ref, name: m.endName, mult: m.mult })),
+      ], node);
+    } else if (node.connectSource !== undefined || node.connectTarget !== undefined) {
       const srcRef = node.connectSource;
       const tgtRef = node.connectTarget;
       const patch: Record<string, AttrValue> = {};

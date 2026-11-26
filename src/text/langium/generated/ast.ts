@@ -614,6 +614,7 @@ export interface Connect extends langium.AstNode {
     readonly $container: Body | Namespace | RequirementClause;
     readonly $type: 'Connect';
     body?: Body;
+    moreEnds: Array<QualifiedName>;
     source: QualifiedName;
     target: QualifiedName;
     visibility?: Visibility;
@@ -659,6 +660,7 @@ export interface Definition extends langium.AstNode {
     body?: Body;
     connectSource?: QualifiedName;
     connectTarget?: QualifiedName;
+    connMore: Array<NaryEnd>;
     connSrcEnd?: Name;
     connSrcMult: Array<Multiplicity>;
     connTgtEnd?: Name;
@@ -897,7 +899,7 @@ export function isMetadataAccessExpr(item: unknown): item is MetadataAccessExpr 
 }
 
 export interface Multiplicity extends langium.AstNode {
-    readonly $container: BehaviorStmt | Bind | Definition | RequirementClause | ReturnStmt | StateBehavior | Succession;
+    readonly $container: BehaviorStmt | Bind | Definition | NaryEnd | RequirementClause | ReturnStmt | StateBehavior | Succession;
     readonly $type: 'Multiplicity';
     lower: MultTerm;
     upper?: MultTerm;
@@ -918,6 +920,20 @@ export const Namespace = 'Namespace';
 
 export function isNamespace(item: unknown): item is Namespace {
     return reflection.isInstance(item, Namespace);
+}
+
+export interface NaryEnd extends langium.AstNode {
+    readonly $container: Definition;
+    readonly $type: 'NaryEnd';
+    endName?: Name;
+    mult: Array<Multiplicity>;
+    ref: QualifiedName;
+}
+
+export const NaryEnd = 'NaryEnd';
+
+export function isNaryEnd(item: unknown): item is NaryEnd {
+    return reflection.isInstance(item, NaryEnd);
 }
 
 export interface NavExpr extends langium.AstNode {
@@ -1271,6 +1287,7 @@ export type SysMLAstType = {
     MetadataAccessExpr: MetadataAccessExpr
     Multiplicity: Multiplicity
     Namespace: Namespace
+    NaryEnd: NaryEnd
     NavExpr: NavExpr
     NullLiteral: NullLiteral
     NumberLiteral: NumberLiteral
@@ -1298,7 +1315,7 @@ export type SysMLAstType = {
 export class SysMLAstReflection extends langium.AbstractAstReflection {
 
     getAllTypes(): string[] {
-        return [AcceptClause, Alias, Allocate, Annotation, Argument, BehaviorStmt, BinaryExpr, Bind, Body, BodyExpr, BoolLiteral, BracketExpr, CollectExpr, Comment, ConditionalExpr, Connect, ConstructorExpr, ControlNode, Definition, Dependency, Derive, Doc, EffectClause, Expression, FeatureChainExpr, FirstThen, GuardClause, IfStmt, Import, IndexExpr, InvocationExpr, LoopStmt, Member, MetadataAccessExpr, Multiplicity, Namespace, NavExpr, NullLiteral, NumberLiteral, PrefixMetadata, RefExpr, Refine, RelationshipStmt, RequirementClause, ReturnStmt, Satisfy, SelectExpr, SequenceExpr, Specialization, StateBehavior, StringLiteral, Succession, TextualRep, Trace, Transition, TransitionClause, UnaryExpr, Verify];
+        return [AcceptClause, Alias, Allocate, Annotation, Argument, BehaviorStmt, BinaryExpr, Bind, Body, BodyExpr, BoolLiteral, BracketExpr, CollectExpr, Comment, ConditionalExpr, Connect, ConstructorExpr, ControlNode, Definition, Dependency, Derive, Doc, EffectClause, Expression, FeatureChainExpr, FirstThen, GuardClause, IfStmt, Import, IndexExpr, InvocationExpr, LoopStmt, Member, MetadataAccessExpr, Multiplicity, Namespace, NaryEnd, NavExpr, NullLiteral, NumberLiteral, PrefixMetadata, RefExpr, Refine, RelationshipStmt, RequirementClause, ReturnStmt, Satisfy, SelectExpr, SequenceExpr, Specialization, StateBehavior, StringLiteral, Succession, TextualRep, Trace, Transition, TransitionClause, UnaryExpr, Verify];
     }
 
     protected override computeIsSubtype(subtype: string, supertype: string): boolean {
@@ -1560,6 +1577,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     name: Connect,
                     properties: [
                         { name: 'body' },
+                        { name: 'moreEnds', defaultValue: [] },
                         { name: 'source' },
                         { name: 'target' },
                         { name: 'visibility' }
@@ -1593,6 +1611,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'body' },
                         { name: 'connectSource' },
                         { name: 'connectTarget' },
+                        { name: 'connMore', defaultValue: [] },
                         { name: 'connSrcEnd' },
                         { name: 'connSrcMult', defaultValue: [] },
                         { name: 'connTgtEnd' },
@@ -1787,6 +1806,16 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     name: Namespace,
                     properties: [
                         { name: 'members', defaultValue: [] }
+                    ]
+                };
+            }
+            case NaryEnd: {
+                return {
+                    name: NaryEnd,
+                    properties: [
+                        { name: 'endName' },
+                        { name: 'mult', defaultValue: [] },
+                        { name: 'ref' }
                     ]
                 };
             }

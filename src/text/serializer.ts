@@ -361,7 +361,7 @@ function serializeElementOf(model: Model, id: ElementId, indent: number): string
   // the connect/from…to statement forms would emit `connect  to ;` / `from  to`.
   if (
     (el.eClass === 'ConnectionUsage' || el.eClass === 'InterfaceUsage' || el.eClass === 'Connector') &&
-    hasEndpoints(el)
+    hasEndpoints(el, model)
   )
     return connectionLine(model, el, indent);
   if (el.eClass === 'Satisfy') return satisfyLine(model, el, pad);
@@ -1176,7 +1176,10 @@ function isInlinedSpecialization(parent: ElementRecord, rel: ElementRecord): boo
 
 /** Children to render as body members (excludes inlined relationships). */
 function bodyMembers(model: Model, el: ElementRecord): ElementRecord[] {
+  const naryEnds = naryListEnds(model, el) !== undefined;
   return model.children(el.id).filter((c) => {
+    // The ends of a list-form connection are written inside `connect (…)`, not as members.
+    if (naryEnds && c.attrs.isEnd === true) return false;
     if (isSpecialization(c.eClass)) return !isInlinedSpecialization(el, c);
     // Implicit (chain-materialized) features are not source text: they are
     // re-derived from `connect a.p to b.p` endpoints on every parse, so
@@ -1234,8 +1237,9 @@ function endpoint(model: Model, el: ElementRecord, which: 'source' | 'target', s
 }
 
 /** Whether a connection/flow carries any endpoint (resolved id or unresolved ref). */
-function hasEndpoints(el: ElementRecord): boolean {
+function hasEndpoints(el: ElementRecord, model?: Model): boolean {
   return (
+    (model !== undefined && naryListEnds(model, el) !== undefined) ||
     (el.source?.length ?? 0) > 0 ||
     (el.target?.length ?? 0) > 0 ||
     typeof el.attrs.sourceRef === 'string' ||
@@ -1255,6 +1259,12 @@ function hasEndpoints(el: ElementRecord): boolean {
  * MeshInterface;`. A bare anonymous connection keeps the short `connect a to b`.
  */
 function connectionLine(model: Model, el: ElementRecord, indent: number): string {
+  const nary = naryListEnds(model, el);
+  if (nary !== undefined) {
+    const connectN = `connect (${nary.join(', ')})`;
+    const bareN = el.declaredName === undefined && el.eClass !== 'InterfaceUsage' && nary.every((t) => !t.includes('[') && !t.includes('::>')) && specializationFragments(model, el).length === 0;
+    return renderWithBody(model, el, indent, bareN ? connectN : `${header(model, el)} ${connectN}`);
+  }
   const named = (which: 'source' | 'target'): string => {
     const end = which === 'source' ? el.attrs.sourceEndName : el.attrs.targetEndName;
     const cross = which === 'source' ? el.attrs.sourceCrossMult : el.attrs.targetCrossMult;
@@ -1265,6 +1275,37 @@ function connectionLine(model: Model, el: ElementRecord, indent: number): string
   const bare =
     el.declaredName === undefined && el.eClass !== 'InterfaceUsage' && specializationFragments(model, el).length === 0;
   return renderWithBody(model, el, indent, bare ? connect : `${header(model, el)} ${connect}`);
+}
+
+/**
+ * The ends of a connection read from the list form of three or more ends (`connect ([m] a, b ::> c, d)`, §8.2.2.13
+ * NaryConnectorPart), each written from its owned end feature: cross multiplicity, the definition end it names, and the
+ * part it references. Undefined when the connection was not read from that form or an end cannot be written.
+ */
+function naryListEnds(model: Model, el: ElementRecord): string[] | undefined {
+  if (el.attrs.naryList !== true) return undefined;
+  const ends = model.children(el.id).filter((c) => c.attrs.isEnd === true);
+  if (ends.length < 3) return undefined;
+  const out: string[] = [];
+  for (const e of ends) {
+    const rel = model.relationshipsFrom(e.id).filter((r) => r.eClass === 'ReferenceSubsetting');
+    let ref: string | undefined;
+    if (rel.length === 1 && typeof rel[0]!.attrs.chain === 'string' && rel[0]!.attrs.chain !== '') {
+      ref = rel[0]!.attrs.chain;
+    } else if (rel.length === 1 && rel[0]!.target?.[0]) {
+      try {
+        ref = refTo(model, rel[0]!.target[0], el.ownerId, undefined, 'chain');
+      } catch {
+        return undefined;
+      }
+    } else if (rel.length === 0 && Array.isArray(e.attrs.references) && e.attrs.references.length === 1) {
+      ref = String(e.attrs.references[0]);
+    }
+    if (!ref || ref.includes('«')) return undefined;
+    const cross = typeof e.attrs.endCrossMult === 'string' && e.attrs.endCrossMult !== '' ? `[${e.attrs.endCrossMult}] ` : '';
+    out.push(`${cross}${e.declaredName !== undefined ? `${quoteName(e.declaredName)} ::> ` : ''}${ref}`);
+  }
+  return out;
 }
 
 /** All endpoint texts on one side (resolved paths, or a single textual-ref fallback). */
