@@ -890,6 +890,8 @@ export const unresolvedValueChain: ValidationRule = {
  *  - no cross multiplicity is written (the usage inherits the definition end's), the definition end allows at most n,
  *    and the related part has more than n times the product of the other ends' upper bounds at least
  *    (`part a : W [3]` on an end `[0..2]` with a single other part: all connect to that one instance; `[1..2]` others: more than 2n).
+ * An end feature "must have multiplicity 1..1" (§7.13.2, verified by reading), so a multiplicity written after the name of
+ * a usage body end (`end part a [9] references x`, the end's own, not a cross multiplicity) other than 1..1 is flagged.
  * Read only: `connect [m] a to [n] b` and its two-end list form `connect ([m] a, [n] b)` (with or
  * without `end ::>` names), and a connection body of two or more `end [m] part x references a`
  * ends (the spec's EndUsagePrefix form, §8.2.2.7; a definition end's `end [m] part x` is read like
@@ -918,7 +920,18 @@ export const connectorEndMultiplicity: ValidationRule = {
       interface End { rel: ElementRecord; cross: Range | undefined; end: ElementRecord | undefined; label: string }
       const sameOwner = (id: ElementId | undefined): ElementRecord | undefined => {
         const rel = id ? model.get(id) : undefined;
-        return rel && rel.ownerId === el.ownerId ? rel : undefined;
+        if (!rel) return undefined;
+        if (rel.ownerId === el.ownerId) return rel;
+        // A chain end (`a.p`) is the usage-scoped feature the chain materialises, owned by `a`: read as a single value
+        // set only when every usage the chain passes through holds one instance (a many-instance `a` makes a.p many).
+        if (rel.attrs.implicit !== true) return undefined;
+        for (let o = rel.ownerId ? model.get(rel.ownerId) : undefined; o && o.id !== el.ownerId; o = o.ownerId ? model.get(o.ownerId) : undefined) {
+          if (o.attrs.implicit !== true && o.ownerId !== el.ownerId) return undefined;
+          const r = statedRange(o);
+          if (r ? r.hi > 1 : model.relationshipsFrom(o.id).some((x) => ['Subsetting', 'Redefinition'].includes(x.eClass))) return undefined;
+          if (!r && o.attrs.implicit === true && rangeOf(model, o)?.hi !== 1) return undefined;
+        }
+        return rel;
       };
       const ends: (End | undefined)[] = [];
       if (el.source?.[0] && el.target?.[0]) {
@@ -938,6 +951,14 @@ export const connectorEndMultiplicity: ValidationRule = {
         const owned = model.children(el.id).filter((c) => c.attrs.isEnd === true);
         if (owned.length < 2) continue;
         const defEnds = definitionEndsOf(model, el.id);
+        // A multiplicity written AFTER the name of a usage's end is the end feature's own (§7.13.2: `end part hub ::>
+        // mainSwitch[1]`), and an end feature "must have multiplicity 1..1": any other bound cannot hold.
+        for (const o of owned) {
+          const own = statedRange(o);
+          if (own && !(own.lo === 1 && own.hi === 1)) {
+            mk(`Connection ${qualifiedLabel(model, el)}: the end ${o.declaredName ?? qualifiedLabel(model, o)} is written ${show(own)}, but an end feature of a connection must have multiplicity 1..1 (§7.13.2); a multiplicity of connected instances goes before the end (\`end [m] part x references a\`).`);
+          }
+        }
         owned.forEach((o, i) => {
           const refs = model
             .relationshipsFrom(o.id)
