@@ -45,7 +45,7 @@ import { definitionEndsOf, endPairs } from '../semantics/port-conformance';
 import { resolveQualifiedNameFull } from '../semantics';
 import { childNamed, findTypeFeature, resolveFullName } from '../semantics/bind';
 import { evaluate, parseExpr } from '../semantics/expr';
-import { configurationsSelecting, familyConfigurations } from '../semantics/variability';
+import { configurationsSelecting, familyConfigurations, solveCutFamily } from '../semantics/variability';
 import type { ExprNode } from '../semantics/expr';
 import { effectiveFeaturesWithLibrary } from '../semantics/featuring';
 import { effectiveNameOf, generalizationsOf } from '../semantics/inheritance';
@@ -324,6 +324,9 @@ function guardsCompatible(a: ElementRecord[], b: ElementRecord[]): boolean {
   return !a.some((x) => b.some((y) => x.id !== y.id && x.ownerId === y.ownerId));
 }
 
+/** The most search nodes the heaviest-clique search may visit for one superset before it is reported as not searched. */
+const CLIQUE_NODE_BUDGET = 500_000;
+
 /**
  * BD6 `disjoint-sum-exceeds`.
  *
@@ -348,8 +351,10 @@ function guardsCompatible(a: ElementRecord[], b: ElementRecord[]): boolean {
  * warning "in every valid configuration"; some → info "exceeds only in: ...". A cut enumeration or an
  * undecided family keeps the info reading, never a warning. When the enumeration is read, every valid
  * configuration is judged on its own: each disjoint clique among the features it keeps that exceeds is reported once,
- * with the configurations it exceeds in (warning only when every valid configuration has it). The V4 enumeration has no
- * solver route past its cap, so a cut enumeration is not decided per configuration (old info reading). A sum that needs no variant is the warning
+ * with the configurations it exceeds in (warning only when every valid configuration has it). Past the V4 cap the exact
+ * search `solveCutFamily` decides the heaviest clique's selection (witness configuration; warning when no valid
+ * configuration avoids it; unknown = old info reading), not per configuration. More than 14 candidates: the heaviest
+ * clique is an exact branch and bound (node budget; abandoned = not searched), judged by the family reading above. A sum that needs no variant is the warning
  * and holds "in every configuration".
  */
 export const disjointSumExceeds: ValidationRule = {
@@ -395,22 +400,31 @@ export const disjointSumExceeds: ValidationRule = {
       const guards = new Map<ElementId, ElementRecord[]>(cand.map((s) => [s, variantGuard(model, model.require(s))]));
       const supGuard = variantGuard(model, sup);
       const compat = (c: ElementId, s: ElementId): boolean => !!disjoint.get(c)?.has(s) && guardsCompatible(guards.get(c)!, guards.get(s)!) && guardsCompatible(supGuard, guards.get(s)!);
-      // The heaviest set of pairwise-disjoint subsetters (a clique), by exhaustive search over a small set,
-      // restricted to the candidates `pool` (a configuration keeps only the features whose variants it selects).
-      const heaviest = (pool: ElementId[]): { best: ElementId[]; bestSum: number } => {
+      // The heaviest set of pairwise-disjoint subsetters (a clique): exact branch and bound (a branch is cut when its
+      // sum plus every lower bound still addable cannot beat the best), over the candidates `pool` (a configuration
+      // keeps only the features whose variants it selects). Same visiting order as the plain search, so ties resolve alike.
+      // Past NODE_BUDGET nodes the search is abandoned (`null`): not searched, nothing claimed.
+      const heaviest = (pool: ElementId[]): { best: ElementId[]; bestSum: number } | null => {
         let best: ElementId[] = [];
         let bestSum = 0;
+        let nodes = 0;
+        let over = false;
         const search = (chosen: ElementId[], rest: ElementId[], sum: number): void => {
+          if (over) return;
+          if (++nodes > CLIQUE_NODE_BUDGET) {
+            over = true;
+            return;
+          }
           if (sum > bestSum) {
             bestSum = sum;
             best = chosen;
           }
-          rest.forEach((s, i) => {
-            if (chosen.every((c) => compat(c, s)) && guardsCompatible(supGuard, guards.get(s)!)) search([...chosen, s], rest.slice(i + 1), sum + lowers.get(s)!);
-          });
+          const ext = rest.filter((s) => chosen.every((c) => compat(c, s)) && guardsCompatible(supGuard, guards.get(s)!));
+          if (sum + ext.reduce((t, s) => t + lowers.get(s)!, 0) <= bestSum) return;
+          ext.forEach((s, i) => search([...chosen, s], ext.slice(i + 1), sum + lowers.get(s)!));
         };
         search([], pool, 0);
-        return { best, bestSum };
+        return over ? null : { best, bestSum };
       };
       /** Every maximal clique of `pool` whose lower bounds add up above the superset's upper bound. */
       const exceeding = (pool: ElementId[]): ElementId[][] => {
@@ -428,8 +442,9 @@ export const disjointSumExceeds: ValidationRule = {
         // Keep the maximal ones only (a subset of another found clique is not reported).
         return found.filter((c, i) => !found.some((d, j) => j !== i && c.every((x) => d.includes(x)) && (d.length > c.length || (d.length === c.length && j < i))));
       };
-      if (cand.length > 14) continue;
-      const { best, bestSum } = heaviest(cand);
+      const top = heaviest(cand);
+      if (top === null) continue;
+      const { best, bestSum } = top;
       if (best.length < 2 || bestSum <= hi.hi) continue;
       const describe = (clique: ElementId[]): string => clique.map((s) => `${featureLabel(model, model.require(s))} ${show({ lo: lowers.get(s)!, hi: statedRange(model.require(s))!.hi })}`).join(', ');
       const neededOf = (clique: ElementId[]): Map<ElementId, ElementRecord> => {
@@ -439,7 +454,7 @@ export const disjointSumExceeds: ValidationRule = {
       };
       const allGuardIds = [...new Set([...supGuard, ...cand.flatMap((s) => guards.get(s)!)].map((g) => g.id))];
       const cfgs = allGuardIds.length > 0 ? familyConfigurations(model, allGuardIds) : null;
-      if (cfgs !== null && cfgs.length > 0) {
+      if (cfgs !== null && cfgs.length > 0 && cand.length <= 14) {
         // Per valid configuration: every exceeding clique among the features that configuration keeps.
         const byClique = new Map<string, { clique: ElementId[]; where: string[][] }>();
         for (const cfg of cfgs) {
@@ -474,6 +489,21 @@ export const disjointSumExceeds: ValidationRule = {
       if (needed.size > 0) {
         // Cut or unread enumeration, or a family that does not hold every variant: the selection-only reading, never a warning.
         const fam = configurationsSelecting(model, [...needed.keys()]);
+        if (fam === null) {
+          // Enumeration cut at the cap: the exact search decides whether the selection is valid / unavoidable.
+          const sol = solveCutFamily(model, [...needed.keys()]);
+          if (sol === 'excluded') continue;
+          if (sol !== null) {
+            if (sol.every) {
+              severity = 'warning';
+              when = 'in every valid configuration';
+              note = '';
+            } else {
+              when = `exceeds in at least one valid configuration: ${sol.witness.join(', ')}`;
+              note = '';
+            }
+          }
+        }
         if (fam !== null && fam.total > 0) {
           if (fam.selecting.length === 0) continue;
           if (fam.selecting.length === fam.total) {

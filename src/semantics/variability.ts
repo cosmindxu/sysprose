@@ -68,7 +68,9 @@
  * point, at most one if optional; a variant's nested points exist only under it;
  * the constraints) is what the enumeration decides, so counts, backbones
  * (core/dead), and false-optional are the exact answers of the questions
- * AO10-AO15 (P4). A solver would be the way past the cap, and is not used.
+ * AO10-AO15 (P4). Past the cap the counts, backbones and per-configuration reports stay withheld; only a
+ * satisfiability question about one selection (`solveCutFamily`, used by BD6) is decided, by an exact
+ * propagating search over the same constraints (a rule is synchronous, so the async z3 route is not used).
  *
  * CONNECTIONS. A connector of the owner between two ports is re-typed per configuration: an end that is a feature
  * owned directly by a point is replaced by the chosen variant's feature that redefines it, and §7.12.1 conformance
@@ -639,6 +641,76 @@ interface Formula {
   valid: Sel[] | null; // null = not established
   structural: number;
   capReason?: string;
+}
+
+/* ───────────────── satisfiability past the cap (exact, bounded) ───────────────── */
+
+type Tri = boolean | null;
+/** Three-valued evaluation: an atom of an unassigned point is unknown. */
+function triEval(a: Ast, sel: Sel): Tri {
+  if (a.k === 'atom') {
+    if (!sel.has(a.point)) return null;
+    return sel.get(a.point) === a.variant;
+  }
+  if (a.k === 'not') {
+    const v = triEval(a.a, sel);
+    return v === null ? null : !v;
+  }
+  const vs = a.args.map((x) => triEval(x, sel));
+  switch (a.op) {
+    case 'and':
+      return vs.some((v) => v === false) ? false : vs.every((v) => v === true) ? true : null;
+    case 'or':
+      return vs.some((v) => v === true) ? true : vs.every((v) => v === false) ? false : null;
+    case 'xor':
+      return vs.some((v) => v === null) ? null : vs.filter(Boolean).length % 2 === 1;
+    case 'implies':
+      if (vs[0] === false || vs[1] === true) return true;
+      return vs[0] === true && vs[1] === false ? false : null;
+  }
+}
+
+/** The most search nodes one satisfiability question may use before it answers `unknown`. */
+export const SOLVE_BUDGET = 400_000;
+
+/**
+ * Is there a structural configuration (one choice per active configurable point, as `enumerate` makes them) that
+ * holds every constraint read and the extra formula `extra`? Exact: `sat` with a witness selection, `unsat` when the
+ * search space is exhausted, `unknown` when SOLVE_BUDGET nodes are spent (never a claim).
+ */
+function solveSel(points: VariabilityPoint[], read: Formula['read'], extra: Ast | null): { status: 'sat'; sel: Sel } | { status: 'unsat' | 'unknown' } {
+  const ps = points.filter((p) => p.configurable);
+  const asts = [...read.map((c) => c.ast), ...(extra ? [extra] : [])];
+  const sel: Sel = new Map();
+  const chosen = new Set<string>();
+  let nodes = 0;
+  let over = false;
+  const consistent = (): boolean => asts.every((a) => triEval(a, sel) !== false);
+  const go = (i: number): Sel | null => {
+    if (over) return null;
+    if (++nodes > SOLVE_BUDGET) {
+      over = true;
+      return null;
+    }
+    if (!consistent()) return null;
+    if (i === ps.length) return new Map(sel);
+    const p = ps[i]!;
+    const active = p.activatedBy === null || chosen.has(p.activatedBy);
+    const options: Array<string | null> = !active ? [null] : [...p.variants.map((v) => v.key), ...(p.optional ? [null] : [])];
+    for (const o of options) {
+      sel.set(p.id, o);
+      if (o !== null) chosen.add(o);
+      const r = go(i + 1);
+      if (o !== null) chosen.delete(o);
+      sel.delete(p.id);
+      if (r) return r;
+      if (over) return null;
+    }
+    return null;
+  };
+  const r = go(0);
+  if (r) return { status: 'sat', sel: r };
+  return { status: over ? 'unknown' : 'unsat' };
 }
 
 const holdsAll = (read: Formula['read'], sel: Sel): boolean => read.every((c) => evalAst(c.ast, sel));
@@ -1303,7 +1375,47 @@ interface FamilyConfigs {
   valid: Sel[];
   points: VariabilityPoint[];
 }
-const familyCache = new WeakMap<Model, { rev: number; list: FamilyConfigs[] }>();
+/** A family whose enumeration was cut at the cap: kept so a satisfiability question can still be decided. */
+interface CutFamily {
+  variantIds: Set<string>;
+  points: VariabilityPoint[];
+  read: Formula['read'];
+}
+const familyCache = new WeakMap<Model, { rev: number; list: FamilyConfigs[]; cut: CutFamily[] }>();
+
+/**
+ * For a family whose enumeration was cut at the cap and that holds all of `variantIds`: is there a valid configuration
+ * selecting every one of them (`witness`, as `point = variant` text), and does every valid configuration select them
+ * (`every`)? Decided by an exact search over the constraints read; `null` when no cut family holds the variants, when
+ * the search runs out of budget; `'excluded'` when the search proves no valid configuration selects them all.
+ * `every` is only set when a witness exists, so an empty family is never read as "every".
+ */
+export function solveCutFamily(model: Model, variantIds: string[]): { witness: string[]; every: boolean } | 'excluded' | null {
+  if (variantIds.length === 0) return null;
+  let hit = familyCache.get(model);
+  if (hit === undefined || hit.rev !== model.rev) {
+    variabilityReport(model);
+    hit = familyCache.get(model);
+  }
+  if (hit === undefined) return null;
+  for (const fam of hit.cut) {
+    if (!variantIds.every((v) => fam.variantIds.has(v))) continue;
+    const atoms: Ast[] = [];
+    for (const v of variantIds) {
+      const pv = fam.points.flatMap((p) => p.variants.map((x) => ({ p, x }))).find((q) => q.x.key.slice(q.x.key.indexOf('/') + 1) === v);
+      if (!pv) return null;
+      atoms.push({ k: 'atom', point: pv.p.id, variant: pv.x.key });
+    }
+    const keep: Ast = atoms.length === 1 ? atoms[0]! : { k: 'op', op: 'and', args: atoms };
+    const yes = solveSel(fam.points, fam.read, keep);
+    if (yes.status === 'unsat') return 'excluded';
+    if (yes.status !== 'sat') return null;
+    const no = solveSel(fam.points, fam.read, { k: 'not', a: keep });
+    if (no.status === 'unknown') return null;
+    return { witness: selText(fam.points, yes.sel), every: no.status === 'unsat' };
+  }
+  return null;
+}
 
 /**
  * Which valid configurations select every one of the variants `variantIds`? Answered from the V4 enumeration
@@ -1352,6 +1464,7 @@ export function familyConfigurations(model: Model, variantIds: string[]): { kept
 
 export function variabilityReport(model: Model): VariabilityReport {
   const families: FamilyConfigs[] = [];
+  const cutFamilies: CutFamily[] = [];
   const owners: OwnerReport[] = [];
   const diagnostics: VariabilityDiagnostic[] = [];
   for (const e of model.all()) {
@@ -1375,6 +1488,7 @@ export function variabilityReport(model: Model): VariabilityReport {
     const f = buildFormula(points, read, rows.filter((x) => !x.read).length);
     const analysis = analyse(f, excluded.map((p) => p.name));
     if (f.valid !== null) families.push({ variantIds: new Set(points.flatMap((p) => p.variants.map((v) => v.key.slice(v.key.indexOf('/') + 1)))), valid: f.valid, points: f.points });
+    if (f.valid === null) cutFamilies.push({ variantIds: new Set(points.flatMap((p) => p.variants.map((v) => v.key.slice(v.key.indexOf('/') + 1)))), points: f.points, read: f.read });
     if (analysis.established) explain(f, analysis);
     const breaksOf = connectionChecker(model, e);
     if (analysis.established && f.valid !== null) {
@@ -1397,7 +1511,7 @@ export function variabilityReport(model: Model): VariabilityReport {
     const behaviour = behaviourOf(model, e, f, name, diagnostics);
     owners.push({ id: e.id, name, status: 'read', reasons: [], points, constraints: rows, analysis, configurations: cfgReports, evaluations, behaviour });
   }
-  familyCache.set(model, { rev: model.rev, list: families });
+  familyCache.set(model, { rev: model.rev, list: families, cut: cutFamilies });
   const count = (s: VariabilitySeverity): number => diagnostics.filter((d) => d.severity === s).length;
   const verdict = verdictOf(owners);
   return { owners, diagnostics, summary: { errors: count('error'), warnings: count('warning'), infos: count('info') }, cap: VARIABILITY_CAP, verdict, exitCode: exitCodeOf(owners, verdict) };

@@ -985,6 +985,47 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(runRule(r.model!, 'disjoint-sum-exceeds')).toEqual([]);
   });
 
+  it('BD6 past the V4 cap: the exact search decides the selection; verdicts equal the enumeration on a small family', async () => {
+    // 20 two-variant padding points make 2^20 structural configurations, above the enumeration cap.
+    const pad = (n: number) => Array.from({ length: n }, (_, k) => `variation part pad${k} { variant part a${k}; variant part b${k}; }`).join(' ');
+    const run2 = async (c: string, n: number) => {
+      const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::extra; ${pad(n)} ${c} } }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    for (const c of ['', 'assert constraint c { opt == opt::extra }', 'assert constraint c { not (opt == opt::extra) }', 'assert constraint c { pad0 == pad0::a0 implies opt == opt::extra }']) {
+      const small = await run2(c, 2);
+      const cut = await run2(c, 20);
+      expect(cut.map((d) => d.severity)).toEqual(small.map((d) => d.severity));
+    }
+    // forced selection: warning past the cap; avoidable selection: info with a witness; excluded: silent
+    const w = await run2('assert constraint c { opt == opt::extra }', 20);
+    expect(w[0]!.severity).toBe('warning');
+    expect(w[0]!.message).toContain('in every valid configuration');
+    const i = await run2('', 20);
+    expect(i[0]!.severity).toBe('info');
+    expect(i[0]!.message).toContain('exceeds in at least one valid configuration: ');
+    expect(await run2('assert constraint c { not (opt == opt::extra) }', 20)).toEqual([]);
+  }, 120000);
+
+  it('BD6 with more than 14 candidate subsetters: the exact clique search finds the exceeding clique, and stays silent without one', async () => {
+    const mk = (n: number, hiSup: number, lo: number, disj: boolean) => {
+      const subs = Array.from({ length: n }, (_, k) => `part s${k} : W [${lo}] subsets wheels;`).join(' ');
+      const ds = disj ? Array.from({ length: n - 1 }, (_, k) => `disjoint s${k} from s${k + 1};`).join(' ') : '';
+      return `package P { part def W; part def Car { part wheels : W [${hiSup}]; ${subs} ${ds} } }`;
+    };
+    // 16 candidates, chained disjoint pairs only: heaviest clique is a pair (2 x 3 = 6 > 5)
+    const r = await loadModelText(mk(16, 5, 3, true));
+    const d = runRule(r.model!, 'disjoint-sum-exceeds');
+    expect(d).toHaveLength(1);
+    expect(d[0]!.message).toContain('add up to 6');
+    // the same 16 with a superset big enough: silent
+    const r2 = await loadModelText(mk(16, 6, 3, true));
+    expect(runRule(r2.model!, 'disjoint-sum-exceeds')).toEqual([]);
+    // 16 candidates, none declared disjoint: no clique
+    const r3 = await loadModelText(mk(16, 2, 3, false));
+    expect(runRule(r3.model!, 'disjoint-sum-exceeds')).toEqual([]);
+  });
+
   it('BD7 enum-value-not-member: flags a literal the enum lacks, another enum literal, a number', async () => {
     const enums = 'enum def Color { red; green; } enum def Size { big; }';
     expect(await run(`${enums} part def X { attribute c : Color = Color::blue; }`, 'enum-value-not-member')).toHaveLength(1);
