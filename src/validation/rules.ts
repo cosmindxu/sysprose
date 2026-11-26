@@ -1933,13 +1933,16 @@ const variationUsageTypedByVariation = variationBuilder(
   'A variation usage is typed by a variation definition.',
   (model, el, mk, out) => {
     if (el.attrs.isVariation !== true || !el.eClass.endsWith('Usage') || el.eClass.startsWith('Enumeration')) return;
+    // Every way a usage specializes another feature or type: typing, subsetting, reference subsetting, redefinition.
+    // A `variant X;` reference form is a reference subsetting that names the variant, not a specialization to fence.
     for (const rel of model.relationshipsFrom(el.id)) {
-      if (rel.eClass !== 'FeatureTyping') continue;
+      if (rel.eClass !== 'FeatureTyping' && rel.eClass !== 'Subsetting' && rel.eClass !== 'Redefinition' && !(rel.eClass === 'ReferenceSubsetting' && el.attrs.isVariant !== true)) continue;
       const target = rel.target?.[0] !== undefined ? model.get(rel.target[0]) : undefined;
       if (!target || target.attrs.isVariation !== true || isLibraryElement(target)) continue;
+      const how = rel.eClass === 'FeatureTyping' ? 'typed by' : rel.eClass === 'Redefinition' ? 'redefining' : 'subsetting';
       out.push(
         mk(
-          `${label(model, el)} is a variation usage typed by the variation definition ${label(model, target)} — ` +
+          `${label(model, el)} is a variation usage ${how} the variation ${target.eClass.endsWith('Usage') ? 'usage' : 'definition'} ${label(model, target)} — ` +
             'SysML v2 §8.4.2.3 validateUsageVariationSpecialization: "A variation Usage may not specialize any variation ' +
             'Definition or Usage". Annex A.12 writes this form but contradicts the normative text; Sysprose follows the ' +
             'normative text.',

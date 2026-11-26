@@ -4982,7 +4982,12 @@ profile; in short:
   TransmissionChoices;` takes its variants from the definition). Its **variants**
   are its `variant` usages; `variant smallEngine;` (the reference form) is named
   by the usage it references (SysML v2 `Usage::namingFeature()`), so
-  `engine::smallEngine` names that variant everywhere a name is read. The **superset owner** is the definition or usage
+  `engine::smallEngine` names that variant everywhere a name is read.
+  A usage that is itself `variation` may not specialize a variation definition
+  or usage (§8.4.2.3, `validateUsageVariationSpecialization`); the warning
+  `variation-usage-typed-by-variation` fires for typing, subsetting, reference
+  subsetting and redefinition alike (the `variation part x : TransmissionChoices`
+  form of Annex A.12 contradicts that text, and the text is followed). The **superset owner** is the definition or usage
   that holds the points.
 - **Optional or not.** No multiplicity or `[1]` means exactly one variant;
   `[0..1]` means at most one. Another multiplicity on a point is not read.
@@ -5044,8 +5049,11 @@ any of these at the language level:
   port has a directed feature, the old question stays: a port definition in
   common, and not `out` to `out` on the usages.
   The comparison goes further than the directed features: an undirected
-  attribute or item of one port needs a same-named feature of a conforming
-  definition on the other, and a nested port (`port sub : Inner` inside a port
+  feature of one port (an attribute, item, part, reference, occurrence,
+  connection, action, calculation, state, constraint, requirement, case or
+  view; §7.12.1 states no restriction by kind, but metadata and behaviour steps
+  such as transitions or perform references are not compared) needs a
+  same-named feature of a conforming definition on the other, and a nested port (`port sub : Inner` inside a port
   definition) needs the same-named nested port on the other end, compared the
   same way with the conjugation of each port along the path composed (§7.12.3);
   the finding names the path (`sub.x`). A nested port with nothing in it is not
@@ -5091,14 +5099,24 @@ any of these at the language level:
 - **`disjoint-sum-exceeds`.** `front [3]` and `rear [3]` both subset `wheels [4]`
   and `disjoint front from rear;`: six values cannot fit in four (§7.6.1, KerML
   disjoining). Only lower bounds written as literals are summed. A warning.
+  Through variants: two features in different variants of one variation point are
+  alternatives (one variant is chosen, §8.4.2.3) and are never summed together;
+  a feature inside a variant counts only in the configurations that select it,
+  so a sum that needs a variant is an info saying "only when `opt::extra` is
+  selected" (the family's constraints are not read, so it cannot say the
+  selection is valid), while a sum needing none reads "in every configuration".
 - **`enum-value-not-member`.** `attribute c : Color = Color::blue` where `Color`
   has no `blue`, a literal of another enumeration, or a bare number where the
   enumeration specialises no attribute definition (§7.8.2). A warning.
 - **`value-multiplicity-mismatch`.** `attribute c : Real [1] = (1.0, 2.0)` holds
   two values in a `[1]`; `attribute a : Real [2] = 3.0` holds one in a `[2]`
   (§7.13.4, §7.6.3). Literals, arithmetic over literals (`2.0 * 3.0`, one scalar)
-  and parenthesised lists are counted; any other expression may give any number
-  of values. A warning.
+  and parenthesised lists are counted, and so are values the evaluator decides:
+  a plain name of a feature whose multiplicity is exactly `[n]` or that is bound
+  to a value of decided count, arithmetic over such single values, a sequence of
+  decided parts, and a call of a calculation whose result states exactly `[n]`.
+  Any other expression (a chain, an unresolved name, a feature with a ranged or
+  no stated count) may give any number of values and stays silent. A warning.
 - **`specialization-kind-incompatible`.** `item def C :> V` over `attribute def V`
   and `part def B :> Q` over `port def Q` cross lines of the metaclass hierarchy
   (§7.7.2); an `enum def` may not specialise another `enum def` (§7.8.2). A

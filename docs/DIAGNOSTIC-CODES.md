@@ -341,7 +341,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A connection joins two `out` (or two `in`) ports; or ports with directed features that do not conform (SysML v2 §7.12.1: each directed feature needs a feature of a conforming definition with the conjugate direction on the other port); or, where neither port has a directed feature, two ports whose port definitions share no ancestor. The comparison also covers undirected attribute and item features (a same-named feature of a conforming definition must exist on the other port) and nested ports (the same-named nested port must exist, compared recursively with the conjugation of each port along the path composed; a nested port with nothing in it is not required).
+- **Fires when:** A connection joins two `out` (or two `in`) ports; or ports with directed features that do not conform (SysML v2 §7.12.1: each directed feature needs a feature of a conforming definition with the conjugate direction on the other port); or, where neither port has a directed feature, two ports whose port definitions share no ancestor. The comparison also covers undirected features of every usage kind a port may own (attributes, items, parts, references, occurrences, connections, flows, actions, calculations, states, constraints, requirements, cases, views; not metadata or behaviour steps) (a same-named feature of a conforming definition must exist on the other port) and nested ports (the same-named nested port must exist, compared recursively with the conjugation of each port along the path composed; a nested port with nothing in it is not required).
 - **Hint given:** Wire an `out` port to an `in` port (or use `inout`), and give both ends the same port definition — or a conjugated one (`~PortDef`) on the receiving side.
 
 ### `validation/interface-end-conformance`
@@ -502,7 +502,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A variation usage is typed by a variation definition (`variation part e : EngineChoices`). SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.
+- **Fires when:** A variation usage is typed by a variation definition (`variation part e : EngineChoices`), or subsets, reference-subsets or redefines a variation definition or a variation usage (`variation part e :> base`, `variation part :>> base`); a `variant x;` reference form is not read. SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.
 - **Hint given:** Type the usage by a non-variation definition and list the variants in the usage, or make it a plain usage typed by the variation definition.
 
 ### `validation/requirement-subject`
@@ -600,7 +600,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset’s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`).
+- **Fires when:** Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset’s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`). Variants of one variation point are alternatives and are never summed together; a sum that needs a variant selected is reported as an info naming the variants (§8.4.2.3), the family constraints not being read.
 - **Hint given:** Lower a lower bound, raise the superset’s upper bound, or drop the disjoint declaration.
 
 ### `validation/enum-value-not-member`
@@ -614,7 +614,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals (or arithmetic over literals) with fewer values than its lower bound (`attribute a : Real [2] = 3.0`). A default or initial value is read only for the upper bound (§7.13.4).
+- **Fires when:** A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals (or arithmetic over literals) with fewer values than its lower bound (`attribute a : Real [2] = 3.0`); the count is also read for a plain name of a feature whose multiplicity is exactly `[n]` or which is bound to a value of decided count, arithmetic over such single values, a parenthesised sequence of decided parts, and a call of a calculation whose result states exactly `[n]`; an expression whose count cannot be decided gives no finding. A default or initial value is read only for the upper bound (§7.13.4).
 - **Hint given:** Make the multiplicity and the number of values written agree.
 
 ### `validation/specialization-kind-incompatible`

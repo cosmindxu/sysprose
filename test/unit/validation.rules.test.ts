@@ -918,6 +918,31 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(await run(car('disjoint front from rear;', '[0..3]', '[0..3]'), 'disjoint-sum-exceeds')).toEqual([]);
   });
 
+  it('BD6 through variants: alternatives are not summed; a sum needing a variant is an info naming it', async () => {
+    const run2 = async (body: string) => {
+      const r = await loadModelText(`package P { ${body} }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    // two variants of one point are alternatives: never present together, so no sum (a false positive before)
+    expect(
+      await run2('part def W; part def Car { part wheels : W [4]; variation part opt { variant part a : W [3] subsets wheels; variant part b : W [3] subsets wheels; disjoint a from b; } }'),
+    ).toEqual([]);
+    // a fixed subsetter plus a variant's: exceeds only when the variant is selected
+    const d = await run2('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::extra; }');
+    expect(d).toHaveLength(1);
+    expect(d[0]!.severity).toBe('info');
+    expect(d[0]!.message).toContain('only when');
+    expect(d[0]!.message).toContain('extra');
+    // a variant whose sum fits stays silent
+    expect(
+      await run2('part def W; part def Car { part wheels : W [8]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; } disjoint front from opt::extra; }'),
+    ).toEqual([]);
+    // no variants: the warning says it holds in every configuration
+    const e = await run2('part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; part rear : W [3] subsets wheels; disjoint front from rear; }');
+    expect(e[0]!.severity).toBe('warning');
+    expect(e[0]!.message).toContain('in every configuration');
+  });
+
   it('BD7 enum-value-not-member: flags a literal the enum lacks, another enum literal, a number', async () => {
     const enums = 'enum def Color { red; green; } enum def Size { big; }';
     expect(await run(`${enums} part def X { attribute c : Color = Color::blue; }`, 'enum-value-not-member')).toHaveLength(1);
@@ -943,6 +968,28 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     ).toEqual([]);
   });
 
+  it('BD8: values the evaluator decides - a reference, arithmetic over references, a sequence, a call', async () => {
+    const R = 'value-multiplicity-mismatch';
+    // reference to a feature bound to a list of three, into a [1]
+    expect(await run('part def X { attribute t : Real [3] = (1.0, 2.0, 3.0); attribute a : Real [1] = t; }', R)).toHaveLength(1);
+    // reference to a scalar, into a [2] bound (fewer than the lower bound)
+    expect(await run('part def X { attribute k : Real = 3.0; attribute n : Real [2] = k; }', R)).toHaveLength(1);
+    // arithmetic over references decided as one value each
+    expect(await run('part def X { attribute k : Real [1] = 3.0; attribute n : Real [2] = k + 1.0; }', R)).toHaveLength(1);
+    // a sequence of decided parts adds up
+    expect(await run('part def X { attribute t : Real [2] = (1.0, 2.0); attribute a : Real [2] = (t, 5.0); }', R)).toHaveLength(1);
+    // a call whose result states [3] into a [1]
+    expect(await run('calc def F { in x : Real; return r : Real [3]; } part def X { attribute a : Real [1] = F(1.0); }', R)).toHaveLength(1);
+  });
+  it('BD8: an undecidable value stays silent, and decided values that fit are silent', async () => {
+    const R = 'value-multiplicity-mismatch';
+    // a reference to a feature with no stated count, a ranged count, a chain and an unresolved name
+    expect(await run('part def X { attribute u : Real; attribute r : Real [1..3]; attribute a : Real [2] = u; attribute b : Real [2] = r; attribute c : Real [2] = u + 1.0; attribute d : Real [2] = z; }', R)).toEqual([]);
+    // a call with no stated result multiplicity
+    expect(await run('calc def F { in x : Real; return r : Real; } part def X { attribute a : Real [2] = F(1.0); }', R)).toEqual([]);
+    // decided and fitting
+    expect(await run('part def X { attribute t : Real [3] = (1.0, 2.0, 3.0); attribute a : Real [3] = t; attribute k : Real [1] = 3.0; attribute n : Real [1] = k + 1.0; attribute m : Real [4] = (t, 5.0); }', R)).toEqual([]);
+  });
   it('BD8: arithmetic of literals is one value; a name in it stays unread', async () => {
     expect(await run('part def X { attribute a : Real [2] = 2.0 * 3.0 + 1.0; attribute b : Real [1] = (1.0 + 2.0, 3.0); }', 'value-multiplicity-mismatch')).toHaveLength(2);
     expect(await run('part def X { attribute a : Real [1] = 2.0 * 3.0 + 1.0; attribute n : Real [2] = 1.0 + other; attribute c : Real [2] = (1.0 + 2.0, 3.0); }', 'value-multiplicity-mismatch')).toEqual([]);

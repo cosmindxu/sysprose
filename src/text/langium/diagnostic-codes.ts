@@ -358,7 +358,7 @@ const CODES = [
     code: 'validation/connection-compatibility',
     source: 'validation',
     severity: 'warning',
-    when: 'A connection joins two `out` (or two `in`) ports; or ports with directed features that do not conform (SysML v2 §7.12.1: each directed feature needs a feature of a conforming definition with the conjugate direction on the other port); or, where neither port has a directed feature, two ports whose port definitions share no ancestor. The comparison also covers undirected attribute and item features (a same-named feature of a conforming definition must exist on the other port) and nested ports (the same-named nested port must exist, compared recursively with the conjugation of each port along the path composed; a nested port with nothing in it is not required).',
+    when: 'A connection joins two `out` (or two `in`) ports; or ports with directed features that do not conform (SysML v2 §7.12.1: each directed feature needs a feature of a conforming definition with the conjugate direction on the other port); or, where neither port has a directed feature, two ports whose port definitions share no ancestor. The comparison also covers undirected features of every usage kind a port may own (attributes, items, parts, references, occurrences, connections, flows, actions, calculations, states, constraints, requirements, cases, views; not metadata or behaviour steps) (a same-named feature of a conforming definition must exist on the other port) and nested ports (the same-named nested port must exist, compared recursively with the conjugation of each port along the path composed; a nested port with nothing in it is not required).',
     hint: 'Wire an `out` port to an `in` port (or use `inout`), and give both ends the same port definition — or a conjugated one (`~PortDef`) on the receiving side.',
   },
   {
@@ -519,7 +519,7 @@ const CODES = [
     code: 'validation/variation-usage-typed-by-variation',
     source: 'validation',
     severity: 'warning',
-    when: 'A variation usage is typed by a variation definition (`variation part e : EngineChoices`). SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.',
+    when: 'A variation usage is typed by a variation definition (`variation part e : EngineChoices`), or subsets, reference-subsets or redefines a variation definition or a variation usage (`variation part e :> base`, `variation part :>> base`); a `variant x;` reference form is not read. SysML v2 §8.4.2.3 forbids a variation usage to specialize a variation definition; Annex A.12 writes the form but contradicts the normative text, and Sysprose follows the text.',
     hint: 'Type the usage by a non-variation definition and list the variants in the usage, or make it a plain usage typed by the variation definition.',
   },
   {
@@ -617,7 +617,7 @@ const CODES = [
     code: 'validation/disjoint-sum-exceeds',
     source: 'validation',
     severity: 'warning',
-    when: 'Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset\u2019s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`).',
+    when: 'Features that subset one feature and are declared `disjoint` from each other whose lower bounds add up above the superset\u2019s upper bound (`wheels [4]` with `front [3]` and `rear [3]`, `disjoint front from rear`). Variants of one variation point are alternatives and are never summed together; a sum that needs a variant selected is reported as an info naming the variants (\u00a78.4.2.3), the family constraints not being read.',
     hint: 'Lower a lower bound, raise the superset\u2019s upper bound, or drop the disjoint declaration.',
   },
   {
@@ -631,7 +631,7 @@ const CODES = [
     code: 'validation/value-multiplicity-mismatch',
     source: 'validation',
     severity: 'warning',
-    when: 'A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals (or arithmetic over literals) with fewer values than its lower bound (`attribute a : Real [2] = 3.0`). A default or initial value is read only for the upper bound (§7.13.4).',
+    when: 'A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals (or arithmetic over literals) with fewer values than its lower bound (`attribute a : Real [2] = 3.0`); the count is also read for a plain name of a feature whose multiplicity is exactly `[n]` or which is bound to a value of decided count, arithmetic over such single values, a parenthesised sequence of decided parts, and a call of a calculation whose result states exactly `[n]`; an expression whose count cannot be decided gives no finding. A default or initial value is read only for the upper bound (§7.13.4).',
     hint: 'Make the multiplicity and the number of values written agree.',
   },
   {
