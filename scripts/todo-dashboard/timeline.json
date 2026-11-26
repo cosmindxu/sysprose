@@ -4840,6 +4840,102 @@
   "open_raw": 77,
   "open": 77,
   "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 152,
+  "sha": "291bba9",
+  "when": "2026-11-26T08:05:52+01:00",
+  "day": "2026-11-26",
+  "subject": "connections: the list form of three or more ends is read end by end (owned end features with reference subsetting and cross multiplicity), w",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 153,
+  "sha": "a104683",
+  "when": "2026-11-26T10:50:36+01:00",
+  "day": "2026-11-26",
+  "subject": "Merge var-sm5",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 154,
+  "sha": "372f953",
+  "when": "2026-11-26T10:50:40+01:00",
+  "day": "2026-11-26",
+  "subject": "Merge bd-fam",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
    "FALSE": 0,
    "WEAKER": 41,
    "POLISH": 34,
