@@ -2933,3 +2933,52 @@ describe('a block comment between a declaration header and its body', () => {
     expect(names(again.model)).toEqual(names(model));
   });
 });
+
+describe('cross subsetting (`crosses` / `=>`, SysML v2 §7.13.2)', () => {
+  const SRC = `package P {
+    part def Hub { ref part connectedDevices [1..*] : Device; }
+    part def Device { ref part connectingHub [0..1] : Hub; }
+    connection def DC {
+      end [0..1] part hub : Hub crosses device.connectingHub;
+      end part device : Device => hub.connectedDevices;
+    }
+    part h : Hub; part d : Device;
+    connection c : DC {
+      end part hub :>> DC::hub => d.connectingHub;
+      end part device :>> DC::device crosses h.connectedDevices;
+    }
+  }`;
+  const crossRels = (m: Model) => m.all().filter((r) => r.eClass === 'CrossSubsetting');
+
+  it('reads both spellings as a CrossSubsetting, not a Subsetting, and writes the spelling that was read', () => {
+    const { model, diagnostics } = parseModel(SRC);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(crossRels(model).length).toBe(4);
+    const text = serializeModel(model);
+    expect(text).toContain('end [0..1] part hub : Hub crosses device.connectingHub;');
+    expect(text).toContain('end part device : Device => hub.connectedDevices;');
+    expect(text).toContain('=> d.connectingHub');
+    expect(text).toContain('crosses h.connectedDevices');
+    const again = parseModel(text);
+    expect(crossRels(again.model).length).toBe(4);
+    expect(serializeModel(again.model)).toBe(text);
+  });
+
+  it('keeps a plain `:>` a Subsetting and does not turn it into a cross subsetting', () => {
+    const { model } = parseModel('package P { part def A { part x; } part a : A; part b :> a.x; }');
+    expect(crossRels(model)).toEqual([]);
+    expect(serializeModel(model)).toContain('part b :> a.x;');
+  });
+
+  it('warns once on a cross subsetting written on a feature that is not an end, and still keeps it', () => {
+    const { model, diagnostics } = parseModel('package P { part def A { part x; } part a : A; part b crosses a.x; }');
+    expect(diagnostics.filter((d) => d.code === 'mapper/cross-subsetting-non-end').length).toBe(1);
+    expect(crossRels(model).length).toBe(1);
+    expect(serializeModel(model)).toContain('part b crosses a.x;');
+  });
+
+  it('is silent on an end', () => {
+    const { diagnostics } = parseModel(SRC);
+    expect(diagnostics.filter((d) => d.code === 'mapper/cross-subsetting-non-end')).toEqual([]);
+  });
+});

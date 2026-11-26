@@ -124,6 +124,13 @@ const CODES = [
   },
 
   {
+    code: 'mapper/cross-subsetting-non-end',
+    source: 'mapper',
+    severity: 'warning',
+    when: 'A cross subsetting (`crosses` or `=>`) is written on a feature that is not an end feature (SysML v2 §7.13.2).',
+    hint: 'Only end features of a connection have a cross feature; move it onto the end, or remove it.',
+  },
+  {
     code: 'mapper/extended-definition',
     source: 'mapper',
     severity: 'error',

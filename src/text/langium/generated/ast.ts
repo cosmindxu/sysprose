@@ -51,6 +51,7 @@ export type SysMLKeywordNames =
     | "="
     | "=="
     | "==="
+    | "=>"
     | ">"
     | ">="
     | "?"

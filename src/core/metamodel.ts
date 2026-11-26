@@ -164,6 +164,7 @@ export const RELATIONSHIP_KINDS = [
   'Subsetting',
   'Redefinition',
   'ReferenceSubsetting',
+  'CrossSubsetting',
   'Conjugation',
   // Cross-cutting / SysML relationships
   'Dependency',
@@ -240,6 +241,7 @@ const SPECIALIZATION_SET = new Set<string>([
   'Subsetting',
   'Redefinition',
   'ReferenceSubsetting',
+  'CrossSubsetting',
   'Conjugation',
 ]);
 export const isSpecialization = (eClass: string): boolean => SPECIALIZATION_SET.has(eClass);
@@ -261,6 +263,7 @@ const TYPING_SET = new Set<string>([
   'Subclassification',
   'FeatureTyping',
   'Subsetting',
+  'CrossSubsetting',
   'Redefinition',
 ]);
 export const isTypingSpecialization = (eClass: string): boolean => TYPING_SET.has(eClass);
@@ -401,4 +404,5 @@ export const SPECIALIZATION_OPERATOR: Record<string, string> = {
   FeatureTyping: ':',
   Redefinition: ':>>',
   ReferenceSubsetting: '::>',
+  CrossSubsetting: '=>',
 };

@@ -194,6 +194,7 @@ export const DIRECT_SUPERTYPES: Readonly<Record<string, readonly string[]>> = {
   Subsetting: ['Specialization'],
   Redefinition: ['Subsetting'],
   ReferenceSubsetting: ['Subsetting'],
+  CrossSubsetting: ['Subsetting'],
   Conjugation: ['Relationship'],
 
   // Featuring & the remaining KerML type-relationship family. These relate a

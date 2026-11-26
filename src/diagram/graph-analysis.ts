@@ -113,6 +113,7 @@ export function relationSymbol(kind: string): string {
     Redefinition: '≔',
     FeatureTyping: ':',
     ReferenceSubsetting: '⊂',
+    CrossSubsetting: '⊂',
   };
   if (map[kind]) return map[kind];
   if (kind.includes('Specialization')) return '▲';

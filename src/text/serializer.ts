@@ -231,6 +231,7 @@ const STATEMENT_WORD: Record<string, string> = {
   Subclassification: 'specialization',
   Specialization: 'specialization',
   ReferenceSubsetting: 'specialization',
+  CrossSubsetting: 'specialization',
   Redefinition: 'redefinition',
   FeatureTyping: 'typing',
 };
@@ -718,6 +719,7 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
   pushRefList(out, ':>', el.attrs.specializes, conj);
   pushRefList(out, ':>>', el.attrs.redefines, conj);
   pushRefList(out, '::>', el.attrs.references, conj);
+  pushRefList(out, crossFormOf(el.attrs.crossForm), el.attrs.crosses, conj);
 
   // Resolved specialization relationships whose SOURCE is this feature. The
   // source check guards against inlining a child specialization sourced
@@ -748,9 +750,9 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
       continue;
     }
     // A subsetting the author wrote as a path (`:> q.p1`) is written as the path while it still reads the same target.
-    const chain = (rel.eClass === 'Subsetting' || rel.eClass === 'ReferenceSubsetting') && typeof rel.attrs.chain === 'string' ? rel.attrs.chain : undefined;
+    const chain = (rel.eClass === 'Subsetting' || rel.eClass === 'ReferenceSubsetting' || rel.eClass === 'CrossSubsetting') && typeof rel.attrs.chain === 'string' ? rel.attrs.chain : undefined;
     if (chain !== undefined && !unprintableRef(chain) && specResolver(model, rel.eClass, el.id)(chain, el.ownerId)?.id === targetId) ref = chain;
-    const op = operatorFor(rel.eClass);
+    const op = rel.eClass === 'CrossSubsetting' ? crossFormOf(rel.attrs.crossForm) : operatorFor(rel.eClass);
     // Do not restate a typing the display string already expresses. After the
     // library binder runs, an attribute carries BOTH `attrs.type = 'Real'` and a
     // FeatureTyping to `ScalarValues::Real`; emitting both produced
@@ -769,6 +771,11 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
 
 function pushRefList(out: string[], op: string, v: unknown, conj = ''): void {
   if (Array.isArray(v)) for (const r of v) out.push(`${op} ${conj}${String(r)}`);
+}
+
+/** The spelling a cross subsetting was written in (`=>` or `crosses`; the keyword when nothing was read). */
+function crossFormOf(form: unknown): string {
+  return form === '=>' ? '=>' : 'crosses';
 }
 
 function operatorFor(eClass: string): string {

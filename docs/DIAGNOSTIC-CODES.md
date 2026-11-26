@@ -175,6 +175,13 @@ The tokens form a legal declaration, but the model this tool builds has nowhere 
 - **Fires when:** A declaration keyword the grammar accepts has no metaclass in this tool — the KerML type/feature family (namespace, class, feature, step, connector, …).
 - **Hint given:** This KerML keyword {found} is not modelled; the declaration and its body are preserved verbatim and re-emitted unchanged on save. Rewrite it with a supported keyword such as part, attribute, item, port, action or state.
 
+### `mapper/cross-subsetting-non-end`
+
+- **Severity:** warning
+- **Source:** mapper
+- **Fires when:** A cross subsetting (`crosses` or `=>`) is written on a feature that is not an end feature (SysML v2 §7.13.2).
+- **Hint given:** Only end features of a connection have a cross feature; move it onto the end, or remove it.
+
 ### `mapper/extended-definition`
 
 - **Severity:** error
@@ -1279,4 +1286,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*169 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*170 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

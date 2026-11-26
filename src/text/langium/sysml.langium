@@ -612,7 +612,7 @@ Specialization infers Specialization:
 SpecOp returns string:
       ':>>' | '::>' | ':>' | ':'
     | 'specializes' | 'subsets' | 'redefines' | 'references' | 'conjugates'
-    | 'crosses' | 'chains' | 'unions' | 'intersects' | 'differences'
+    | 'crosses' | '=>' | 'chains' | 'unions' | 'intersects' | 'differences'
     | 'typed' 'by' | 'featured' 'by' | 'defined' 'by'
     | 'inverse' 'of' | 'disjoint' 'from';
 

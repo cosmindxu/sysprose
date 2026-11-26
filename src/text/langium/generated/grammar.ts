@@ -8314,6 +8314,10 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
           },
           {
             "$type": "Keyword",
+            "value": "=>"
+          },
+          {
+            "$type": "Keyword",
             "value": "chains"
           },
           {

@@ -1474,10 +1474,11 @@ class Mapper {
           // saved text say the path the author wrote.
           const endOwner = req.op === '::>' && el.attrs.isEnd === true && el.ownerId != null ? this.model.get(el.ownerId) : undefined;
           const naryEnd = endOwner !== undefined && (endOwner.attrs.naryList === true || CHAIN_CONNECTOR_CLASSES.has(endOwner.eClass));
-          const chain = (req.op === ':>' || naryEnd) && !isDefinition(el.eClass) && req.ref.includes('.') ? { chain: req.ref.trim() } : undefined;
+          const cross: Record<string, string> = req.op === '=>' ? { crossForm: (req.node as Specialization).op === '=>' ? '=>' : 'crosses' } : {};
+          const chain = (req.op === ':>' || req.op === '=>' || naryEnd) && !isDefinition(el.eClass) && req.ref.includes('.') ? { chain: req.ref.trim() } : undefined;
           const rel = this.create(
             relClassForOp(req.op, isDefinition(el.eClass)),
-            { ownerId: el.id, source: [el.id], target: [targetId], ...(chain ? { attrs: chain } : {}) },
+            { ownerId: el.id, source: [el.id], target: [targetId], ...(chain || req.op === '=>' ? { attrs: { ...chain, ...cross } } : {}) },
             req.node,
           );
           req.relId = rel.id;
@@ -1674,9 +1675,9 @@ class Mapper {
         );
         continue;
       }
-      const key = req.op === ':>>' ? 'redefines' : req.op === '::>' ? 'references' : 'specializes';
+      const key = req.op === ':>>' ? 'redefines' : req.op === '::>' ? 'references' : req.op === '=>' ? 'crosses' : 'specializes';
       const cur = (el.attrs[key] as string[] | undefined) ?? [];
-      this.model.setAttrs(el.id, { [key]: [...cur, req.ref] });
+      this.model.setAttrs(el.id, { [key]: [...cur, req.ref], ...(req.op === '=>' ? { crossForm: (req.node as Specialization).op === '=>' ? '=>' : 'crosses' } : {}) });
       this.defer(
         el.id,
         key,
@@ -3430,6 +3431,15 @@ class Mapper {
 
   private applySpecialization(el: ElementRecord, spec: Specialization): void {
     const op = normalizeSpecOp(spec.op);
+    // SysML v2 §7.13.2 (l.4955-4970): "Only end features may have cross subsetting relationships". The relationship is still
+    // read (nothing is dropped), but a cross feature on anything else is ill-formed and said so.
+    if (op === '=>' && el.attrs.isEnd !== true) {
+      this.warn(
+        `\`${spec.op}\` (a cross subsetting) is written on ${el.declaredName ?? 'a feature'}, which is not an end feature; only end features may have one (§7.13.2).`,
+        spec,
+        'mapper/cross-subsetting-non-end',
+      );
+    }
     if (spec.conjugated === true) this.model.setAttrs(el.id, { conjugated: true });
     // RECORD, do not resolve. What a name denotes depends on the finished
     // namespace — inherited members included — which does not exist until the
@@ -3463,7 +3473,7 @@ interface Fault {
 /** One `:`/`:>`/`:>>`/`::>` written in the source, awaiting resolution. */
 interface DeferredSpec {
   elementId: ElementId;
-  /** Canonical operator: `:` | `:>` | `:>>` | `::>`. */
+  /** Canonical operator: `:` | `:>` | `:>>` | `::>` | `=>` (a cross subsetting, written `crosses` or `=>`). */
   op: string;
   /** The name as written. */
   ref: string;
@@ -3503,6 +3513,7 @@ function relClassForOp(op: string, definitionOwner: boolean): string {
   if (op === ':') return 'FeatureTyping';
   if (op === ':>>') return 'Redefinition';
   if (op === '::>') return 'ReferenceSubsetting';
+  if (op === '=>') return 'CrossSubsetting';
   return definitionOwner ? 'Subclassification' : 'Subsetting';
 }
 
@@ -3516,10 +3527,12 @@ function normalizeSpecOp(op: string): string {
       return ':>>';
     case 'references':
       return '::>';
+    case 'crosses':
+      return '=>';
     case 'definedby':
       return ':';
     default:
-      return op; // already one of ':' ':>' ':>>' '::>'
+      return op; // already one of ':' ':>' ':>>' '::>' '=>'
   }
 }
 
