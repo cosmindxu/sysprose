@@ -670,6 +670,54 @@ describe('state machines per configuration (V6)', () => {
     expect(o.owners[0].behaviour.machines[0].readings!.some((r) => r.why?.includes('both redefine'))).toBe(true);
   });
 
+  const TWOB = (big: string, g2: string) => `package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s :>> Eng::s { state b :>> Eng::s::b { ${big} } } } }
+    variation part gear : Eng { variant part g1 : Eng; variant part g2 : Eng { state s :>> Eng::s { state b :>> Eng::s::b { ${g2} } } } } }
+}`;
+
+  it('R5: two variants redefining the same state with disjoint members are merged, not a conflict', () => {
+    const o = rep(TWOB('state i1; state i2; transition ti first i1 accept Go then i2;', 'state j1; state j2; transition tj first j1 accept Go then j2;'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('selecting eng::big and gear::g2 (1 of 4)');
+    expect(d.message).not.toContain('conflict');
+  });
+
+  it('R5: two variants redefining the same state and both adding a member of one name are a conflict, never a pick', () => {
+    const o = rep(TWOB('state i1;', 'state i1;'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('selecting eng::big and gear::g2 (1 of 4): conflict (eng::big and gear::g2 both redefine or fill the same member');
+  });
+
+  it('R3: a variant redefining the machine the point types only inherits is walked per configuration', () => {
+    const o = rep(`package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Eng2 :> Eng;
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng::s { state c; transition t2 first b accept Go then c; } } } }
+}`);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('R3: a variant redefining a member of a machine that itself redefines an inherited one stays superset-only (the walk reads the root machine only)', () => {
+    const o = rep(`package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Eng2 :> Eng { state s :>> Eng::s { state d; } }
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng2::s { state c; transition t2 first b accept Go then c; } } } }
+}`);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('selecting eng::big'))).toBe(false);
+  });
+
+  it('R4: a variant of a variation state redefining a member of the variation state stays superset-only (the walk does not expand what a state inherits)', () => {
+    const o = rep(`package P {
+  part def Car { state mode { entry state off; state fin; variation state drive { state hum; variant state eco { state hum :>> drive::hum; } variant state sport; }
+    transition t1 first off accept On then drive::eco; transition t2 first off accept Fast then drive::sport; transition t4 first drive::eco accept Done then fin; transition t5 first drive::sport accept Done then fin; } }
+}`);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('eco'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(false);
+  });
+
   const VSTATE = (extra: string) => `package P {
   part def Car { state mode { entry state off; state fin; variation state drive { variant state eco; variant state sport; }
     transition t1 first off accept On then drive::eco; transition t2 first off accept Fast then drive::sport; ${extra} } }

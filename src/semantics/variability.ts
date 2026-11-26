@@ -1503,7 +1503,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
             claims.push(`drop:${tt.id}`);
             moves.push({ child: ch.id, drops: [tt.id], into: t.id });
           } else if (tt.eClass === 'StateUsage' && ch.eClass === 'StateUsage') {
-            claims.push(`state:${tt.id}`);
+            // a state redefinition merges members, never replaces the state: two variants redefining the same state clash only on a member they both claim (R5)
             gone.set(ch.id, tt.id);
             const r = into(ch, tt);
             if (r !== null) return r;
