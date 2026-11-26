@@ -4936,6 +4936,102 @@
   "open_raw": 77,
   "open": 77,
   "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 155,
+  "sha": "35194bd",
+  "when": "2026-11-26T13:15:59+01:00",
+  "day": "2026-11-26",
+  "subject": "sm-inherit I2: a variant redefining a member inherited through a redefining machine is overlaid on the effective machine; I3 recorded open",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 156,
+  "sha": "c82af77",
+  "when": "2026-11-26T16:16:56+01:00",
+  "day": "2026-11-26",
+  "subject": "Merge conn-chains",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 157,
+  "sha": "2ebba03",
+  "when": "2026-11-26T16:16:56+01:00",
+  "day": "2026-11-26",
+  "subject": "Merge bd-cliques",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
    "FALSE": 0,
    "WEAKER": 41,
    "POLISH": 34,
