@@ -1874,9 +1874,13 @@ and §21.4–21.11.
       instances (`part a : W [5]` on `[0..2]` against `[2]` others). Done (conn-nary): the list form of three or more ends
       `connect ([m] a, b ::> x, c)` maps each end to an owned end feature (reference subsetting + `endCrossMult`, `naryList`
       kept for the writer), is checked end by end and round-trips; a bare statement `connect (a, b, c)` takes no multiplicity.
-      Still open: pairwise port compatibility
-      of an n-ary connection (§7.12.1 speaks of two ends; `connection-compatibility` abstains), and a post-name
-      multiplicity on a usage body end (the end's own, not read). [if-compat]
+      Done (nary-compat): pairwise port compatibility of an n-ary connection or interface. Spec reading (§7.12.1, p.70): conformance
+      is defined between two ports, and "a port usage may be connected to one or more other port usages", so a connection of
+      three or more ends is judged pair by pair with the binary logic (feature matching, nested ports, nominal port
+      definition), each pair once, and a pair with an unresolved end is skipped. Out/out and in/in pairs are not findings in an
+      n-ary connection (one source may feed several sinks, several sources one sink), so the direction check and the
+      direction reason of feature matching are dropped there; the binary case is unchanged.
+      Still open: a post-name multiplicity on a usage body end (the end's own, not read). [if-compat]
       Done (conn-chains): chain ends (`a.p`) of the list and body forms materialise as in the binary form and, with the binary
       form, are checked when no part on the chain has several instances; a body end's own multiplicity other than 1..1 is flagged.
       Done (conn-ends2): a chain through a many-instance part is counted as the product of the multiplicities along it (an unbounded

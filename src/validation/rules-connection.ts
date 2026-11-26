@@ -6,6 +6,13 @@
  * a PowerPort wired to a DataPort both passed silently. Confirmed by execution,
  * Fable advisory 2026-09-02.
  *
+ * N-ARY (nary-compat). A connection or interface of three or more ends is judged
+ * pair by pair with the binary logic below (§7.12.1 conformance is between two
+ * ports; a port "may be connected to one or more other port usages"). Every pair
+ * whose ends both resolve to ports is checked once; a pair with an unresolved
+ * end is skipped, the others still are. Direction mismatches (out/out, in/in)
+ * are not findings there: fan-out and fan-in are legal. The binary case is unchanged.
+ *
  * WHAT THE ENDS ARE. After the feature-chain pass, `source[0]`/`target[0]` of a
  * connector are the IMPLICIT per-usage port copies (`ensureImplicitFeature`),
  * which carry `direction` but neither the port type nor conjugation; those live
@@ -108,17 +115,23 @@ export const connectionCompatibility: ValidationRule = {
     for (const el of model.all()) {
       if (el.attrs.isLibrary === true) continue;
       if (!CONNECTOR_KINDS.has(el.eClass)) continue;
-      const ends = connectorEndsOf(model, el.id);
-      if (ends.length !== 2) continue; // `connector-endpoints` owns that case
+      const allEnds = connectorEndsOf(model, el.id);
+      if (allEnds.length < 2) continue; // `connector-endpoints` owns that case
+      const name = qualifiedLabel(model, el);
+      const nary = allEnds.length > 2;
+      const pairs: [ElementId, ElementId][] = [];
+      for (let i = 0; i < allEnds.length; i++) for (let j = i + 1; j < allEnds.length; j++) pairs.push([allEnds[i], allEnds[j]]);
+      for (const ends of pairs) {
       const a = portFacets(model, ends[0]);
       const b = portFacets(model, ends[1]);
-      if (!a || !b) continue; // not port-to-port: no judgement
-      const name = qualifiedLabel(model, el);
+      if (!a || !b) continue; // not port-to-port (or unresolved): this pair is not judged
+      if (nary && a.el.id === b.el.id) continue;
 
       // (a) Direction — only when BOTH are declared (a missing one is
       //     port-direction's finding), neither is inout, and conjugation is the
       //     same on both sides (conjugating one side flips its directions).
       if (
+        !nary &&
         a.direction !== undefined &&
         b.direction !== undefined &&
         a.direction !== 'inout' &&
@@ -142,8 +155,10 @@ export const connectionCompatibility: ValidationRule = {
       //     Where neither has one, it stays nominal: a port definition in common.
       const mismatches = portMismatches(model, ends[0], ends[1]);
       if (mismatches !== undefined) {
-        if (mismatches.length > 0) {
-          const first = mismatches[0];
+        // n-ary: out/out and in/in are the legal fan-in and fan-out shapes
+        const shown = nary ? mismatches.filter((m) => m.reason !== 'direction') : mismatches;
+        if (shown.length > 0) {
+          const first = shown[0];
           const f = `\`${mismatchFeatureText(first, typeSuffix(model, first.feature.el.id))}\``;
           const where = qualifiedLabel(model, model.get(first.port) ?? first.feature.el);
           const otherPort = first.port === ends[0] ? b.el : a.el;
@@ -155,7 +170,7 @@ export const connectionCompatibility: ValidationRule = {
                 : first.reason === 'nested'
                   ? `the nested ${f} of ${where} has no nested port of that name on ${qualifiedLabel(model, otherPort)}`
                   : `${f} of ${where} has no feature of a conforming definition on ${qualifiedLabel(model, otherPort)}`;
-          const more = mismatches.length > 1 ? ` (${mismatches.length - 1} more unmatched feature${mismatches.length > 2 ? 's' : ''})` : '';
+          const more = shown.length > 1 ? ` (${shown.length - 1} more unmatched feature${shown.length > 2 ? 's' : ''})` : '';
           out.push(mk(`Connection "${name}" joins ports that do not conform (SysML v2 §7.12.1): ${why}${more}.`, el.id));
         }
       } else if (a.defs.length > 0 && b.defs.length > 0) {
@@ -169,6 +184,7 @@ export const connectionCompatibility: ValidationRule = {
             ),
           );
         }
+      }
       }
     }
     return out;
