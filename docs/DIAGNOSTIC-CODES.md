@@ -586,7 +586,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A connection end written with a cross multiplicity above the part it connects (`connect [5] wheels to hub` over `wheels : Wheel [4]`) or above the definition end it redefines, or a definition end allowing at most n against a part with more than n instances connected to one instance. Read: `connect [m] a to [n] b`, `connect ([m] a, [n] b)` and two `end [m] part x references a` bodies, with number-literal bounds.
+- **Fires when:** A connection end written with a cross multiplicity above the part it connects (`connect [5] wheels to hub` over `wheels : Wheel [4]`) or above the definition end it redefines, or a definition end allowing at most n against a part with more than n instances connected to one instance. Read: `connect [m] a to [n] b`, `connect ([m] a, [n] b)` and two `end [m] part x references a` bodies, with number-literal bounds. An end of a usage body written with a multiplicity after its name other than 1..1 (an end feature must be 1..1, §7.13.2). A chain end (`a.p`) is read against the feature the chain reaches when no part on the way has several instances.
 - **Hint given:** Write an end multiplicity within the connected part’s and the definition end’s, or widen the part or the definition end.
 
 ### `validation/subset-type-conformance`

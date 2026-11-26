@@ -1877,6 +1877,9 @@ and §21.4–21.11.
       Still open: pairwise port compatibility
       of an n-ary connection (§7.12.1 speaks of two ends; `connection-compatibility` abstains), and a post-name
       multiplicity on a usage body end (the end's own, not read). [if-compat]
+      Done (conn-chains): chain ends (`a.p`) of the list and body forms materialise as in the binary form and, with the binary
+      form, are checked when no part on the chain has several instances; a body end's own multiplicity other than 1..1 is flagged.
+      Still open: a chain through a many-instance part, and a cross-feature (`crosses`) reading of an end.
 [if-compat]
 - [x] **Compare the undirected features and the nested ports of two connected ports.** Done: `portMismatches`
       descends into nested ports (depth 6, pair cycle guard, conjugation composed along the path) and checks

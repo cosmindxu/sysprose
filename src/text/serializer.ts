@@ -748,7 +748,7 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
       continue;
     }
     // A subsetting the author wrote as a path (`:> q.p1`) is written as the path while it still reads the same target.
-    const chain = rel.eClass === 'Subsetting' && typeof rel.attrs.chain === 'string' ? rel.attrs.chain : undefined;
+    const chain = (rel.eClass === 'Subsetting' || rel.eClass === 'ReferenceSubsetting') && typeof rel.attrs.chain === 'string' ? rel.attrs.chain : undefined;
     if (chain !== undefined && !unprintableRef(chain) && specResolver(model, rel.eClass, el.id)(chain, el.ownerId)?.id === targetId) ref = chain;
     const op = operatorFor(rel.eClass);
     // Do not restate a typing the display string already expresses. After the

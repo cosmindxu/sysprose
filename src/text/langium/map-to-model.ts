@@ -650,6 +650,32 @@ function resolveChainEndpointsOf(model: Model, el: ElementRecord): number {
     }
   }
   if (unsettled.copy && el.attrs.copyHides !== true) model.setAttrs(el.id, { partedEnd: true, copyHides: true });
+  n += resolveEndFeatureChains(model, el);
+  return n;
+}
+
+/**
+ * The owned end features of a connection written as a list of three or more ends or as a body of `end … references`
+ * ends (SysML v2 §8.2.2.13): an end whose reference is a feature chain (`b.p`) names the usage-scoped feature the chain
+ * reaches, exactly as the end of a binary connector does ({@link resolveChainEnd}), so the end is read against that
+ * feature and not the definition's. The path as written stays on the relationship (`attrs.chain`) for the writer. A
+ * chain that does not resolve is left as it was (unchecked). Idempotent.
+ */
+function resolveEndFeatureChains(model: Model, el: ElementRecord): number {
+  let n = 0;
+  for (const end of model.children(el.id)) {
+    if (end.attrs.isEnd !== true) continue;
+    const rels = model.relationshipsFrom(end.id).filter((r) => r.eClass === 'ReferenceSubsetting');
+    if (rels.length !== 1) continue;
+    const rel = rels[0]!;
+    const chain = rel.attrs.chain;
+    if (typeof chain !== 'string' || !chain.includes('.')) continue;
+    const r = resolveChainEnd(model, chain, el.ownerId);
+    if (r && r.id !== end.id && rel.target?.[0] !== r.id) {
+      model.update(rel.id, { target: [r.id] });
+      n++;
+    }
+  }
   return n;
 }
 
@@ -1446,7 +1472,8 @@ class Mapper {
           // A subsetting written as a path (`part p2 :> q.p1;`) keeps the path as written (`attrs.chain`, like a
           // `satisfy`'s `sourceChain`): the target is the feature the path ends in (Q's p1), and the sentences and the
           // saved text say the path the author wrote.
-          const naryEnd = req.op === '::>' && el.attrs.isEnd === true && el.ownerId != null && this.model.get(el.ownerId)?.attrs.naryList === true;
+          const endOwner = req.op === '::>' && el.attrs.isEnd === true && el.ownerId != null ? this.model.get(el.ownerId) : undefined;
+          const naryEnd = endOwner !== undefined && (endOwner.attrs.naryList === true || CHAIN_CONNECTOR_CLASSES.has(endOwner.eClass));
           const chain = (req.op === ':>' || naryEnd) && !isDefinition(el.eClass) && req.ref.includes('.') ? { chain: req.ref.trim() } : undefined;
           const rel = this.create(
             relClassForOp(req.op, isDefinition(el.eClass)),

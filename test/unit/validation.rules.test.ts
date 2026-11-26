@@ -1835,8 +1835,13 @@ describe('BD5 connector-end-multiplicity', () => {
     expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC { end [3] part device references ds; end part hub references hub; } }`)).toHaveLength(1);
     expect(await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end [4] part a references ws; end [1] part b references hub; } }')).toEqual([]);
     expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC { end [2] part device references ds; end part hub references hub; } }`)).toEqual([]);
-    // a post-name multiplicity on a usage end is the end's own, not a cross multiplicity: never read as one
-    expect(await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end part a [9] references ws; end part b references hub; } }')).toEqual([]);
+    // a post-name multiplicity on a usage end is the end's own (not a cross multiplicity): an end must be 1..1 (conn-chains C2)
+    const own = await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end part a [9] references ws; end part b references hub; } }');
+    expect(own).toHaveLength(1);
+    expect(own[0]).toContain('1..1');
+    expect(await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end part a [0..1] references ws; end part b references hub; } }')).toHaveLength(1);
+    expect(await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end part a [1] references ws; end part b [1] references hub; } }')).toEqual([]);
+    expect(await run('part def W; part def H; part def S { part ws : W [4]; part hub : H; connection c { end [4] part a [1] references ws; end part b references hub; } }')).toEqual([]);
     // three ends in a list are read end by end (conn-nary; they were a syntax error, nothing checked, before)
     expect(await run('part def W; part def S { part a : W [2]; part b : W; part c : W; connection d connect ([9] a, b, c); }')).toHaveLength(1);
     expect(await run('part def W; part def S { part a : W [2]; part b : W; part c : W; connect (a, b, c); }')).toEqual([]);
@@ -1892,6 +1897,34 @@ describe('BD5 connector-end-multiplicity', () => {
     const c2 = two.model!.all().find((e) => e.declaredName === 'c')!;
     expect(c2.source).toHaveLength(1);
     expect(two.model!.children(c2.id).filter((e) => e.attrs.isEnd === true)).toHaveLength(0);
+  });
+  it('checks a chain end in a list, a body and the binary form against the usage-scoped feature (conn-chains C1)', async () => {
+    const w = 'part def H; part def W { part p : H [4]; } part def S { part a : W; part hub : H; part g : H; ';
+    for (const c of [
+      'connection c connect [5] a.p to hub;',
+      'connection c connect ([5] a.p, hub, g);',
+      'connection c { end [5] part x references a.p; end part y references hub; }',
+      'connection c { end [5] part x references a.p; end part y references hub; end part z references g; }',
+    ]) expect(await run(`${w}${c} }`), c).toHaveLength(1);
+    for (const c of [
+      'connection c connect [4] a.p to hub;',
+      'connection c connect ([4] a.p, hub, g);',
+      'connection c { end [4] part x references a.p; end part y references hub; end part z references g; }',
+      // unresolved chain: unchecked
+      'connection c connect ([5] a.nope, hub, g);',
+      'connection c connect ([5] nowhere.p, hub, g);',
+    ]) expect(await run(`${w}${c} }`), c).toEqual([]);
+    // a many-instance part on the way makes the chain many: not read
+    expect(await run('part def H; part def W { part p : H [4]; } part def S { part a : W [3]; part hub : H; part g : H; connection c connect ([5] a.p, hub, g); }')).toEqual([]);
+    // the path as written round-trips
+    const r = await loadModelText(`package P { ${w}connection c connect ([4] a.p, hub, g); } }`, { library: 'none' });
+    const t = serializeModel(r.model!);
+    expect(t).toContain('connect ([4] a.p, hub, g)');
+    expect(serializeModel((await loadModelText(t, { library: 'none' })).model!)).toBe(t);
+    const b = await loadModelText(`package P { ${w}connection c { end part x references a.p; end part y references hub; end part z references g; } } }`, { library: 'none' });
+    const bt = serializeModel(b.model!);
+    expect(bt).toContain('::> a.p');
+    expect(serializeModel((await loadModelText(bt, { library: 'none' })).model!)).toBe(bt);
   });
   it('is silent on an n-ary list whose end does not resolve, and connector-endpoints is silent on it', async () => {
     const pre = 'part def W; part def S { part a : W [2]; part b : W; ';
