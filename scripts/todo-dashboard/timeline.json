@@ -4712,9 +4712,9 @@
   "open_raw": 78,
   "open": 78,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 41,
-   "POLISH": 35,
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 32,
    "HELD": 2
   },
   "new": 0,
@@ -4734,5 +4734,37 @@
   },
   "cum_new": 347,
   "cum_closed": 267
+ },
+ {
+  "idx": 148,
+  "sha": "f0bf57a",
+  "when": "2026-11-25T22:14:43+01:00",
+  "day": "2026-11-25",
+  "subject": "connector-endpoints: a connection written with two end \u2026 references bodies is two-ended (\u00a78.2.2.13), not an error",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 41,
+   "POLISH": 34,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
  }
 ]
