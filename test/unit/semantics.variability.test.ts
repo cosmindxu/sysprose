@@ -591,10 +591,53 @@ describe('state machines per configuration (V6)', () => {
     expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
   });
 
-  it('V6a: a state redefinition bringing an entry to a state that has one stays superset-only', () => {
+  it('R1: a state redefinition bringing an entry without redefining the one the state has is a conflict reading, nothing claimed', () => {
     const o = rep(INM('state b :>> Eng::s::b { entry state i1; state i2; }', 'entry state a; state b { entry state x; state y; } transition t first a accept Go then b;'));
-    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(true);
-    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(false);
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('selecting eng::big (1 of 2): conflict (eng::big: it brings an entry action to b, which has one, without redefining it)');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(false);
+  });
+
+  const ENT = (bigEntry: string) => INM(`state b :>> Eng::s::b { ${bigEntry} }`, 'entry state a; state b { entry action en; then x; state x; state y; } transition t first a accept Go then b;');
+
+  it('R1: an entry action the variant redefines replaces the inherited one: x is unreachable only where it is selected', () => {
+    const o = rep(ENT('entry action en2 :>> Eng::s::b::en; then y;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): unreachable state(s) y');
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) x');
+    expect(d.message).not.toContain('conflict');
+  });
+
+  it('R1: a replaced entry that opens the same states stays silent about dead things', () => {
+    const o = rep(INM('state b :>> Eng::s::b { entry action en2 :>> Eng::s::b::en; then x; }', 'entry state a; state b { entry action en; then x; state x; } transition t first a accept Go then b;'));
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
+  });
+
+  it('R1: an exit action added without redefining the inherited one is a conflict, never a pick', () => {
+    const o = rep(INM('state b :>> Eng::s::b { exit action out2; }', 'entry state a; state b { exit action out1; } transition t first a accept Go then b;'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('conflict (eng::big: it brings an exit action to b, which has one, without redefining it)');
+  });
+
+  it('R1: an entry action the state does not have yet is just added', () => {
+    const o = rep(INM('state b :>> Eng::s::b { entry action en2; }', 'entry state a; state b; transition t first a accept Go then b;'));
+    expect(o.diagnostics.some((x) => x.message.includes('conflict'))).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(true);
+  });
+
+  it('R2: a transition naming a state the variant redefines is resolved to the redefined state: c reachable only where selected', () => {
+    const o = rep(INM('state b :>> Eng::s::b { state i; } transition t2 first b accept Go then c;', 'entry state a; state b; state c; transition t first a accept Go then b;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): unreachable state(s) c');
+    expect(d.message).toContain('selecting eng::big (1 of 2): every state reachable and no transition dead');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('R2: a correct transition from a redefined state stays silent about dead things', () => {
+    const o = rep(INM('state b :>> Eng::s::b { state i; } transition t2 first b accept Go then c;', 'entry state a; state b; state c; transition t first a accept Go then b; transition t3 first a accept Go2 then c;'));
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
   });
 
   it('V6b: a redefinition nested two states deep: y is unreachable only where the transition is redefined', () => {
