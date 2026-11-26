@@ -1675,7 +1675,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
   // set), under a work budget: distinct overlays x elements of the machine. Past it the machine keeps its superset-only
   // line (never a partial per-configuration claim: a claim per configuration needs every walk; a cut stays inconclusive).
   const OVERLAY_WORK_BUDGET = 4096;
-  const overBudget = (groupCount: number, root: ElementRecord): boolean => groupCount * (model.descendants(root.id).length + 1) > OVERLAY_WORK_BUDGET;
+  const overBudget = (groupCount: number, root: ElementRecord): boolean => groupCount > 16 && groupCount * (model.descendants(root.id).length + 1) > OVERLAY_WORK_BUDGET;
   if (hard.length === 0) {
     const conflict = new Set<string>();
     for (const [oid, r] of replacers) {

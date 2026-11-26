@@ -1006,6 +1006,7 @@ export const connectorEndMultiplicity: ValidationRule = {
         if (rel.attrs.implicit !== true) return undefined;
         let lo = 1;
         let hi = 1;
+        let many = false;
         const own = rangeOf(model, rel);
         if (!own || !Number.isFinite(own.hi)) return undefined;
         lo *= own.lo;
@@ -1020,8 +1021,12 @@ export const connectorEndMultiplicity: ValidationRule = {
           if (!r || !Number.isFinite(r.hi)) return undefined;
           lo *= r.lo;
           hi *= r.hi;
+          if (r.hi > 1) many = true;
         }
-        chainMult.set(rel.id, { lo, hi });
+        // The product bounds the chain's DISTINCT values from above only: two instances on the way may reach the same
+        // value (a reference feature, or a shared part), so with a many-instance step the lower bound is 0, never the
+        // product (a product lower bound would claim instances that may not exist: a wrong warning).
+        chainMult.set(rel.id, { lo: many ? 0 : lo, hi });
         return rel;
       };
       const ends: (End | undefined)[] = [];
