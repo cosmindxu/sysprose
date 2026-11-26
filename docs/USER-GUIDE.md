@@ -5091,7 +5091,7 @@ any of these at the language level:
   only narrow the one on the connection definition's end it redefines (§7.13.2). Only the
   binary `connect [m] a to [n] b` form, its list form `connect ([m] a, [n] b, [k] c)` of two or more ends and a body of two or more
   `end [m] part x references a` ends (the multiplicity may stand before the keyword, `end [0..2] part device`),
-  with number-literal bounds, are read; a chain end (`a.p`) in any of these forms is read against the feature the chain reaches (when no part on the way has several instances), and a multiplicity written after the name of a body end (`end part a [9] references x`, the end's own) other than 1..1 is flagged (an end feature must be 1..1, §7.13.2). A warning.
+  with number-literal bounds, are read; a chain end (`a.p`) in any of these forms is read against the feature the chain reaches, counted as the product of the multiplicities along the chain (a many-instance part on the way multiplies it; an unbounded or non-literal factor leaves the end unchecked), and a multiplicity written after the name of a body end (`end part a [9] references x`, the end's own) other than 1..1 is flagged (an end feature must be 1..1, §7.13.2); the same holds for the ends a `connection def` or `interface def` owns (`end part device [0..2] : W` is flagged, the cross multiplicity goes before the keyword: `end [0..2] part device : W`). A warning.
 - **`subset-type-conformance`.** `part b : B subsets a` over `part a : A`, where
   neither of A and B specialises the other, holds values that are not values of
   `a` (§7.6.1). The types a subsetter declares and those of the features it redefines

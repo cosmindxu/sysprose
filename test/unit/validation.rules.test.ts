@@ -1836,12 +1836,12 @@ describe('BD5 connector-end-multiplicity', () => {
     expect(await run('part def W; part def H; part def S { part a : W [2]; part b : H [3]; connection c connect a to [4] b; }')).toHaveLength(1);
   });
   it('flags a usage end above the definition end, and many parts on a one-instance end', async () => {
-    const d = 'part def W; part def H; connection def DC { end part device [0..2] : W; end part hub [1] : H; }';
+    const d = 'part def W; part def H; connection def DC { end [0..2] part device : W; end [1] part hub : H; }';
     expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC connect [3] device ::> ds to hub; }`)).toHaveLength(1);
     expect(await run(`${d} part def S { part ds : W [3]; part hub : H; connection c : DC connect ds to hub; }`)).toHaveLength(1);
   });
   it('is silent on legal look-alikes', async () => {
-    const d = 'part def W; part def H; connection def DC { end part device [0..4] : W; end part hub [1] : H; }';
+    const d = 'part def W; part def H; connection def DC { end [0..4] part device : W; end [1] part hub : H; }';
     expect(await run('part def W; part def H; part def S { part wheels : W [4]; part hub : H; connection c connect [4] wheels to [1] hub; connection e connect [1..4] wheels to hub; }')).toEqual([]);
     expect(await run(`${d} part def S { part ds : W [4]; part hub : H; connection c : DC connect [2] device ::> ds to hub; }`)).toEqual([]);
     expect(await run(`${d} part def S { part ds : W [3]; part hub : H [2]; connection c : DC connect ds to hub; }`)).toEqual([]);
@@ -1874,7 +1874,7 @@ describe('BD5 connector-end-multiplicity', () => {
     const pre = 'part def W; part def H; part def G;';
     // n-ary: an end above its own part, and a usage above the definition end, on the third end
     expect(await run(`${pre} part def S { part a : W [2]; part b : H; part g : G [2]; connection c { end part x references a; end part y references b; end [3] part z references g; } }`)).toHaveLength(1);
-    const d = `${pre} connection def T { end part x : W; end part y : H; end part z [0..1] : G; }`;
+    const d = `${pre} connection def T { end part x : W; end part y : H; end [0..1] part z : G; }`;
     expect(await run(`${d} part def S { part a : W; part b : H; part g : G; connection c : T { end part x references a; end part y references b; end [2] part z references g; } }`)).toHaveLength(1);
     // no cross multiplicity: three parts on a [0..1] end with all other ends single
     expect(await run(`${d} part def S { part a : W; part b : H; part g : G [3]; connection c : T { end part x references a; end part y references b; end part z references g; } }`)).toHaveLength(1);
@@ -1882,7 +1882,7 @@ describe('BD5 connector-end-multiplicity', () => {
     expect(await run(`${pre} part def S { part a : W [2]; part b : H; part g : G [2]; connection c { end [2] part x references a; end part y references b; end [2] part z references g; } }`)).toEqual([]);
     expect(await run(`${d} part def S { part a : W [2]; part b : H; part g : G [2]; connection c : T { end part x references a; end part y references b; end part z references g; } }`)).toEqual([]);
     // C2: the other end has several instances; 4 parts on a [0..2] end need more than 2 tuples when the other has 1..1, 2 tuples suffice
-    const e = `${pre} connection def U { end part x [0..2] : W; end part y : H; }`;
+    const e = `${pre} connection def U { end [0..2] part x : W; end part y : H; }`;
     expect(await run(`${e} part def S { part a : W [5]; part b : H [2]; connection c : U connect a to b; }`)).toHaveLength(1);
     expect(await run(`${e} part def S { part a : W [4]; part b : H [2]; connection c : U connect a to b; }`)).toEqual([]);
     expect(await run(`${e} part def S { part a : W [5]; part b : H [0..*]; connection c : U connect a to b; }`)).toEqual([]);
@@ -1892,7 +1892,7 @@ describe('BD5 connector-end-multiplicity', () => {
     expect(await run(`${pre} part def S { part a : W [2]; part b : H; part g : G [2]; connection c connect ([2] a, b, [3] g); }`)).toHaveLength(1);
     expect(await run(`${pre} part def S { part a : W [2]; part b : H; part g : G [2]; connection c connect ([2] a, b, [2] g); }`)).toEqual([]);
     // the definition end named on an end narrows or exceeds it
-    const d = `${pre} connection def T { end part x : W; end part y : H; end part z [0..1] : G; }`;
+    const d = `${pre} connection def T { end part x : W; end part y : H; end [0..1] part z : G; }`;
     expect(await run(`${d} part def S { part a : W; part b : H; part g : G [2]; connection c : T connect (x ::> a, y ::> b, [2] z ::> g); }`)).toHaveLength(1);
     expect(await run(`${d} part def S { part a : W; part b : H; part g : G [2]; connection c : T connect (x ::> a, y ::> b, [1] z ::> g); }`)).toEqual([]);
     // the model: three owned ends, each with a reference subsetting and its cross multiplicity; no source/target
@@ -1938,7 +1938,7 @@ describe('BD5 connector-end-multiplicity', () => {
       'connection c connect ([5] a.nope, hub, g);',
       'connection c connect ([5] nowhere.p, hub, g);',
     ]) expect(await run(`${w}${c} }`), c).toEqual([]);
-    // a many-instance part on the way makes the chain many: not read
+    // a many-instance part on the way: the chain holds the product of the multiplicities (conn-ends2 E2), 3 x 4 = 12
     expect(await run('part def H; part def W { part p : H [4]; } part def S { part a : W [3]; part hub : H; part g : H; connection c connect ([5] a.p, hub, g); }')).toEqual([]);
     // the path as written round-trips
     const r = await loadModelText(`package P { ${w}connection c connect ([4] a.p, hub, g); } }`, { library: 'none' });
@@ -1950,6 +1950,31 @@ describe('BD5 connector-end-multiplicity', () => {
     expect(bt).toContain('::> a.p');
     expect(serializeModel((await loadModelText(bt, { library: 'none' })).model!)).toBe(bt);
   });
+  it('checks a chain through a many-instance part against the product of the multiplicities (conn-ends2 E2)', async () => {
+    const w = (a: string, p: string, c: string) => `part def H; part def W { part p : H ${p}; } part def S { part a : W ${a}; part hub : H; ${c} }`;
+    // 3 x 2 = 6 values of a.p: a cross multiplicity of 7 is more than the chain holds, 6 is not
+    expect(await run(w('[3]', '[2]', 'connection c connect [7] a.p to hub;'))).toHaveLength(1);
+    expect(await run(w('[3]', '[2]', 'connection c connect ([7] a.p, hub);'))).toHaveLength(1);
+    expect(await run(w('[3]', '[2]', 'connection c { end [7] part x references a.p; end part y references hub; }'))).toHaveLength(1);
+    expect(await run(w('[3]', '[2]', 'connection c connect [6] a.p to hub;'))).toEqual([]);
+    expect(await run(w('[3]', '[2]', 'connection c connect [1..6] a.p to hub;'))).toEqual([]);
+    // an unbounded factor, or one that is not a literal, leaves it unchecked
+    expect(await run(w('[3]', '[*]', 'connection c connect [70] a.p to hub;'))).toEqual([]);
+    expect(await run(w('[0..*]', '[2]', 'connection c connect [70] a.p to hub;'))).toEqual([]);
+    expect(await run(w('[n]', '[2]', 'connection c connect [70] a.p to hub;'))).toEqual([]);
+  });
+  it('judges the ends a connection definition owns by the 1..1 rule, an inherited one where owned (conn-ends2 E1)', async () => {
+    const d = (body: string) => `part def W; part def H; ${body}`;
+    // §7.13.2: a definition's end features must have multiplicity 1..1 too; the cross multiplicity goes before the keyword
+    const own = await run(d('connection def DC { end part device [0..2] : W; end part hub : H; }'));
+    expect(own).toHaveLength(1);
+    expect(own[0]).toContain('1..1');
+    expect(await run(d('interface def IC { end ref a [3] : W; end ref b : H; }'))).toHaveLength(1);
+    expect(await run(d('connection def DC { end [0..2] part device : W; end part hub [1] : H; end part x : H; }'))).toEqual([]);
+    // inherited: flagged once, on the definition that writes it, not on the one that specialises it
+    expect(await run(d('connection def DC { end part device [0..2] : W; end part hub : H; } connection def DD :> DC { }'))).toHaveLength(1);
+    expect(await run(d('connection def DC { end [0..2] part device : W; end part hub : H; } connection def DD :> DC { }'))).toEqual([]);
+  });
   it('is silent on an n-ary list whose end does not resolve, and connector-endpoints is silent on it', async () => {
     const pre = 'part def W; part def S { part a : W [2]; part b : W; ';
     expect(await run(`${pre}connection c connect ([2] a, b, nowhere); }`)).toEqual([]);
@@ -1960,7 +1985,7 @@ describe('BD5 connector-end-multiplicity', () => {
     const d = (end: string) => `part def W; part def H; connection def DC { ${end} end part hub : H [1]; }`;
     const use = 'part def S { part ds : W [3]; part hub : H; connection c : DC connect ds to hub; }';
     expect(await run(`${d('end [0..2] part device : W;')} ${use}`)).toHaveLength(1);
-    expect(await run(`${d('end part device [0..2] : W;')} ${use}`)).toHaveLength(1);
+    expect(await run(`${d('end [0..2] part device : W;')} ${use}`)).toHaveLength(1);
     expect(await run(`${d('end [0..4] part device : W;')} ${use}`)).toEqual([]);
   });
   it('round-trips the list form and the end multiplicity before the keyword', async () => {

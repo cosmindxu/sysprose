@@ -958,6 +958,9 @@ export const unresolvedValueChain: ValidationRule = {
  * `end part x [m]`); bounds written as number literals, an end related to a feature owned beside
  * the connection (never a chain). A body of three or more `end … references` ends is read end by end (each against the
  * product of the others); the list form of three or more ends is a syntax error, and any other body shape is not read.
+ * A chain end (`a.p`) is counted as the product of the multiplicities along the chain (KerML feature chaining); an unbounded or
+ * undecided factor leaves it unread. The ends of a connection/interface DEFINITION are held to 1..1 after the name too (§7.13.2:
+ * "end features of a connection definition or usage ... must have multiplicity 1..1"; the cross multiplicity precedes the keyword).
  */
 export const connectorEndMultiplicity: ValidationRule = {
   id: 'connector-end-multiplicity',
@@ -968,29 +971,57 @@ export const connectorEndMultiplicity: ValidationRule = {
     const out: Diagnostic[] = [];
     for (const el of model.all()) {
       if (el.attrs.isLibrary === true || el.attrs.staleEnd === true) continue;
-      if (!['ConnectionUsage', 'InterfaceUsage', 'Connector'].includes(el.eClass)) continue;
+      const isDef = ['ConnectionDefinition', 'InterfaceDefinition'].includes(el.eClass);
+      if (!isDef && !['ConnectionUsage', 'InterfaceUsage', 'Connector'].includes(el.eClass)) continue;
       const mk = (message: string): void => {
         out.push({ id: `connector-end-multiplicity#${n++}`, ruleId: 'connector-end-multiplicity', severity: 'warning', message, elementId: el.id });
       };
       const written = (raw: unknown): Range | undefined =>
         typeof raw === 'string' ? statedRange({ attrs: { multiplicity: raw } } as unknown as ElementRecord) : undefined;
+      if (isDef) {
+        // §7.13.2 (verified by reading): the end features of a connection definition "must have multiplicity 1..1" too; the
+        // spec's own example writes the cross multiplicity before the keyword (`end [0..1] part hub : Hub`). A multiplicity
+        // after the name is the end's own. Only the end the definition owns is judged (an inherited one is judged where owned).
+        for (const o of model.children(el.id).filter((c) => c.attrs.isEnd === true)) {
+          const own = statedRange(o);
+          if (own && !(own.lo === 1 && own.hi === 1)) {
+            mk(`Connection definition ${qualifiedLabel(model, el)}: the end ${o.declaredName ?? qualifiedLabel(model, o)} is written ${show(own)} after its name, but an end feature of a connection must have multiplicity 1..1 (§7.13.2); a cross multiplicity goes before the keyword (\`end [m] part x : T\`).`);
+          }
+        }
+        continue;
+      }
       // The two ends, each with the part it relates, the cross multiplicity written on it and the definition end it
       // redefines. Read from `connect [m] a to [n] b` / `connect ([m] a, [n] b)` (stored on the connection), or from
       // two or more `end [m] part x references a` bodies; any other shape is left unread.
       interface End { rel: ElementRecord; cross: Range | undefined; end: ElementRecord | undefined; label: string }
+      const chainMult = new Map<ElementId, Range>();
+      const rangeIn = (x: ElementRecord): Range | undefined => chainMult.get(x.id) ?? rangeOf(model, x);
       const sameOwner = (id: ElementId | undefined): ElementRecord | undefined => {
         const rel = id ? model.get(id) : undefined;
         if (!rel) return undefined;
         if (rel.ownerId === el.ownerId) return rel;
-        // A chain end (`a.p`) is the usage-scoped feature the chain materialises, owned by `a`: read as a single value
-        // set only when every usage the chain passes through holds one instance (a many-instance `a` makes a.p many).
+        // A chain end (`a.p`) is the usage-scoped feature the chain materialises, owned by `a`. Its instances are counted
+        // along the chain: the product of the multiplicities of every usage the chain passes through (feature chaining,
+        // KerML 7.3.4.6: a value of the chain is a value of p of a value of a). An undecided or unbounded factor leaves it unread.
         if (rel.attrs.implicit !== true) return undefined;
+        let lo = 1;
+        let hi = 1;
+        const own = rangeOf(model, rel);
+        if (!own || !Number.isFinite(own.hi)) return undefined;
+        lo *= own.lo;
+        hi *= own.hi;
         for (let o = rel.ownerId ? model.get(rel.ownerId) : undefined; o && o.id !== el.ownerId; o = o.ownerId ? model.get(o.ownerId) : undefined) {
           if (o.attrs.implicit !== true && o.ownerId !== el.ownerId) return undefined;
-          const r = statedRange(o);
-          if (r ? r.hi > 1 : model.relationshipsFrom(o.id).some((x) => ['Subsetting', 'Redefinition'].includes(x.eClass))) return undefined;
-          if (!r && o.attrs.implicit === true && rangeOf(model, o)?.hi !== 1) return undefined;
+          let r = statedRange(o);
+          if (!r && o.attrs.multiplicity !== undefined) return undefined;
+          if (!r && model.relationshipsFrom(o.id).some((x) => ['Subsetting', 'Redefinition'].includes(x.eClass))) return undefined;
+          if (!r && o.attrs.implicit === true) r = rangeOf(model, o);
+          if (!r && o.attrs.implicit !== true) r = { lo: 1, hi: 1 };
+          if (!r || !Number.isFinite(r.hi)) return undefined;
+          lo *= r.lo;
+          hi *= r.hi;
         }
+        chainMult.set(rel.id, { lo, hi });
         return rel;
       };
       const ends: (End | undefined)[] = [];
@@ -1040,7 +1071,7 @@ export const connectorEndMultiplicity: ValidationRule = {
         // The other ends, all read (an unread one leaves the third check unjudged). KerML: an end's cross multiplicity
         // is read against the product of the OTHER ends' instances, so a connection of n ends is checked end by end.
         const others = ends.filter((_, j) => j !== i).map((x) => x?.rel);
-        const p = rangeOf(model, rel);
+        const p = rangeIn(rel);
         const e = end ? (written(end.attrs.endCrossMult) ?? statedRange(end)) : undefined;        if (c && p && c.lo <= c.hi && (c.hi > p.hi || c.lo > p.hi)) {
           mk(
             `Connection ${qualifiedLabel(model, el)}: the ${label} is written ${show(c)} but ${qualifiedLabel(model, rel)} has ${show(p)}: an end cannot connect more instances than the part has (§7.13.2).`,
@@ -1059,7 +1090,7 @@ export const connectorEndMultiplicity: ValidationRule = {
           // (the product of the others' upper bounds) tuples at least.
           let tuples = 1;
           for (const x of others) {
-            const o = rangeOf(model, x!) ?? (plain(x!) ? { lo: 1, hi: 1 } : undefined);
+            const o = rangeIn(x!) ?? (plain(x!) ? { lo: 1, hi: 1 } : undefined);
             if (!o || !Number.isFinite(o.hi)) { tuples = NaN; break; }
             tuples *= o.hi;
           }
