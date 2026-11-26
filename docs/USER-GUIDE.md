@@ -5044,8 +5044,11 @@ any of these at the language level:
   port has a directed feature, the old question stays: a port definition in
   common, and not `out` to `out` on the usages.
   The comparison goes further than the directed features: an undirected
-  attribute or item of one port needs a same-named feature of a conforming
-  definition on the other, and a nested port (`port sub : Inner` inside a port
+  feature of one port (an attribute, item, part, reference, occurrence,
+  connection, action, calculation, state, constraint, requirement, case or
+  view; §7.12.1 states no restriction by kind, but metadata and behaviour steps
+  such as transitions or perform references are not compared) needs a
+  same-named feature of a conforming definition on the other, and a nested port (`port sub : Inner` inside a port
   definition) needs the same-named nested port on the other end, compared the
   same way with the conjugation of each port along the path composed (§7.12.3);
   the finding names the path (`sub.x`). A nested port with nothing in it is not

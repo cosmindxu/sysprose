@@ -179,6 +179,27 @@ describe('connection-compatibility', () => {
       expect(findings(m)).toEqual([]);
     });
 
+    it('flags an undirected occurrence, action, state, calculation, constraint, connection feature with no counterpart', async () => {
+      for (const decl of ['occurrence u', 'action u', 'state u', 'calc u', 'constraint u', 'requirement u', 'connection u', 'view u']) {
+        const m = await bound(wrap(`port def P { out item top; ${decl}; } port def Q { in item top; }`, 'Q'));
+        const f = findings(m);
+        expect(f, decl).toHaveLength(1);
+        expect(f[0]).toMatch(/\bu\b/);
+      }
+    });
+
+    it('stays silent when the other kind of undirected feature exists on both ends', async () => {
+      for (const decl of ['occurrence u', 'action u', 'state u', 'calc u', 'constraint u']) {
+        const m = await bound(wrap(`port def P { out item top; ${decl}; } port def Q { in item top; ${decl}; }`, 'Q'));
+        expect(findings(m), decl).toEqual([]);
+      }
+    });
+
+    it('does not compare a metadata annotation or an unnamed feature', async () => {
+      const m = await bound(wrap(`metadata def Tag; port def P { out item top; @Tag; } port def Q { in item top; }`, 'Q'));
+      expect(findings(m)).toEqual([]);
+    });
+
     it('reads a feature copy through a conjugated port as reversed (effectiveDirection)', async () => {
       const m = await bound(`package R {
     port def P { out item update; }

@@ -191,8 +191,25 @@ export function mismatchFeatureText(m: PortMismatch, typeSuffix: string): string
 
 const MAX_NEST = 6;
 
-/** The undirected feature kinds compared by name and conforming definition: attributes, items, parts and references. */
-const UNDIRECTED_KINDS = new Set(['AttributeUsage', 'ItemUsage', 'PartUsage', 'ReferenceUsage']);
+/**
+ * The undirected feature kinds compared by name and conforming definition. §7.12.1: "Two features match if they have
+ * conforming definitions and either both have no direction or they have conjugate directions ... each feature of one
+ * port has a matching feature on the other port" - the text states no restriction by kind of feature, so every kind
+ * of usage a port may own is compared: attributes, items, parts, references, occurrences, connections, interfaces,
+ * flows, allocations, and the behavioural and requirement-side usages (actions, calculations, states, constraints,
+ * requirements, concerns, cases, views, viewpoints, renderings; §7.9, §7.13, §7.14, §7.17-§7.21). Left out, with no
+ * name or definition a counterpart could match: nested ports (compared on their own, §7.12.3), metadata usages
+ * (annotations, §7.4), and the behaviour steps and relationship-like usages (transitions, successions, bindings,
+ * perform/exhibit/satisfy/assert/include references, control nodes, accept/send/assign/if/loop actions), which
+ * reference or order other features rather than being features a port exchanges.
+ */
+const UNDIRECTED_KINDS = new Set([
+  'AttributeUsage', 'EnumerationUsage', 'ItemUsage', 'PartUsage', 'ReferenceUsage', 'OccurrenceUsage',
+  'ConnectionUsage', 'InterfaceUsage', 'FlowUsage', 'AllocationUsage',
+  'ActionUsage', 'CalculationUsage', 'StateUsage', 'ConstraintUsage', 'RequirementUsage', 'ConcernUsage',
+  'CaseUsage', 'AnalysisCaseUsage', 'VerificationCaseUsage', 'UseCaseUsage',
+  'ViewUsage', 'ViewpointUsage', 'RenderingUsage',
+]);
 
 interface PortFeatures {
   directed: DirectedFeature[];
@@ -237,7 +254,7 @@ function hasContent(model: Model, portId: ElementId, depth: number): boolean {
 
 /**
  * §7.12.1 port conformance between two port usages: their DIRECTED features
- * (conjugate directions), their UNDIRECTED attribute, item, part and reference features (a
+ * (conjugate directions), their UNDIRECTED features of the kinds in `UNDIRECTED_KINDS` (a
  * same-named feature of a conforming definition on the other), and their NESTED
  * ports (the same-named nested port on the other end, compared recursively with
  * the conjugation of every port along the path composed, §7.12.3). `undefined`
