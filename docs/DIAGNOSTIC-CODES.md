@@ -614,7 +614,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals (or arithmetic over literals) with fewer values than its lower bound (`attribute a : Real [2] = 3.0`). A default or initial value is read only for the upper bound (§7.13.4).
+- **Fires when:** A feature of upper bound 1 (`[1]`, `[0..1]`) bound to a list of several values (`= (1.0, 2.0)`), or a feature bound to a literal or list of literals (or arithmetic over literals) with fewer values than its lower bound (`attribute a : Real [2] = 3.0`); the count is also read for a plain name of a feature whose multiplicity is exactly `[n]` or which is bound to a value of decided count, arithmetic over such single values, a parenthesised sequence of decided parts, and a call of a calculation whose result states exactly `[n]`; an expression whose count cannot be decided gives no finding. A default or initial value is read only for the upper bound (§7.13.4).
 - **Hint given:** Make the multiplicity and the number of values written agree.
 
 ### `validation/specialization-kind-incompatible`

@@ -501,14 +501,70 @@ function literalArithmetic(text: string): boolean {
   return 'value' in r && r.value !== null && r.value !== undefined && !(typeof r.value === 'number' && !Number.isFinite(r.value));
 }
 
+/**
+ * The number of values an expression gives, where the evaluator's reading decides it: a literal is one value;
+ * arithmetic whose every operand is one value is one value; a plain name of a feature whose multiplicity is exactly
+ * `[n]`, or which is bound to a value of decided count, gives that many; a call of a calculation whose result states
+ * exactly `[n]` gives that many; a parenthesised sequence is the sum of its parts. Anything else (a chain, an
+ * unresolved name, a conditional, a range, an arrow) is undecided: `undefined`.
+ */
+function decidedCount(model: Model, scope: ElementRecord, node: ExprNode, depth = 0): number | undefined {
+  if (depth > 6) return undefined;
+  switch (node.kind) {
+    case 'num':
+    case 'str':
+    case 'bool':
+      return 1;
+    case 'unary':
+      return decidedCount(model, scope, node.operand, depth + 1) === 1 ? 1 : undefined;
+    case 'binary':
+      return decidedCount(model, scope, node.left, depth + 1) === 1 && decidedCount(model, scope, node.right, depth + 1) === 1 ? 1 : undefined;
+    case 'ref': {
+      if (node.path.length !== 1 || node.qualifier !== undefined) return undefined;
+      const hit = resolveFullName(model, node.path[0]!, scope.ownerId, { exclude: scope.id });
+      if (!hit || !isKindOf(hit.eClass, 'Usage') || hit.id === scope.id) return undefined;
+      const range = statedRange(hit);
+      if (range) return range.lo === range.hi ? range.lo : undefined;
+      if (hit.attrs.value === undefined) return undefined;
+      const vc = valueCount(model, hit, depth + 1);
+      return vc?.exact ? vc.count : undefined;
+    }
+    case 'call': {
+      const fn = resolveFullName(model, node.name, scope.ownerId, { exclude: scope.id });
+      if (!fn || (fn.eClass !== 'CalculationDefinition' && fn.eClass !== 'CalculationUsage')) return undefined;
+      const results = model.children(fn.id).filter((c) => isKindOf(c.eClass, 'Usage') && (c.attrs.featureRole === 'return' || c.attrs.direction === 'return' || c.attrs.isResult === true));
+      if (results.length !== 1) return undefined;
+      const range = statedRange(results[0]!);
+      return range && range.lo === range.hi ? range.lo : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** The decided count of a text that parses as one expression, or `undefined`. */
+function decidedCountOfText(model: Model, el: ElementRecord, text: string, depth: number): number | undefined {
+  let node: ExprNode;
+  try {
+    node = parseExpr(text);
+  } catch {
+    return undefined;
+  }
+  return decidedCount(model, el, node, depth);
+}
+
 /** The values a written value expression gives, when its text is a literal or a parenthesised list: `count` of top-level elements, `exact` when every one is a literal. */
-function valueCount(el: ElementRecord): { count: number; exact: boolean } | undefined {
+function valueCount(model: Model, el: ElementRecord, rdepth = 0): { count: number; exact: boolean } | undefined {
   const v = el.attrs.value;
   if (typeof v === 'number' || typeof v === 'boolean') return { count: 1, exact: true };
   if (typeof v !== 'string') return undefined;
   const text = v.trim();
   const literal = (t: string): boolean => /^-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?$/.test(t) || /^"(?:[^"\\]|\\.)*"$/.test(t) || t === 'true' || t === 'false';
   if (literal(text) || literalArithmetic(text)) return { count: 1, exact: true };
+  if (!text.startsWith('(') && !text.includes(',') && !text.includes('..')) {
+    const d = decidedCountOfText(model, el, text, rdepth);
+    return d === undefined ? undefined : { count: d, exact: true };
+  }
   if (!text.startsWith('(') || !text.endsWith(')')) return undefined;
   // Split at top-level commas; give up on a text where the first `(` does not close at the end.
   const parts: string[] = [];
@@ -544,8 +600,10 @@ function valueCount(el: ElementRecord): { count: number; exact: boolean } | unde
   parts.push(cur.trim());
   if (parts.some((p) => p === '' || p.includes('..'))) return undefined;
   // `(a, b)` is a sequence; `(a)` alone is a parenthesised expression, which may itself stand for many values.
-  if (parts.length === 1) return literal(parts[0]!) || literalArithmetic(parts[0]!) ? { count: 1, exact: true } : undefined;
-  return { count: parts.length, exact: parts.every((p) => literal(p) || literalArithmetic(p)) };
+  const decided = parts.map((p) => (literal(p) || literalArithmetic(p) ? 1 : decidedCountOfText(model, el, p, rdepth)));
+  if (parts.length === 1) return decided[0] === undefined ? undefined : { count: decided[0], exact: true };
+  if (decided.every((d) => d !== undefined)) return { count: decided.reduce((a, b) => a! + b!, 0)!, exact: true };
+  return { count: parts.length, exact: false };
 }
 
 /**
@@ -561,7 +619,9 @@ function valueCount(el: ElementRecord): { count: number; exact: boolean } | unde
  * literals, whose lower bound exceeds the number of values written has fewer.
  * Only a multiplicity the feature states itself, with literal bounds, and a
  * value that is a literal or a parenthesised list at its top level are read; a
- * value that is any other expression may stand for any number of values. Arithmetic over literals
+ * value that is any other expression may stand for any number of values, unless the evaluator decides its count
+ * (`decidedCount`: a name of a feature of exact multiplicity or decided value, a call of a calculation with an exact
+ * result multiplicity, arithmetic over single values). Arithmetic over literals
  * alone (`2 * 3 + 1`) evaluates to one scalar and is read as a single value.
  */
 export const valueMultiplicityMismatch: ValidationRule = {
@@ -574,7 +634,7 @@ export const valueMultiplicityMismatch: ValidationRule = {
     for (const el of model.all()) {
       if (!isUserElement(el) || el.attrs.value === undefined || !isKindOf(el.eClass, 'Usage')) continue;
       const range = statedRange(el);
-      const vc = valueCount(el);
+      const vc = valueCount(model, el);
       if (!range || !vc || range.lo > range.hi) continue;
       const bound = el.attrs.defaultValue !== true && el.attrs.initialValue !== true;
       let why: string | undefined;

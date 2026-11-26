@@ -5097,8 +5097,12 @@ any of these at the language level:
 - **`value-multiplicity-mismatch`.** `attribute c : Real [1] = (1.0, 2.0)` holds
   two values in a `[1]`; `attribute a : Real [2] = 3.0` holds one in a `[2]`
   (§7.13.4, §7.6.3). Literals, arithmetic over literals (`2.0 * 3.0`, one scalar)
-  and parenthesised lists are counted; any other expression may give any number
-  of values. A warning.
+  and parenthesised lists are counted, and so are values the evaluator decides:
+  a plain name of a feature whose multiplicity is exactly `[n]` or that is bound
+  to a value of decided count, arithmetic over such single values, a sequence of
+  decided parts, and a call of a calculation whose result states exactly `[n]`.
+  Any other expression (a chain, an unresolved name, a feature with a ranged or
+  no stated count) may give any number of values and stays silent. A warning.
 - **`specialization-kind-incompatible`.** `item def C :> V` over `attribute def V`
   and `part def B :> Q` over `port def Q` cross lines of the metaclass hierarchy
   (§7.7.2); an `enum def` may not specialise another `enum def` (§7.8.2). A
