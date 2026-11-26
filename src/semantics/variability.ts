@@ -1377,6 +1377,8 @@ interface FamilyConfigs {
 }
 /** A family whose enumeration was cut at the cap: kept so a satisfiability question can still be decided. */
 interface CutFamily {
+  /** Constraints not read: the search then ranges over a superset, so its witness could be invalid (nothing decided). */
+  unread: number;
   variantIds: Set<string>;
   points: VariabilityPoint[];
   read: Formula['read'];
@@ -1400,6 +1402,7 @@ export function solveCutFamily(model: Model, variantIds: string[]): { witness: s
   if (hit === undefined) return null;
   for (const fam of hit.cut) {
     if (!variantIds.every((v) => fam.variantIds.has(v))) continue;
+    if (fam.unread > 0) return null;
     const atoms: Ast[] = [];
     for (const v of variantIds) {
       const pv = fam.points.flatMap((p) => p.variants.map((x) => ({ p, x }))).find((q) => q.x.key.slice(q.x.key.indexOf('/') + 1) === v);
@@ -1488,7 +1491,7 @@ export function variabilityReport(model: Model): VariabilityReport {
     const f = buildFormula(points, read, rows.filter((x) => !x.read).length);
     const analysis = analyse(f, excluded.map((p) => p.name));
     if (f.valid !== null) families.push({ variantIds: new Set(points.flatMap((p) => p.variants.map((v) => v.key.slice(v.key.indexOf('/') + 1)))), valid: f.valid, points: f.points });
-    if (f.valid === null) cutFamilies.push({ variantIds: new Set(points.flatMap((p) => p.variants.map((v) => v.key.slice(v.key.indexOf('/') + 1)))), points: f.points, read: f.read });
+    if (f.valid === null) cutFamilies.push({ unread: f.unread, variantIds: new Set(points.flatMap((p) => p.variants.map((v) => v.key.slice(v.key.indexOf('/') + 1)))), points: f.points, read: f.read });
     if (analysis.established) explain(f, analysis);
     const breaksOf = connectionChecker(model, e);
     if (analysis.established && f.valid !== null) {

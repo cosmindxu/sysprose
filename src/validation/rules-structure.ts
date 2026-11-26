@@ -492,8 +492,9 @@ export const disjointSumExceeds: ValidationRule = {
         if (fam === null) {
           // Enumeration cut at the cap: the exact search decides whether the selection is valid / unavoidable.
           const sol = solveCutFamily(model, [...needed.keys()]);
-          if (sol === 'excluded') continue;
-          if (sol !== null) {
+          // 'excluded' proves only that THIS (heaviest) clique's selection is invalid; a lighter clique may still exceed
+          // in a valid configuration, so it keeps the selection-only info reading (never silence).
+          if (sol !== null && sol !== 'excluded') {
             if (sol.every) {
               severity = 'warning';
               when = 'in every valid configuration';

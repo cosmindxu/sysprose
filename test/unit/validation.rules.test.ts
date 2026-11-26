@@ -992,19 +992,23 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
       const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::extra; ${pad(n)} ${c} } }`);
       return runRule(r.model!, 'disjoint-sum-exceeds');
     };
-    for (const c of ['', 'assert constraint c { opt == opt::extra }', 'assert constraint c { not (opt == opt::extra) }', 'assert constraint c { pad0 == pad0::a0 implies opt == opt::extra }']) {
+    // (the excluded selection is not compared: the enumeration judges every clique per configuration and is silent;
+    // past the cap only the heaviest clique is searched, so it keeps the selection-only info, checked below)
+    for (const c of ['', 'assert constraint c { opt == opt::extra }', 'assert constraint c { pad0 == pad0::a0 implies opt == opt::extra }']) {
       const small = await run2(c, 2);
       const cut = await run2(c, 20);
       expect(cut.map((d) => d.severity)).toEqual(small.map((d) => d.severity));
     }
-    // forced selection: warning past the cap; avoidable selection: info with a witness; excluded: silent
+    // forced selection: warning past the cap; avoidable selection: info with a witness; excluded heaviest clique: the selection-only info (a lighter clique may still exceed)
     const w = await run2('assert constraint c { opt == opt::extra }', 20);
     expect(w[0]!.severity).toBe('warning');
     expect(w[0]!.message).toContain('in every valid configuration');
     const i = await run2('', 20);
     expect(i[0]!.severity).toBe('info');
     expect(i[0]!.message).toContain('exceeds in at least one valid configuration: ');
-    expect(await run2('assert constraint c { not (opt == opt::extra) }', 20)).toEqual([]);
+    const x = await run2('assert constraint c { not (opt == opt::extra) }', 20);
+    expect(x.map((d) => d.severity)).toEqual(['info']);
+    expect(x[0]!.message).toContain('the family constraints are not read here');
   }, 120000);
 
   it('BD6 with more than 14 candidate subsetters: the exact clique search finds the exceeding clique, and stays silent without one', async () => {
