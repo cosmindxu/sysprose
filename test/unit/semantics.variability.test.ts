@@ -591,10 +591,53 @@ describe('state machines per configuration (V6)', () => {
     expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
   });
 
-  it('V6a: a state redefinition bringing an entry to a state that has one stays superset-only', () => {
+  it('R1: a state redefinition bringing an entry without redefining the one the state has is a conflict reading, nothing claimed', () => {
     const o = rep(INM('state b :>> Eng::s::b { entry state i1; state i2; }', 'entry state a; state b { entry state x; state y; } transition t first a accept Go then b;'));
-    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(true);
-    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(false);
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('selecting eng::big (1 of 2): conflict (eng::big: it brings an entry action to b, which has one, without redefining it)');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(false);
+  });
+
+  const ENT = (bigEntry: string) => INM(`state b :>> Eng::s::b { ${bigEntry} }`, 'entry state a; state b { entry action en; then x; state x; state y; } transition t first a accept Go then b;');
+
+  it('R1: an entry action the variant redefines replaces the inherited one: x is unreachable only where it is selected', () => {
+    const o = rep(ENT('entry action en2 :>> Eng::s::b::en; then y;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): unreachable state(s) y');
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) x');
+    expect(d.message).not.toContain('conflict');
+  });
+
+  it('R1: a replaced entry that opens the same states stays silent about dead things', () => {
+    const o = rep(INM('state b :>> Eng::s::b { entry action en2 :>> Eng::s::b::en; then x; }', 'entry state a; state b { entry action en; then x; state x; } transition t first a accept Go then b;'));
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
+  });
+
+  it('R1: an exit action added without redefining the inherited one is a conflict, never a pick', () => {
+    const o = rep(INM('state b :>> Eng::s::b { exit action out2; }', 'entry state a; state b { exit action out1; } transition t first a accept Go then b;'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('conflict (eng::big: it brings an exit action to b, which has one, without redefining it)');
+  });
+
+  it('R1: an entry action the state does not have yet is just added', () => {
+    const o = rep(INM('state b :>> Eng::s::b { entry action en2; }', 'entry state a; state b; transition t first a accept Go then b;'));
+    expect(o.diagnostics.some((x) => x.message.includes('conflict'))).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(true);
+  });
+
+  it('R2: a transition naming a state the variant redefines is resolved to the redefined state: c reachable only where selected', () => {
+    const o = rep(INM('state b :>> Eng::s::b { state i; } transition t2 first b accept Go then c;', 'entry state a; state b; state c; transition t first a accept Go then b;'));
+    const d = o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead)!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): unreachable state(s) c');
+    expect(d.message).toContain('selecting eng::big (1 of 2): every state reachable and no transition dead');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('R2: a correct transition from a redefined state stays silent about dead things', () => {
+    const o = rep(INM('state b :>> Eng::s::b { state i; } transition t2 first b accept Go then c;', 'entry state a; state b; state c; transition t first a accept Go then b; transition t3 first a accept Go2 then c;'));
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
   });
 
   it('V6b: a redefinition nested two states deep: y is unreachable only where the transition is redefined', () => {
@@ -625,6 +668,54 @@ describe('state machines per configuration (V6)', () => {
     expect(d.message).toContain('selecting eng::big and gear::g2 (1 of 4): conflict (eng::big and gear::g2 both redefine or fill the same member');
     expect(d.message).toContain('selecting eng::big (1 of 4): unreachable state(s) b');
     expect(o.owners[0].behaviour.machines[0].readings!.some((r) => r.why?.includes('both redefine'))).toBe(true);
+  });
+
+  const TWOB = (big: string, g2: string) => `package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Car { variation part eng : Eng { variant part small : Eng; variant part big : Eng { state s :>> Eng::s { state b :>> Eng::s::b { ${big} } } } }
+    variation part gear : Eng { variant part g1 : Eng; variant part g2 : Eng { state s :>> Eng::s { state b :>> Eng::s::b { ${g2} } } } } }
+}`;
+
+  it('R5: two variants redefining the same state with disjoint members are merged, not a conflict', () => {
+    const o = rep(TWOB('state i1; state i2; transition ti first i1 accept Go then i2;', 'state j1; state j2; transition tj first j1 accept Go then j2;'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('selecting eng::big and gear::g2 (1 of 4)');
+    expect(d.message).not.toContain('conflict');
+  });
+
+  it('R5: two variants redefining the same state and both adding a member of one name are a conflict, never a pick', () => {
+    const o = rep(TWOB('state i1;', 'state i1;'));
+    const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
+    expect(d.message).toContain('selecting eng::big and gear::g2 (1 of 4): conflict (eng::big and gear::g2 both redefine or fill the same member');
+  });
+
+  it('R3: a variant redefining the machine the point types only inherits is walked per configuration', () => {
+    const o = rep(`package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Eng2 :> Eng;
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng::s { state c; transition t2 first b accept Go then c; } } } }
+}`);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('R3: a variant redefining a member of a machine that itself redefines an inherited one stays superset-only (the walk reads the root machine only)', () => {
+    const o = rep(`package P {
+  part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Eng2 :> Eng { state s :>> Eng::s { state d; } }
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng2::s { state c; transition t2 first b accept Go then c; } } } }
+}`);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('selecting eng::big'))).toBe(false);
+  });
+
+  it('R4: a variant of a variation state redefining a member of the variation state stays superset-only (the walk does not expand what a state inherits)', () => {
+    const o = rep(`package P {
+  part def Car { state mode { entry state off; state fin; variation state drive { state hum; variant state eco { state hum :>> drive::hum; } variant state sport; }
+    transition t1 first off accept On then drive::eco; transition t2 first off accept Fast then drive::sport; transition t4 first drive::eco accept Done then fin; transition t5 first drive::sport accept Done then fin; } }
+}`);
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('eco'))).toBe(true);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(false);
   });
 
   const VSTATE = (extra: string) => `package P {

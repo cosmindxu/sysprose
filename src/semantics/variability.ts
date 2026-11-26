@@ -1453,7 +1453,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     return undefined;
   };
   const statePoints = new Map<string, { root: ElementRecord; points: Map<string, { name: string; variants: Array<{ key: string; id: string; name: string }> }> }>();
-  type Merge = { moves: Array<{ child: string; drops: string[]; into: string }>; claims: string[] };
+  type Merge = { moves: Array<{ child: string; drops: string[]; into: string }>; claims: string[]; retarget: Array<[string, string]>; transitions: string[]; conflict: string | null };
   const replacers = new Map<string, { o: ElementRecord; reps: Array<{ key: string; name: string; m: ElementRecord; point: string; merge: Merge | null }> }>();
   /* In-machine variants (var-sm3, var-sm4). A machine of a variant that redefines the point's machine `tg` and refers to its
    * states or redefines its members is not a whole replacement but an addition: its direct members are merged into a copy of
@@ -1469,11 +1469,31 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     if (!refs) return null;
     const moves: Merge['moves'] = [];
     const claims: string[] = [];
-    const gone = new Set<string>();
+    const gone = new Map<string, string>();
+    let conflict: string | null = null;
     const nm = (e: ElementRecord): string => e.declaredName ?? 'a member';
     const into = (c: ElementRecord, t: ElementRecord): string | null => {
-      const hasAction = model.children(t.id).some((x) => x.eClass === 'ActionUsage');
       for (const ch of model.children(c.id)) {
+        // An entry/do/exit action (SysML v2 state subactions, StateDefinition/StateUsage entryAction, doAction, exitAction and checkActionUsageStateActionRedefinition; the entryAction/doAction/exitAction features are [0..1],
+        // so a state has one of each kind). One the variant redefines REPLACES the inherited action (and the successions
+        // leaving it); one it adds without redefining leaves two actions of one kind on the state, which the spec does not
+        // say how to read: a conflict reading for the configurations selecting the variant, nothing claimed. The walk reads
+        // the entry action as the opening of the state; do and exit change no reachability, but a clash is still reported.
+        if (ch.eClass === 'ActionUsage' && ch.attrs.stateSubaction !== undefined) {
+          const kind = String(ch.attrs.stateSubaction);
+          const have = model.children(t.id).filter((x) => x.eClass === 'ActionUsage' && x.attrs.stateSubaction === kind);
+          if (have.length > 0) {
+            const rd = targets(model, ch.id, 'Redefinition').filter((x) => have.some((h) => h.id === x.id));
+            if (have.length === 1 && rd.length === 1) {
+              claims.push(`action:${kind}:${t.id}`);
+              moves.push({ child: ch.id, drops: [...model.edgesFrom(have[0].id).map((e) => e.id), have[0].id], into: t.id });
+            } else conflict ??= `it brings ${/^[aeiou]/.test(kind) ? 'an' : 'a'} ${kind} action to ${nm(t)}, which has one, without redefining it`;
+            continue;
+          }
+          claims.push(`action:${kind}:${t.id}`);
+          moves.push({ child: ch.id, drops: [], into: t.id });
+          continue;
+        }
         const rds = targets(model, ch.id, 'Redefinition').filter((x) => inT.has(x.id));
         if (rds.length > 1) return `it redefines more than one member of ${nm(t)} at once`;
         if (rds.length === 1) {
@@ -1483,26 +1503,23 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
             claims.push(`drop:${tt.id}`);
             moves.push({ child: ch.id, drops: [tt.id], into: t.id });
           } else if (tt.eClass === 'StateUsage' && ch.eClass === 'StateUsage') {
-            claims.push(`state:${tt.id}`);
-            gone.add(ch.id);
+            // a state redefinition merges members, never replaces the state: two variants redefining the same state clash only on a member they both claim (R5)
+            gone.set(ch.id, tt.id);
             const r = into(ch, tt);
             if (r !== null) return r;
           } else return `it redefines ${nm(tt)} (a ${tt.eClass}) in a way not read`;
           continue;
         }
         if (model.descendants(ch.id).some((d) => targets(model, d.id, 'Redefinition').some((x) => inT.has(x.id)))) return `it redefines a member nested inside ${nm(ch)}, which is not a redefinition of a member of ${nm(t)}`;
-        if (ch.eClass === 'ActionUsage') {
-          if (hasAction) return `it brings an entry or do action to ${nm(t)}, which has one`;
-          claims.push(`action:${t.id}`);
-        } else if (ch.declaredName) claims.push(`new:${t.id}:${ch.declaredName}`);
+        if (ch.declaredName) claims.push(`new:${t.id}:${ch.declaredName}`);
         moves.push({ child: ch.id, drops: [], into: t.id });
       }
       return null;
     };
     const r = into(m, tg);
     if (r !== null) return r;
-    if (inner.some((d) => ends(d).some((x) => gone.has(x)))) return 'its transitions refer to a state it redefines';
-    return { moves, claims };
+    // A transition that names a state the variant redefines means the state of the point's machine that it redefines.
+    return { moves, claims, retarget: [...gone], transitions: inner.filter((d) => d.eClass === 'TransitionUsage' && ends(d).some((x) => gone.has(x))).map((d) => d.id), conflict };
   };
   const stateVariantOf = new Map<string, { pointId: string; root: ElementRecord }>();
   for (const p of f.points) {
@@ -1618,6 +1635,8 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
       const anyMerge = r.reps.some((x) => x.merge !== null);
       // two selected variants that replace the whole machine, or claim the same member, are a conflict: no machine is built
       const clash = (sel: Rep[]): string | null => {
+        const cf = sel.find((x) => x.merge?.conflict);
+        if (cf) return `${cf.name}: ${cf.merge!.conflict}`;
         if (sel.length < 2) return null;
         const whole = sel.filter((x) => x.merge === null);
         if (whole.length > 0) return `${sel.map((x) => x.name).join(' and ')} both redefine the machine ${r.o.declaredName ?? ''}, one of them as a whole`;
@@ -1638,6 +1657,11 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
             for (const mv of a.merge.moves) {
               for (const d of mv.drops) if (cp.has(d)) cp.remove(d);
               cp.reparent(mv.child, mv.into);
+            }
+            const rt = new Map(a.merge.retarget);
+            for (const id of a.merge.transitions) {
+              const tr = cp.get(id) as (ElementRecord & { source?: string[]; target?: string[] }) | undefined;
+              if (tr) cp.update(id, { source: (tr.source ?? []).map((x) => rt.get(x) ?? x), target: (tr.target ?? []).map((x) => rt.get(x) ?? x) } as Partial<ElementRecord>);
             }
           }
           for (const x of r.reps) if (cp.has(x.m.id) && cp.remove(x.m.id).length === 0) return null;
