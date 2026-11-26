@@ -1474,7 +1474,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     const nm = (e: ElementRecord): string => e.declaredName ?? 'a member';
     const into = (c: ElementRecord, t: ElementRecord): string | null => {
       for (const ch of model.children(c.id)) {
-        // An entry/do/exit action (SysML v2 §8.2.2.x state subactions; the entryAction/doAction/exitAction features are [0..1],
+        // An entry/do/exit action (SysML v2 state subactions, StateDefinition/StateUsage entryAction, doAction, exitAction and checkActionUsageStateActionRedefinition; the entryAction/doAction/exitAction features are [0..1],
         // so a state has one of each kind). One the variant redefines REPLACES the inherited action (and the successions
         // leaving it); one it adds without redefining leaves two actions of one kind on the state, which the spec does not
         // say how to read: a conflict reading for the configurations selecting the variant, nothing claimed. The walk reads
