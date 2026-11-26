@@ -699,7 +699,7 @@ describe('state machines per configuration (V6)', () => {
     expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
   });
 
-  it('R3: a variant redefining a member of a machine that itself redefines an inherited one stays superset-only (the walk reads the root machine only)', () => {
+  it('R3: a variant redefining a machine that itself redefines an inherited one but owns no step is not a machine of its own: superset-only, nothing claimed', () => {
     const o = rep(`package P {
   part def Eng { state s { entry state a; state b; transition t first a accept Go then b; } }
   part def Eng2 :> Eng { state s :>> Eng::s { state d; } }
@@ -707,6 +707,46 @@ describe('state machines per configuration (V6)', () => {
 }`);
     expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('big'))).toBe(true);
     expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('selecting eng::big'))).toBe(false);
+  });
+
+  // sm-inherit I2: Eng2::s redefines Eng::s and owns a step, so it is walked on the effective machine; a variant redefining
+  // a member Eng2::s only inherits from Eng::s is overlaid on that effective machine.
+  const I2 = (body: string, extra = '') => `package P {
+  part def Eng { exhibit state s { entry state a; state b; state c; transition t first a accept Go then b; } }
+  part def Eng2 :> Eng { exhibit state s :>> Eng::s { state d; transition t2 first b accept g2 then d; } }
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng2::s { ${body} } } ${extra} } }
+}`;
+  const perConfig = (o: ReturnType<typeof rep>, machine: string) => o.diagnostics.find((x) => x.code === VARIABILITY_CODES.behaviourDead && x.message.includes(`the state machine ${machine} is walked per configuration`));
+
+  it('I2: a variant redefining a transition inherited through the redefining machine is walked per configuration', () => {
+    const o = rep(I2('transition t :>> Eng::s::t first a accept Go then c;'));
+    const d = perConfig(o, 'P::Eng2::s')!;
+    expect(d.message).toContain('selecting none of eng::big (1 of 2): unreachable state(s) c');
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) b, d; dead transition(s) t2');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('I2: a variant redefining an inherited state with a body adds its members to the effective machine', () => {
+    const o = rep(I2('state b :>> Eng::s::b { entry state i1; state i2; transition ti first i1 accept Go then i2; }'));
+    const d = perConfig(o, 'P::Eng2::s')!;
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) c');
+    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
+  });
+
+  it('I2: a variant redefining an own member of the redefining machine is walked per configuration', () => {
+    const o = rep(I2('transition t2 :>> Eng2::s::t2 first b accept g2 then c;'));
+    const d = perConfig(o, 'P::Eng2::s')!;
+    expect(d.message).toContain('selecting eng::big (1 of 2): unreachable state(s) d');
+  });
+
+  it('I2: a correct variant over the effective machine stays silent about dead things', () => {
+    const o = rep(`package P {
+  part def Eng { exhibit state s { entry state a; state b; transition t first a accept Go then b; } }
+  part def Eng2 :> Eng { exhibit state s :>> Eng::s { state d; transition t2 first b accept g2 then d; } }
+  part def Car { variation part eng : Eng2 { variant part small : Eng2; variant part big : Eng2 { state s :>> Eng2::s { state e; transition t3 first d accept Go then e; } } } }
+}`);
+    expect(o.diagnostics.some((x) => x.code === VARIABILITY_CODES.behaviourDead)).toBe(false);
+    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
   });
 
   it('R4: a variant of a variation state redefining a member of the variation state stays superset-only (the walk does not expand what a state inherits)', () => {

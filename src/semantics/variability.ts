@@ -88,6 +88,7 @@
 import type { ElementRecord, Model } from '@core/index';
 import { generalizationsOf } from './inheritance';
 import { reachReport, stateMachinesIn } from './mc/explore';
+import { machineRegion } from './mc/config';
 import { connectorEndsOf } from './connectors';
 import { evaluate, exprRefusal, parseExpr } from './expr';
 import { declaredDefinitions, definitionsConform, mismatchFeatureText, portMismatches } from './port-conformance';
@@ -1495,7 +1496,12 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
    * merge replaces or fills, so two selected variants that claim the same thing are a conflict, never a silent pick. */
   const mergeOf = (m: ElementRecord, tg: ElementRecord): Merge | null | string => {
     const inM = new Set<string>([m.id, ...model.descendants(m.id).map((d) => d.id)]);
-    const inT = new Set<string>([tg.id, ...model.descendants(tg.id).map((d) => d.id)]);
+    // The machine `tg` is read whole (sm-inherit I2): when it redefines an inherited machine, the members it inherits
+    // are its members too, so a variant redefining one of them is an overlay on the effective machine.
+    const eff = machineRegion(model, tg.id);
+    const general = eff.refused === undefined && eff.bases.length > 0 ? eff : undefined;
+    const inT = new Set<string>([tg.id, ...model.descendants(tg.id).map((d) => d.id), ...(general?.descendants.map((d) => d.id) ?? [])]);
+    const holders = (t: ElementRecord): string[] => (t.id === tg.id && general !== undefined ? [t.id, ...general.bases] : [t.id]);
     const ends = (d: ElementRecord): string[] => [...(((d as unknown as { source?: string[] }).source) ?? []), ...(((d as unknown as { target?: string[] }).target) ?? [])];
     const inner = model.descendants(m.id).filter((d) => STATEISH.has(d.eClass));
     const refs = inner.some((d) => targets(model, d.id, 'Redefinition').some((t) => inT.has(t.id)) || ends(d).some((x) => inT.has(x) && !inM.has(x)));
@@ -1514,7 +1520,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
         // the entry action as the opening of the state; do and exit change no reachability, but a clash is still reported.
         if (ch.eClass === 'ActionUsage' && ch.attrs.stateSubaction !== undefined) {
           const kind = String(ch.attrs.stateSubaction);
-          const have = model.children(t.id).filter((x) => x.eClass === 'ActionUsage' && x.attrs.stateSubaction === kind);
+          const have = holders(t).flatMap((h) => model.children(h)).filter((x) => x.eClass === 'ActionUsage' && x.attrs.stateSubaction === kind);
           if (have.length > 0) {
             const rd = targets(model, ch.id, 'Redefinition').filter((x) => have.some((h) => h.id === x.id));
             if (have.length === 1 && rd.length === 1) {
@@ -1531,7 +1537,7 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
         if (rds.length > 1) return `it redefines more than one member of ${nm(t)} at once`;
         if (rds.length === 1) {
           const tt = rds[0];
-          if (tt.ownerId !== t.id) return `it redefines ${nm(tt)}, which is not a member of ${nm(t)}`;
+          if (tt.ownerId === null || !holders(t).includes(tt.ownerId)) return `it redefines ${nm(tt)}, which is not a member of ${nm(t)}`;
           if (tt.eClass === 'TransitionUsage' && ch.eClass === 'TransitionUsage') {
             claims.push(`drop:${tt.id}`);
             moves.push({ child: ch.id, drops: [tt.id], into: t.id });
