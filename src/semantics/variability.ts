@@ -1426,11 +1426,23 @@ export function solveCutAny(model: Model, groups: string[][]): { witness: string
       const as = atoms as Ast[];
       conj.push(as.length === 1 ? as[0]! : { k: 'op', op: 'and', args: as });
     }
-    const keep: Ast = conj.length === 1 ? conj[0]! : { k: 'op', op: 'or', args: conj };
-    const yes = solveSel(fam.points, fam.read, keep);
-    if (yes.status === 'unsat') return 'excluded';
+    const orOf = (cs: Ast[]): Ast => (cs.length === 1 ? cs[0]! : { k: 'op', op: 'or', args: cs });
+    // The witness is searched in batches of groups (the first batch with a model gives it); every batch unsat = no valid
+    // configuration selects any group. A batch that is undecided leaves the rest to be tried, but never reads as unsat.
+    const BATCH = 200;
+    let yes: ReturnType<typeof solveSel> | null = null;
+    let undecided = false;
+    for (let i = 0; i < conj.length; i += BATCH) {
+      const r = solveSel(fam.points, fam.read, orOf(conj.slice(i, i + BATCH)));
+      if (r.status === 'sat') {
+        yes = r;
+        break;
+      }
+      if (r.status !== 'unsat') undecided = true;
+    }
+    if (yes === null) return undecided ? null : 'excluded';
     if (yes.status !== 'sat') return null;
-    const no = solveSel(fam.points, fam.read, { k: 'not', a: keep });
+    const no = solveSel(fam.points, fam.read, { k: 'not', a: orOf(conj) });
     if (no.status === 'unknown') return null;
     return { witness: selText(fam.points, yes.sel), every: no.status === 'unsat' };
   }

@@ -353,8 +353,8 @@ const CLIQUE_NODE_BUDGET = 500_000;
  * configuration is judged on its own: each disjoint clique among the features it keeps that exceeds is reported once,
  * with the configurations it exceeds in (warning only when every valid configuration has it). Past the V4 cap the exact
  * search `solveCutAny` decides the disjunction of every exceeding clique's selection (witness configuration; warning when no valid
- * configuration avoids it; unknown = old info reading), not per configuration. More than 14 candidates: the heaviest
- * clique is an exact branch and bound (node budget; abandoned = not searched), judged by the family reading above. A sum that needs no variant is the warning
+ * configuration avoids it; unknown = old info reading), not per configuration. More than 14 candidates: every exceeding
+ * clique is enumerated by branch and bound (node budget; abandoned = that configuration not checked), judged by the family reading above. A sum that needs no variant is the warning
  * and holds "in every configuration".
  */
 export const disjointSumExceeds: ValidationRule = {
@@ -442,6 +442,29 @@ export const disjointSumExceeds: ValidationRule = {
         // Keep the maximal ones only (a subset of another found clique is not reported).
         return found.filter((c, i) => !found.some((d, j) => j !== i && c.every((x) => d.includes(x)) && (d.length > c.length || (d.length === c.length && j < i))));
       };
+      /** Like `exceeding` with the branch and bound (a branch is cut when the sum plus every lower bound still addable cannot exceed) under the node budget; `null` past it. */
+      const exceedingBounded = (pool: ElementId[]): ElementId[][] | null => {
+        const found: ElementId[][] = [];
+        let nodes = 0;
+        let over = false;
+        const grow = (chosen: ElementId[], rest: ElementId[], sum: number): void => {
+          if (over) return;
+          if (++nodes > CLIQUE_NODE_BUDGET) {
+            over = true;
+            return;
+          }
+          const ext = rest.filter((s) => chosen.every((c) => compat(c, s)) && guardsCompatible(supGuard, guards.get(s)!));
+          if (sum + ext.reduce((t, s) => t + lowers.get(s)!, 0) <= hi.hi) return;
+          if (ext.length === 0) {
+            if (chosen.length >= 2 && sum > hi.hi) found.push(chosen);
+            return;
+          }
+          ext.forEach((s, i) => grow([...chosen, s], ext.slice(i + 1), sum + lowers.get(s)!));
+        };
+        grow([], pool, 0);
+        if (over) return null;
+        return found.filter((c, i) => !found.some((d, j) => j !== i && c.every((x) => d.includes(x)) && (d.length > c.length || (d.length === c.length && j < i))));
+      };
       const top = heaviest(cand);
       if (top === null) {
         out.push({
@@ -468,7 +491,7 @@ export const disjointSumExceeds: ValidationRule = {
         let over = false;
         const grow = (chosen: ElementId[], rest: ElementId[], sum: number): void => {
           if (over) return;
-          if (++nodes > CLIQUE_NODE_BUDGET || groups.size > 200) {
+          if (++nodes > CLIQUE_NODE_BUDGET) {
             over = true;
             return;
           }
@@ -497,13 +520,13 @@ export const disjointSumExceeds: ValidationRule = {
           let found: ElementId[][];
           if (cand.length <= 14) found = exceeding(pool);
           else {
-            // Past 14 candidates: the heaviest clique among the kept features decides whether one exceeds (branch and bound).
-            const top = heaviest(pool);
-            if (top === null) {
+            // Past 14 candidates: every exceeding clique among the kept features, by branch and bound under the node budget.
+            const all = exceedingBounded(pool);
+            if (all === null) {
               unchecked.push(cfg.label);
               continue;
             }
-            found = top.best.length >= 2 && top.bestSum > hi.hi ? [top.best] : [];
+            found = all;
           }
           for (const clique of found) {
             const key = [...clique].sort().join('|');
