@@ -1064,6 +1064,38 @@ export function isDwellLabel(label: string): boolean {
   return AFTER_LABEL.test(label.trim()) || TIME_TRIGGER_LABEL.test(label.trim());
 }
 
+/**
+ * Why the dwells inside the regions of a parallel state cannot be run or walked, or `undefined` when they can
+ * (SysML v2 §7.18.2, §7.18.3). A tick of the abstract discrete clock advances every active state's counter in every
+ * region at once, and the dwells then enabled fire as an event offered to the regions does, in declaration order.
+ * The walk offers a dwell as a named event at any time, to every region at once, so a dwell label that two regions
+ * both carry would fire in both on one walk step while the clock can fire it in one region alone (the other was
+ * entered later): that walk would miss a run, so that shape is refused. A dwell that is no literal positive integer
+ * has no clocked reading and is refused as before. `regionTrs` are the transitions written inside `p`, `regionOf`
+ * names the region (of `p`) holding a transition's source.
+ */
+export function regionDwellRefusal(
+  regionTrs: readonly ElementRecord[],
+  regionOf: (tr: ElementRecord) => ElementId | undefined,
+  pName: string,
+): string | undefined {
+  const dwells = regionTrs.filter((t) => afterDuration(t) !== undefined);
+  if (dwells.length === 0) return undefined;
+  if (dwells.some((t) => dwellTicks(t) === undefined)) {
+    return `a region of its parallel state ${pName} has a timed (\`after\`) transition whose duration is not a literal positive integer, which the interpreter's abstract clock does not count, so no verdict is given over it`;
+  }
+  const seen = new Map<string, ElementId | undefined>();
+  for (const t of dwells) {
+    const label = triggerLabelOf(t);
+    const r = regionOf(t);
+    if (seen.has(label) && seen.get(label) !== r) {
+      return `two regions of its parallel state ${pName} carry the same dwell \`${label}\`, which a clock can fire in one region alone and an untimed walk would fire in both at once, so no verdict is given over it`;
+    }
+    seen.set(label, r);
+  }
+  return undefined;
+}
+
 /** The trigger label of a transition (empty for completion transitions). */
 export function triggerLabelOf(tr: ElementRecord): string {
   const t = tr.attrs.trigger;

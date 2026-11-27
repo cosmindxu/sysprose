@@ -1990,8 +1990,23 @@ function replayParallelWitness(
     return { replays: false, step: 0, reason: `the witness opens in ${(witness[0].leaves ?? []).map(qn).join(', ') || qn(witness[0].leaf?.id)} and the interpreter in ${opened.activeStates.map(qn).join(', ') || 'no state'}` };
   }
   const follow = wanted.flat();
-  const events = steps.filter((s) => s.event !== '').map((s) => s.event);
-  const run = runStateMachine(model, machineId, events, { maxCompletion, follow });
+  // A step across a dwell is replayed on the abstract discrete clock, as on a plain machine: its ticks stand for it
+  // (the interpreter's tick advances every region at once and fires the dwells then enabled as an event does), and
+  // the fires and the leaves after it are checked as for an event, so a run a tick sends elsewhere does not replay.
+  const driver: StateStep[] = [];
+  const upTo: number[] = []; // the driver length once step i is done
+  for (const s of steps) {
+    if (s.event !== '') {
+      const ticks = Math.max(0, ...(s.fires ?? (s.transition === null ? [] : [s.transition.id])).map((id) => {
+        const rec = model.get(id);
+        return rec === undefined ? 0 : dwellTicks(rec) ?? 0;
+      }));
+      if (ticks > 0) for (let k = 0; k < ticks; k++) driver.push({ advance: 1 });
+      else driver.push(s.event);
+    }
+    upTo.push(driver.length);
+  }
+  const run = runStateMachine(model, machineId, driver, { maxCompletion, follow });
   let at = 0;
   for (let i = 0; i < steps.length; i++) {
     for (const id of wanted[i]) {
@@ -2011,11 +2026,9 @@ function replayParallelWitness(
     return { replays: false, step: steps.length > 0 ? steps[steps.length - 1].index : 0, reason: `the interpreter fires ${run.fired.length - at} more transition(s) than the witness` };
   }
   // The states, where an event ends: the interpreter run on the events so far.
-  let ev = 0;
   for (let i = 0; i < steps.length; i++) {
-    if (steps[i].event !== '') ev++;
     if (i + 1 < steps.length && steps[i + 1].event === '') continue;
-    const prefix = runStateMachine(model, machineId, events.slice(0, ev), { maxCompletion, follow });
+    const prefix = runStateMachine(model, machineId, driver.slice(0, upTo[i]), { maxCompletion, follow });
     const want = (steps[i].leaves ?? (steps[i].leaf ? [steps[i].leaf!.id] : [])).slice().sort().join('|');
     if (leavesOf(prefix) !== want) {
       return {
