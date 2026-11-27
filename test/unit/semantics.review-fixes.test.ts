@@ -72,10 +72,10 @@ describe('3. an assignment effect that fails when the transition fires', () => {
 });
 
 describe('4. a timed transition inside a parallel region', () => {
-  it('the interpreter refuses, in the explorer\'s words', async () => {
+  it('a dwell that is no literal whole number: the interpreter refuses, in the explorer\'s words (a literal one is run, sm-par-dwell)', async () => {
     const l = await load('package P { item def e; state def M { entry; then p; state p parallel { state r1 { entry; then a1; state a1; state a2; transition t1 first a1 accept e then a2; } state r2; } state q; transition go first p accept e then q; } }');
     const id = find(l.model, 'P::M').id;
-    l.model.setAttrs(find(l.model, 'P::M::p::r1::t1').id, { trigger: 'after(5)' });
+    l.model.setAttrs(find(l.model, 'P::M::p::r1::t1').id, { trigger: 'after(2.5)' });
     const u = exploreMachine(l.model, id).unsupported;
     expect(u.map((x: any) => x.construct)).toEqual(['parallel-regions']);
     const run = runStateMachine(l.model, id, ['e']);
