@@ -1891,9 +1891,14 @@ and §21.4–21.11.
       goes before the keyword, as in the spec's `end [0..1] part hub : Hub`), flagged once where written.
       Done (crosses): `crosses` and `=>` are read as a CrossSubsetting (its own relationship, a kind of Subsetting for typing),
       written back in the spelling that was read, and warned (`mapper/cross-subsetting-non-end`) on a non-end feature (§7.13.2);
-      `connector-end-multiplicity` holds a written cross multiplicity within the cross feature's stated range. Still open: the
-      spec's validateCrossSubsettingCrossedFeature (the chain must be the OTHER end then the cross feature) and the implied cross
-      features of ends that write none are not read; a cross subsetting that is not inlined on its source's line has no statement form.
+      `connector-end-multiplicity` holds a written cross multiplicity within the cross feature's stated range. Done (cross-valid): `cross-subsetting-crossed-feature` (§8.4.9.1 validateCrossSubsettingCrossedFeature) warns on a
+      two-end connection whose two-segment target chain starts with the end itself or a non-end member; a bare name, an
+      unresolved name and other chain shapes stay unchecked. A cross subsetting owned elsewhere than by its end is now written inline on the end.
+      The spec's owned cross feature form (`end e1_cross [1..4] ref e1 : T1;`) is read as an end named e1_cross plus a sibling
+      `ref e1` (inverted against the spec, where the cross feature is owned by the end e1); the false 1..1 warning on it is
+      removed, but no cross multiplicity is checked there (the implied cross feature has nothing stated to compare against).
+      Still open: read that form as an end with an owned cross feature (a larger mapper change), and the implied cross
+      features of ends that write none.
 [if-compat]
 - [x] **Compare the undirected features and the nested ports of two connected ports.** Done: `portMismatches`
       descends into nested ports (depth 6, pair cycle guard, conjugation composed along the path) and checks

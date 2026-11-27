@@ -2981,4 +2981,18 @@ describe('cross subsetting (`crosses` / `=>`, SysML v2 §7.13.2)', () => {
     const { diagnostics } = parseModel(SRC);
     expect(diagnostics.filter((d) => d.code === 'mapper/cross-subsetting-non-end')).toEqual([]);
   });
+
+  it('writes a cross subsetting owned elsewhere than by its end inline on the end, and it round-trips', () => {
+    const { model } = parseModel(SRC);
+    const hub = model.all().find((e) => e.declaredName === 'hub' && model.get(e.ownerId ?? '')?.declaredName === 'DC')!;
+    const rel = crossRels(model).find((r) => r.source?.[0] === hub.id)!;
+    // Move the relationship's ownership to the package: it is no longer a child of its source.
+    const pkg = model.all().find((e) => e.eClass === 'Package')!;
+    model.reparent(rel.id, pkg.id);
+    const text = serializeModel(model);
+    expect(text).toContain('end [0..1] part hub : Hub crosses device.connectingHub;');
+    const again = parseModel(text);
+    expect(crossRels(again.model).length).toBe(4);
+    expect(serializeModel(again.model)).toBe(serializeModel(parseModel(SRC).model));
+  });
 });

@@ -596,6 +596,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A connection end written with a cross multiplicity above the part it connects (`connect [5] wheels to hub` over `wheels : Wheel [4]`) or above the definition end it redefines, or a definition end allowing at most n against a part with more than n instances connected to one instance. Read: `connect [m] a to [n] b`, `connect ([m] a, [n] b)` and two `end [m] part x references a` bodies, with number-literal bounds. An end of a usage body written with a multiplicity after its name other than 1..1 (an end feature must be 1..1, §7.13.2). A chain end (`a.p`) is read against the feature the chain reaches when no part on the way has several instances. An end of a connection or interface definition written with a multiplicity after its name other than 1..1 (§7.13.2); a chain through a many-instance part is counted as the product of the multiplicities.
 - **Hint given:** Write an end multiplicity within the connected part’s and the definition end’s, or widen the part or the definition end.
 
+### `validation/cross-subsetting-crossed-feature`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A cross subsetting (`crosses` or `=>`) on an end of a binary connection or interface, written as a two-segment chain, whose first segment is the end itself or a member that is not an end instead of the other end (SysML v2 §8.4.9.1, validateCrossSubsettingCrossedFeature). A target not written as a chain, an unresolved name and a connection with other than two ends are not judged.
+- **Hint given:** Write the target as the other end followed by the cross feature (`end hub : Hub crosses device.connectingHub;`).
+
 ### `validation/subset-type-conformance`
 
 - **Severity:** warning
@@ -1286,4 +1293,4 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 ---
 
-*170 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*171 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

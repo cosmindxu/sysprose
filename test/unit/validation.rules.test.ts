@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 52 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(52);
+  it('exposes all 53 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(53);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -1961,6 +1961,32 @@ describe('BD5 connector-end-multiplicity', () => {
       expect(await run(`${base} connection def DC { end part hub : Hub crosses device.connectingHub; end part device : Device; }`)).toEqual([]);
       expect(await run(`${base} connection def DC { end [7] part hub : Hub crosses device.gone; end part device : Device; }`)).toEqual([]);
       expect(await run('attribute n : ScalarValues::Integer; part def Hub; part def Device { ref part connectingHub [n] : Hub; } connection def DC { end [7] part hub : Hub crosses device.connectingHub; end part device : Device; }')).toEqual([]);
+    });
+  });
+  describe('crossed feature of a cross subsetting (validateCrossSubsettingCrossedFeature, §8.4.9.1)', () => {
+    const base = 'part def Hub { ref part connectedDevices [1..*] : Device; } part def Device { ref part connectingHub [0..1] : Hub; }';
+    const crossed = async (body: string) => {
+      const r = await loadModelText(`package P { ${base} ${body} }`);
+      return runRule(r.model!, 'cross-subsetting-crossed-feature').map((d) => d.message);
+    };
+    it('flags a target chain that starts with the end itself or a non-end member', async () => {
+      const w = await crossed('connection def DC { end part hub : Hub crosses hub.connectedDevices; end part device : Device; }');
+      expect(w).toHaveLength(1);
+      expect(w[0]).toContain('other end device');
+      expect(await crossed('connection def DC { end part hub : Hub => aux.connectingHub; end part device : Device; part aux : Device; }')).toHaveLength(1);
+    });
+    it('is silent on the other end, a bare name, an unresolved or longer chain, and a connection of three ends', async () => {
+      expect(await crossed('connection def DC { end part hub : Hub crosses device.connectingHub; end part device : Device => hub.connectedDevices; }')).toEqual([]);
+      expect(await crossed('connection def DC { end part hub : Hub crosses connectingHub; end part device : Device; }')).toEqual([]);
+      expect(await crossed('connection def DC { end part hub : Hub crosses gone.connectingHub; end part device : Device; }')).toEqual([]);
+      expect(await crossed('connection def DC { end part hub : Hub crosses device.a.b; end part device : Device; }')).toEqual([]);
+      expect(await crossed('connection def DC { end part hub : Hub crosses hub.connectingHub; end part device : Device; end part x : Device; }')).toEqual([]);
+    });
+    it('does not judge the spec\'s owned cross feature form as an end with a multiplicity after its name', async () => {
+      const r = await loadModelText('package P { item def T1; item def T2; connection def B2 { end e1_cross [1..4] nonunique ordered ref e1 : T1; end e2_cross [0..1] ref e2 : T2; } }');
+      expect(runRule(r.model!, 'connector-end-multiplicity')).toEqual([]);
+      const bad = await loadModelText('package P { item def T1; connection def B { end e [1..4] item x : T1; } }');
+      expect(runRule(bad.model!, 'connector-end-multiplicity')).toHaveLength(1);
     });
   });
   it('flags an end multiplicity above the connected part', async () => {

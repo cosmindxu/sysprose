@@ -59,6 +59,7 @@ import { directedFeaturesOf } from '../semantics/port-conformance';
 import {
   bindingConformance,
   connectorEndMultiplicity,
+  crossSubsettingCrossedFeature,
   disjointSumExceeds,
   enumValueNotMember,
   multiplicityConformance,
@@ -2001,6 +2002,7 @@ export const RULES: ValidationRule[] = [
   multiplicityConformance,
   bindingConformance,
   connectorEndMultiplicity,
+  crossSubsettingCrossedFeature,
   subsetTypeConformance,
   disjointSumExceeds,
   enumValueNotMember,
