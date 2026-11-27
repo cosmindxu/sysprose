@@ -725,7 +725,10 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
   // source check guards against inlining a child specialization sourced
   // elsewhere (e.g. an F4-upgraded statement whose source is still dangling) —
   // that would falsely read as `<owner> :> target`.
-  for (const rel of model.children(el.id)) {
+  // A cross subsetting the end's source owns elsewhere (made through the API, owned by the package) has no statement form
+  // either, so it is written on the end's line too, as `crosses`/`=>` after the declaration the spec's textual notation allows.
+  const elsewhere = model.relationshipsFrom(el.id).filter((r) => r.eClass === 'CrossSubsetting' && r.ownerId !== el.id);
+  for (const rel of [...model.children(el.id), ...elsewhere]) {
     if (!isSpecialization(rel.eClass)) continue;
     if ((rel.source ?? [])[0] !== el.id) continue;
     const targetId = (rel.target ?? [])[0];
