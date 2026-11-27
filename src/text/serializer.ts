@@ -500,6 +500,11 @@ function writtenName(model: Model, el: ElementRecord): string {
   return head !== undefined ? quoteName(head) : nameOf(el);
 }
 
+/** The owned cross feature of an end (§8.4.9.1), the one the mapper reads from `end e1_cross [m] ref e1 : T;`. */
+function ownedCrossOf(model: Model, el: ElementRecord): ElementRecord | undefined {
+  return model.children(el.id).find((c) => c.attrs.ownedCross === true && !isRelationship(c.eClass));
+}
+
 /** Build the declaration header (keyword, modifiers, name, specializations…). */
 function header(model: Model, el: ElementRecord): string {
   const parts: string[] = [];
@@ -531,6 +536,16 @@ function header(model: Model, el: ElementRecord): string {
     if (k === 'isRef' && el.eClass === 'ReferenceUsage') continue;
     if (el.attrs[k] === true) parts.push(k.slice(2).toLowerCase());
     // `end [0..2] part device`: the cross multiplicity written right after `end`.
+    // The spec's owned cross feature (§8.4.9.1): `end e1_cross [1..4] nonunique ordered ref e1 : T1;`, the cross feature's
+    // name, multiplicity and modifiers standing right after `end`.
+    if (k === 'isEnd' && el.attrs.isEnd === true) {
+      const oc = ownedCrossOf(model, el);
+      if (oc?.declaredName !== undefined) {
+        parts.push(quoteName(oc.declaredName));
+        if (typeof oc.attrs.multiplicity === 'string' && oc.attrs.multiplicity !== '') parts.push(`[${oc.attrs.multiplicity}]`);
+        if (Array.isArray(oc.attrs.modifiers)) for (const m of oc.attrs.modifiers) parts.push(String(m));
+      }
+    }
     if (k === 'isEnd' && el.attrs.isEnd === true && typeof el.attrs.endCrossMult === 'string' && el.attrs.endCrossMult !== '') {
       parts.push(`[${el.attrs.endCrossMult}]`);
     }
@@ -1190,6 +1205,8 @@ function bodyMembers(model: Model, el: ElementRecord): ElementRecord[] {
   return model.children(el.id).filter((c) => {
     // The ends of a list-form connection are written inside `connect (…)`, not as members.
     if (naryEnds && c.attrs.isEnd === true) return false;
+    // The owned cross feature of an end is written in the end's own header.
+    if (c.attrs.ownedCross === true) return false;
     if (isSpecialization(c.eClass)) return !isInlinedSpecialization(el, c);
     // Implicit (chain-materialized) features are not source text: they are
     // re-derived from `connect a.p to b.p` endpoints on every parse, so

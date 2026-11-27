@@ -1988,6 +1988,14 @@ describe('BD5 connector-end-multiplicity', () => {
       const bad = await loadModelText('package P { item def T1; connection def B { end e [1..4] item x : T1; } }');
       expect(runRule(bad.model!, 'connector-end-multiplicity')).toHaveLength(1);
     });
+    it('flags an unrelated end with its own multiplicity before an unrelated ref (the sibling fence is gone)', async () => {
+      expect(await run('item def A; item def R; connection def D { end a [2] : A; ref r : R; end b : A; }')).toHaveLength(1);
+    });
+    it('checks the owned cross feature multiplicity as the end cross multiplicity (§8.4.9.1)', async () => {
+      const d = 'part def W; part def H; connection def DC { end w_cross [0..4] ref w : W; end h_cross [1] ref h : H; }';
+      expect(await run(`${d} part def S { part ws : W [4]; part hub : H; connection c : DC { end w_cross [5] ref w ::> ws; end h_cross [1] ref h ::> hub; } }`)).toHaveLength(1);
+      expect(await run(`${d} part def S { part ws : W [4]; part hub : H; connection c : DC { end w_cross [4] ref w ::> ws; end h_cross [1] ref h ::> hub; } }`)).toEqual([]);
+    });
   });
   it('flags an end multiplicity above the connected part', async () => {
     const w = await run('part def W; part def H; part def S { part wheels : W [4]; part hub : H; connection c connect [5] wheels to [1] hub; }');

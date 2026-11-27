@@ -1882,7 +1882,6 @@ and §21.4–21.11.
       direction reason of feature matching are dropped there; the binary case is unchanged. Coordinator fence (wave 11): only a
       pair on opposite sides (`portSide`: one end all-in, the other all-out) is judged; two sinks, two sources, or an end with no
       directed feature are not compared (a source whose type specialises both sinks' types conforms to each; may under-report).
-      Still open: a post-name multiplicity on a usage body end (the end's own, not read). [if-compat]
       Done (conn-chains): chain ends (`a.p`) of the list and body forms materialise as in the binary form and, with the binary
       form, are checked when no part on the chain has several instances; a body end's own multiplicity other than 1..1 is flagged.
       Done (conn-ends2): a chain through a many-instance part is counted as the product of the multiplicities along it (an unbounded
@@ -1894,11 +1893,12 @@ and §21.4–21.11.
       `connector-end-multiplicity` holds a written cross multiplicity within the cross feature's stated range. Done (cross-valid): `cross-subsetting-crossed-feature` (§8.4.9.1 validateCrossSubsettingCrossedFeature) warns on a
       two-end connection whose two-segment target chain starts with the end itself or a non-end member; a bare name, an
       unresolved name and other chain shapes stay unchecked. A cross subsetting owned elsewhere than by its end is now written inline on the end.
-      The spec's owned cross feature form (`end e1_cross [1..4] ref e1 : T1;`) is read as an end named e1_cross plus a sibling
-      `ref e1` (inverted against the spec, where the cross feature is owned by the end e1); the false 1..1 warning on it is
-      removed, but no cross multiplicity is checked there (the implied cross feature has nothing stated to compare against).
-      Still open: read that form as an end with an owned cross feature (a larger mapper change), and the implied cross
-      features of ends that write none.
+      Done (owned-cross): the spec's owned cross feature form (`end e1_cross [1..4] ref e1 : T1;`, §8.4.9.1, the B2 and Ternary
+      examples) is read as the end e1 owning the cross feature e1_cross (`attrs.ownedCross`, its multiplicity and modifiers), and
+      written back in the same form; `connector-end-multiplicity` reads that multiplicity as the end's cross multiplicity exactly
+      as `endCrossMult` (against the part and the definition end), and the wave 13 next-sibling fence is gone (an unrelated
+      `end a [2] : A; ref r : R;` is flagged again). Still open: the implied cross features of ends that write none (no check
+      without a stated multiplicity); an owned cross feature carrying its own typing or specialization (`end c : T ref e`).
 [if-compat]
 - [x] **Compare the undirected features and the nested ports of two connected ports.** Done: `portMismatches`
       descends into nested ports (depth 6, pair cycle guard, conjugation composed along the path) and checks

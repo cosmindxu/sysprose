@@ -1137,6 +1137,10 @@ export const connectorEndMultiplicity: ValidationRule = {
       };
       const written = (raw: unknown): Range | undefined =>
         typeof raw === 'string' ? statedRange({ attrs: { multiplicity: raw } } as unknown as ElementRecord) : undefined;
+      // An end's cross multiplicity: written before the keyword (`end [m] part x`), or the multiplicity of the end's owned cross
+      // feature (`end x_cross [m] ref x : T;`, §8.4.9.1 ownedCrossFeature, verified by reading), the same thing.
+      const crossMultOf = (e: ElementRecord): unknown =>
+        e.attrs.endCrossMult ?? model.children(e.id).find((c) => c.attrs.ownedCross === true)?.attrs.multiplicity;
       // A cross subsetting (`end [0..1] part hub : Hub crosses device.connectingHub`, §7.13.2 l.4955-4970, verified by reading):
       // the cross feature's own multiplicity IS the end's cross multiplicity, so the one written before the keyword must lie
       // within it (a chain target is read as its last feature, the cross feature). A cross feature with no stated or a
@@ -1144,7 +1148,7 @@ export const connectorEndMultiplicity: ValidationRule = {
       for (const o of model.children(el.id).filter((c) => c.attrs.isEnd === true)) {
         const crossRel = model.relationshipsFrom(o.id).find((r) => r.eClass === 'CrossSubsetting');
         const crossTarget = crossRel?.target?.[0] ? model.get(crossRel.target[0]) : undefined;
-        const w = written(o.attrs.endCrossMult);
+        const w = written(crossMultOf(o));
         const cf = crossTarget ? statedRange(crossTarget) : undefined;
         if (w && cf && w.lo <= w.hi && cf.lo <= cf.hi && (w.lo < cf.lo || w.hi > cf.hi)) {
           mk(`${isDef ? 'Connection definition' : 'Connection'} ${qualifiedLabel(model, el)}: the end ${o.declaredName ?? qualifiedLabel(model, o)} is written ${show(w)} but its cross feature ${qualifiedLabel(model, crossTarget!)} has ${show(cf)}: the cross feature's multiplicity is the end's cross multiplicity, so the written one must lie within it (§7.13.2).`);
@@ -1156,13 +1160,7 @@ export const connectorEndMultiplicity: ValidationRule = {
         // after the name is the end's own. Only the end the definition owns is judged (an inherited one is judged where owned).
         for (const o of model.children(el.id).filter((c) => c.attrs.isEnd === true)) {
           const own = statedRange(o);
-          // The spec's owned cross feature (`end e1_cross [1..4] ref e1 : T1;`, §8.4.9.1, verified by reading) puts the cross
-          // feature's name and multiplicity first and the end's own declaration after it. It reads here as an end named like the
-          // cross feature followed by a sibling `ref e1`; the multiplicity is the cross feature's, so it is not judged as the end's.
-          const sibs = model.children(el.id);
-          const next = sibs[sibs.findIndex((c) => c.id === o.id) + 1];
-          const ownedCross = next !== undefined && next.attrs.isRef === true && next.attrs.isEnd !== true && next.attrs.implicit !== true && next.declaredName !== undefined;
-          if (!ownedCross && own && !(own.lo === 1 && own.hi === 1)) {
+          if (own && !(own.lo === 1 && own.hi === 1)) {
             mk(`Connection definition ${qualifiedLabel(model, el)}: the end ${o.declaredName ?? qualifiedLabel(model, o)} is written ${show(own)} after its name, but an end feature of a connection must have multiplicity 1..1 (§7.13.2); a cross multiplicity goes before the keyword (\`end [m] part x : T\`).`);
           }
         }
@@ -1241,7 +1239,7 @@ export const connectorEndMultiplicity: ValidationRule = {
           ends.push(
             rel && {
               rel,
-              cross: written(o.attrs.endCrossMult),
+              cross: written(crossMultOf(o)),
               end: o.declaredName !== undefined ? defEnds.find((d) => d.declaredName === o.declaredName) : undefined,
               label: `${i === 0 ? 'source' : i === 1 ? 'target' : `end ${i + 1}`} end ${qualifiedLabel(model, rel)}`,
             },
@@ -1255,7 +1253,8 @@ export const connectorEndMultiplicity: ValidationRule = {
         // is read against the product of the OTHER ends' instances, so a connection of n ends is checked end by end.
         const others = ends.filter((_, j) => j !== i).map((x) => x?.rel);
         const p = rangeIn(rel);
-        const e = end ? (written(end.attrs.endCrossMult) ?? statedRange(end)) : undefined;        if (c && p && c.lo <= c.hi && (c.hi > p.hi || c.lo > p.hi)) {
+        const e = end ? (written(crossMultOf(end)) ?? statedRange(end)) : undefined;
+        if (c && p && c.lo <= c.hi && (c.hi > p.hi || c.lo > p.hi)) {
           mk(
             `Connection ${qualifiedLabel(model, el)}: the ${label} is written ${show(c)} but ${qualifiedLabel(model, rel)} has ${show(p)}: an end cannot connect more instances than the part has (§7.13.2).`,
           );
