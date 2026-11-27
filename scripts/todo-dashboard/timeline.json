@@ -5320,6 +5320,102 @@
   "open_raw": 77,
   "open": 77,
   "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 167,
+  "sha": "c2c314e",
+  "when": "2026-11-27T13:59:35+01:00",
+  "day": "2026-11-27",
+  "subject": "Merge branch 'sm-par-dwell' into combine-w13",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 168,
+  "sha": "b3ae4bd",
+  "when": "2026-11-27T13:59:35+01:00",
+  "day": "2026-11-27",
+  "subject": "Merge branch 'bd-listing2' into combine-w13",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 169,
+  "sha": "556fb9e",
+  "when": "2026-11-27T13:59:43+01:00",
+  "day": "2026-11-27",
+  "subject": "Merge branch 'cross-valid' into combine-w13",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
    "FALSE": 0,
    "WEAKER": 41,
    "POLISH": 34,
