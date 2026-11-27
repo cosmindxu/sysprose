@@ -1050,6 +1050,40 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
     expect(d[0]!.message).toContain('ran out of budget');
   }, 120000);
 
+  it('BD6 with more than 14 candidates: every exceeding clique of a configuration is listed, not only the heaviest', async () => {
+    const fill = Array.from({ length: 15 }, (_, k) => `part f${k} : W [0] subsets wheels;`).join(' ') + ' ' + Array.from({ length: 14 }, (_, k) => `disjoint f${k} from f${k + 1};`).join(' ');
+    const mk = async (hiSup: number) => {
+      const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [${hiSup}]; part a : W [3] subsets wheels; part b : W [3] subsets wheels; part c : W [3] subsets wheels; part d : W [3] subsets wheels; variation part opt { variant part x : W [3] subsets wheels; variant part y; } disjoint a from b; disjoint c from d; disjoint a from opt::x; ${fill} } }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    const d = await mk(4);
+    // {a,b} and {c,d} in every valid configuration, {a,x} only with opt = opt::x
+    expect(d).toHaveLength(3);
+    expect(d.filter((x) => x.severity === 'warning')).toHaveLength(2);
+    expect(d.filter((x) => x.severity === 'info' && x.message.includes('opt = opt::x'))).toHaveLength(1);
+    // a superset that holds every sum: silent
+    expect(await mk(6)).toEqual([]);
+  });
+
+  it('BD6 past the V4 cap with more than 200 exceeding selections: still decided, never a pass on budget', async () => {
+    const n = 21; // C(21,2) = 210 distinct exceeding pairs, each needing two variants
+    const pts = Array.from({ length: n }, (_, k) => `variation part p${k} { variant part u${k} : W [1] subsets wheels; variant part v${k}; }`).join(' ');
+    const ds: string[] = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) ds.push(`disjoint p${i}::u${i} from p${j}::u${j};`);
+    const run2 = async (c: string) => {
+      const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [1]; ${pts} ${ds.join(' ')} ${c} } }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    const some = await run2('');
+    expect(some.length).toBeGreaterThan(0);
+    expect(some.every((x) => x.severity === 'info')).toBe(true);
+    expect(some.every((x) => x.message.includes('exceeds in at least one valid configuration') || x.message.includes('exceeds only in') || x.message.includes('configurations'))).toBe(true);
+    const none = await run2(Array.from({ length: n }, (_, k) => `assert constraint e${k} { p${k} == p${k}::v${k} }`).join(' '));
+    expect(none).toEqual([]);
+    const all = await run2(Array.from({ length: n }, (_, k) => `assert constraint e${k} { p${k} == p${k}::u${k} }`).join(' '));
+    expect(all.some((x) => x.severity === 'warning')).toBe(true);
+  }, 240000);
+
   it('BD6 with more than 14 candidate subsetters: the exact clique search finds the exceeding clique, and stays silent without one', async () => {
     const mk = (n: number, hiSup: number, lo: number, disj: boolean) => {
       const subs = Array.from({ length: n }, (_, k) => `part s${k} : W [${lo}] subsets wheels;`).join(' ');
