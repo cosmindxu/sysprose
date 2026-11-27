@@ -1734,7 +1734,10 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     const inOwn = (e: ElementRecord): boolean => [...ownMachines, ...[...replacing.keys()].map((id) => model.get(id)!)].some((m) => m.id === e.id || model.ancestors(e.id).some((a) => a.id === m.id));
     const extra = sv ? [] : model.descendants(v.id).filter((e) => !isLibrary(e) && STATEISH.has(e.eClass) && mine(e) && !inOwn(e));
     if (extra.length > 0) why.push(`it adds ${extra.length > 1 ? 'states or transitions' : 'a state or transition'} (${[...new Set(extra.map((e) => e.declaredName ?? e.eClass))].slice(0, 4).join(', ')}) outside a machine of its own`);
-    const redef = model.descendants(v.id).filter((e) => STATEISH.has(e.eClass) && mine(e) && !inReplacing(e) && (sv ? targets(model, e.id, 'Redefinition').some((t) => !inside.has(t.id)) : rels(model, e.id, 'Redefinition').length > 0));
+    // var-sm7 (I3): a direct member of the variant redefining a direct member of its variation state, of the same kind, is
+    // read per configuration (the variant inherits the variation state's own members and its redefinition replaces them).
+    const ownRedef = (e: ElementRecord, t: ElementRecord): boolean => sv !== undefined && e.ownerId === v.id && t.ownerId === sv.pointId && e.eClass === t.eClass && (e.eClass === 'StateUsage' || e.eClass === 'TransitionUsage');
+    const redef = model.descendants(v.id).filter((e) => STATEISH.has(e.eClass) && mine(e) && !inReplacing(e) && (sv ? targets(model, e.id, 'Redefinition').some((t) => !inside.has(t.id) && !ownRedef(e, t)) : rels(model, e.id, 'Redefinition').length > 0));
     if (redef.length > 0) why.push(`it redefines ${[...new Set(redef.map((e) => e.declaredName ?? e.eClass))].slice(0, 4).join(', ')}`);
     for (const rel of ['Subsetting', 'Redefinition']) {
       for (const t of targets(model, v.id, rel)) {
@@ -1785,6 +1788,35 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     return { conclusive: true, unreachable: mr.states.unreachable.map((s) => s.name), dead: mr.transitions.dead.map((t) => t.name || t.qualifiedName) };
   };
   const walk = (m: ElementRecord): Walked => walkIn(model, m);
+  /* var-sm7 (I3, user ruling 2026-11-26): on the per-configuration copy a variation state's own (non-variant) state and
+   * transition members are inherited by the chosen variant, as a variant specialises the variation. They are moved into
+   * the variant; a variant member that redefines one replaces it (the transitions naming the replaced state are resolved
+   * to the redefinition); a variant member with the same name as a shared one and no redefinition is a clash: a conflict
+   * reading, nothing claimed. Returns a conflict text, null when merged, 'error' when the copy could not be edited. */
+  const inheritInto = (cp: Model, rootId: string, pointId: string, variantId: string): string | null => {
+    try {
+      const shared = cp.children(pointId).filter((c) => STATEISH.has(c.eClass) && !isVariantUsage(c));
+      const own = cp.children(variantId);
+      const replaced = new Map<string, string>();
+      for (const m of shared) {
+        const rd = own.filter((c) => targets(cp, c.id, 'Redefinition').some((t) => t.id === m.id));
+        if (rd.length > 1) return `${rd.length} members of the chosen variant redefine ${m.declaredName ?? 'a member'} of its variation state`;
+        if (rd.length === 1) replaced.set(m.id, rd[0].id);
+        else if (m.declaredName && own.some((c) => c.declaredName === m.declaredName)) return `the chosen variant has a member named ${m.declaredName} that does not redefine the member of its variation state with that name`;
+      }
+      for (const m of shared) {
+        const to = replaced.get(m.id);
+        if (to === undefined) { cp.reparent(m.id, variantId); continue; }
+        for (const t of cp.descendants(rootId)) {
+          if (t.eClass !== 'TransitionUsage') continue;
+          const tr = t as ElementRecord & { source?: string[]; target?: string[] };
+          if ((tr.source ?? []).includes(m.id) || (tr.target ?? []).includes(m.id)) cp.update(t.id, { source: (tr.source ?? []).map((x) => (x === m.id ? to : x)), target: (tr.target ?? []).map((x) => (x === m.id ? to : x)) } as Partial<ElementRecord>);
+        }
+        cp.remove(m.id);
+      }
+      return null;
+    } catch { return 'error'; }
+  };
   // Finalise what is readable: only while no variant is unread, and (for a variation state) the configurations are known.
   type Reading = { label: string; count: number | null; w: Walked };
   const perConfig = new Map<string, { rec: ElementRecord; variants: string[]; readings: Reading[] }>();
@@ -1870,20 +1902,21 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
     if (f.valid !== null) {
       for (const [rid, e] of statePoints) {
         if (!fixed.has(rid) || replacers.has(rid) || [...replacers.values()].some((r) => r.reps.some((x) => x.m.id === rid))) continue;
-        const sigs = new Map<string, { removed: string[]; chosen: string[]; count: number }>();
+        const sigs = new Map<string, { removed: string[]; chosen: string[]; chosenIds: Array<{ pid: string; vid: string }>; count: number }>();
         for (const sel of f.valid) {
           const removed: string[] = [];
           const chosen: string[] = [];
+          const chosenIds: Array<{ pid: string; vid: string }> = [];
           for (const [pid, pt] of e.points) {
             const k = sel.get(pid) ?? null;
             for (const v of pt.variants) {
-              if (v.key === k) chosen.push(v.name);
+              if (v.key === k) { chosen.push(v.name); chosenIds.push({ pid, vid: v.id }); }
               else removed.push(v.id);
             }
             if (k === null) chosen.push(`${pt.name}=none`);
           }
           const sig = removed.sort().join(',');
-          const g = sigs.get(sig) ?? { removed, chosen, count: 0 };
+          const g = sigs.get(sig) ?? { removed, chosen, chosenIds, count: 0 };
           g.count++;
           sigs.set(sig, g);
         }
@@ -1896,7 +1929,15 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
           for (const id of g.removed) if (copy.has(id) && copy.remove(id).length === 0) ok = false;
           const rec = copy.get(e.root.id);
           if (!ok || !rec) { built = false; break; }
-          readings.push({ label: g.chosen.join(', '), count: g.count, w: walkIn(copy, rec) });
+          // var-sm7 (I3): the variation state's own members go inside the chosen variant (merged with its own members)
+          let clash: string | null = null;
+          for (const { pid, vid } of g.chosenIds) {
+            const r = inheritInto(copy, e.root.id, pid, vid);
+            if (r === 'error') ok = false;
+            else if (r !== null) clash ??= r;
+          }
+          if (!ok) { built = false; break; }
+          readings.push({ label: g.chosen.join(', '), count: g.count, w: clash !== null ? { conclusive: false, conflict: clash, unreachable: [], dead: [] } : walkIn(copy, rec) });
         }
         if (!built) { for (const pt of e.points.values()) for (const v of pt.variants) soft.push({ variant: v.name, why: 'the selection overlay could not be built for the machine' }); continue; }
         perConfig.set(rid, { rec: e.root, variants: [...e.points.values()].flatMap((pt) => pt.variants.map((v) => v.name)), readings });

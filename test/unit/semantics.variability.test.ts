@@ -667,7 +667,7 @@ describe('state machines per configuration (V6)', () => {
     const d = o.diagnostics.find((x) => x.message.includes('walked per configuration'))!;
     expect(d.message).toContain('selecting eng::big and gear::g2 (1 of 4): conflict (eng::big and gear::g2 both redefine or fill the same member');
     expect(d.message).toContain('selecting eng::big (1 of 4): unreachable state(s) b');
-    expect(o.owners[0].behaviour.machines[0].readings!.some((r) => r.why?.includes('both redefine'))).toBe(true);
+    expect(o.owners[0].behaviour.machines[0].readings!!.some((r) => r.why?.includes('both redefine'))).toBe(true);
   });
 
   const TWOB = (big: string, g2: string) => `package P {
@@ -742,7 +742,7 @@ describe('state machines per configuration (V6)', () => {
     const d = o.diagnostics.find((x) => x.message.includes('the state machine P::Eng::s is walked per configuration'))!;
     expect(d).toBeDefined();
     expect(d.message).toContain('selecting eng::v19 (1 of 20): every state reachable');
-    expect(o.owners[0].behaviour.machines[0].readings!.length).toBe(20);
+    expect(o.owners[0].behaviour.machines[0].readings!!.length).toBe(20);
     expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only'))).toBe(false);
   });
 
@@ -801,13 +801,53 @@ describe('state machines per configuration (V6)', () => {
     expect(o.diagnostics.some((x) => x.message.includes('walked per configuration') && x.message.includes('every state reachable'))).toBe(true);
   });
 
-  it('R4: a variant of a variation state redefining a member of the variation state stays superset-only (the walk does not expand what a state inherits)', () => {
+  const VSH = (inner: string, extra = '') => `package P {
+  part def Car { state mode { entry state off; state fin; variation state drive { state hum; ${inner} }
+    transition t1 first off accept On then drive::eco; transition t2 first off accept Fast then drive::sport;
+    transition t4 first drive::eco accept Done then fin; transition t5 first drive::sport accept Done then fin; ${extra} } }
+}`;
+  const msgs = (o: ReturnType<typeof rep>) => o.diagnostics.map((x) => x.message).join('\n');
+
+  it('I3 (var-sm7): a variation state own member is inherited by every chosen variant (no variant redefines it)', () => {
+    const o = rep(VSH('variant state eco; variant state sport;', 'transition t6 first drive::hum accept Go then fin;'));
+    const t = msgs(o);
+    expect(t).toContain('walked per configuration');
+    expect(o.owners[0].behaviour.machines[0].readings!).toHaveLength(2);
+    expect(t).not.toContain('analysed on the superset only');
+    expect(t).not.toContain('unreachable state(s) hum');
+  });
+
+  it('I3 (var-sm7): a variant with no own members still has the shared members', () => {
+    const o = rep(VSH('variant state eco; variant state sport { state own; }'));
+    expect(msgs(o)).toContain('walked per configuration');
+    expect(o.owners[0].behaviour.machines[0].readings!.every((r) => r.conclusive)).toBe(true);
+  });
+
+  it('I3 (var-sm7): a variant redefining the shared member is walked with the redefinition, the original is not', () => {
+    const o = rep(VSH('variant state eco { state hum :>> drive::hum { entry state a; state b; transition tx first a accept G then b; } } variant state sport;'));
+    const t = msgs(o);
+    expect(t).toContain('walked per configuration');
+    expect(t).not.toContain('analysed on the superset only');
+    expect(o.owners[0].behaviour.machines[0].readings!).toHaveLength(2);
+    expect(o.owners[0].behaviour.machines[0].readings!.every((r) => r.conclusive)).toBe(true);
+  });
+
+  it('I3 (var-sm7): a variant member with the shared name and no redefinition is a conflict reading', () => {
+    const o = rep(VSH('variant state eco { state hum; } variant state sport;'));
+    const t = msgs(o);
+    expect(t).toContain('conflict');
+    expect(t).toContain('does not redefine');
+    const rd = o.owners[0].behaviour.machines[0].readings!;
+    expect(rd.find((r) => r.label.includes('eco'))!.conclusive).toBe(false);
+    expect(rd.find((r) => r.label.includes('sport'))!.conclusive).toBe(true);
+  });
+
+  it('I3 (var-sm7): a redefinition outside the variation state stays superset-only', () => {
     const o = rep(`package P {
-  part def Car { state mode { entry state off; state fin; variation state drive { state hum; variant state eco { state hum :>> drive::hum; } variant state sport; }
-    transition t1 first off accept On then drive::eco; transition t2 first off accept Fast then drive::sport; transition t4 first drive::eco accept Done then fin; transition t5 first drive::sport accept Done then fin; } }
+  part def Car { state mode { entry state off; state fin; state other; variation state drive { variant state eco { state hum :>> mode::other; } variant state sport; }
+    transition t1 first off accept On then drive::eco; transition t2 first off accept Fast then drive::sport; } }
 }`);
-    expect(o.diagnostics.some((x) => x.message.includes('analysed on the superset only') && x.message.includes('eco'))).toBe(true);
-    expect(o.diagnostics.some((x) => x.message.includes('walked per configuration'))).toBe(false);
+    expect(msgs(o)).not.toContain('walked per configuration');
   });
 
   const VSTATE = (extra: string) => `package P {
@@ -822,7 +862,7 @@ describe('state machines per configuration (V6)', () => {
     expect(d.message).toContain('walked per configuration');
     expect(d.message).toContain('sport (1 of 2): unreachable state(s) fin');
     expect(d.message).toContain('eco (1 of 2): every state reachable and no transition dead');
-    expect(o.owners[0].behaviour.machines[0].readings).toHaveLength(2);
+    expect(o.owners[0].behaviour.machines[0].readings!).toHaveLength(2);
     expect(o.diagnostics.some((x) => x.message.includes('itself a state'))).toBe(false);
   });
 
