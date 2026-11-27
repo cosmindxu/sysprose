@@ -4925,7 +4925,12 @@ reaches it: an **unspecified reception** (one side can send `X` where the other
 has, in its current state, no transition accepting `X`; marked `forced` when the
 components alone drive the run there, otherwise reachable only when the
 environment offers the events in the trace) and a **deadlock** (no step enabled
-and the machines not both final). Assumptions: untimed, no guards, no queues
+and the machines not both final). The pair is **not compatible** only when an
+unspecified reception is `forced`: two interfaces are compatible when some
+environment avoids every unspecified reception, and the environment can always
+withhold its own events, so a reception reached only through them leaves the pair
+compatible and is listed as a finding a helpful environment reaches. A deadlock is
+listed, never a verdict. Assumptions: untimed, no guards, no queues
 (a send is received at once), two parts. A pair with a send or accept this
 reading cannot attribute to one port and one item, a guard, a dwell, a nested or
 parallel state, an `inout` item, ports that do not conform or more than one

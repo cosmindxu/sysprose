@@ -74,7 +74,7 @@ export interface InterfaceFinding {
   item?: string;
   /** The side that sent it (unspecified reception only). */
   sender?: 'A' | 'B';
-  /** Unspecified reception: the components alone drive the run into it, whatever the environment does. */
+  /** The components alone drive the run into it, whatever the environment does (it offers nothing). */
   forced?: boolean;
   witness: readonly InterfaceStep[];
 }
@@ -82,7 +82,12 @@ export interface InterfaceFinding {
 export type InterfacePairOutcome =
   | { kind: 'no-verdict'; connection: ElementId; reason: string }
   | { kind: 'undecided'; connection: ElementId; a: string; b: string; reason: string }
-  | { kind: 'compatible'; connection: ElementId; a: string; b: string; states: number; items: readonly string[] }
+  /**
+   * Compatible in the de Alfaro-Henzinger sense: some environment (one that withholds the events in the traces) avoids every
+   * unspecified reception. `findings` lists what a helpful environment can still reach (unforced receptions, deadlocks).
+   */
+  | { kind: 'compatible'; connection: ElementId; a: string; b: string; states: number; items: readonly string[]; findings: readonly InterfaceFinding[] }
+  /** Incompatible: an unspecified reception is forced, so no environment avoids it (de Alfaro-Henzinger 2001). */
   | { kind: 'incompatible'; connection: ElementId; a: string; b: string; states: number; findings: readonly InterfaceFinding[] };
 
 const nameOf = (model: Model, id: ElementId): string => model.qualifiedName(id) || model.get(id)?.declaredName || id;
@@ -340,9 +345,12 @@ export function checkInterfacePair(model: Model, connectionId: ElementId, opts: 
         witness: [...witness(i), { who: b.sender, label: b.label, a: nodes[i].step.a, b: nodes[i].step.b }],
       });
   }
-  for (const i of noStep) findings.push({ kind: 'deadlock', witness: witness(i) });
-  if (findings.length === 0) {
-    return { kind: 'compatible', connection: connectionId, a: an, b: bn, states: nodes.length, items: [...new Set([...A.items, ...B.items])] };
+  for (const i of noStep) findings.push({ kind: 'deadlock', forced: forcedSet.has(i), witness: witness(i) });
+  // Coordinator fence (wave 14): only a FORCED unspecified reception makes the pair incompatible (de Alfaro-Henzinger: two
+  // interfaces are compatible when some environment avoids every illegal state; the environment controls its own events, so an
+  // illegal state reached only through them is avoided by withholding them). A deadlock is reported, never a verdict.
+  if (!findings.some((f) => f.kind === 'unspecified-reception' && f.forced === true)) {
+    return { kind: 'compatible', connection: connectionId, a: an, b: bn, states: nodes.length, items: [...new Set([...A.items, ...B.items])], findings };
   }
   return { kind: 'incompatible', connection: connectionId, a: an, b: bn, states: nodes.length, findings };
 }
@@ -386,18 +394,21 @@ export function interfacesLines(model: Model, r: InterfacesReport): string[] {
     const c = nameOf(model, p.connection);
     if (p.kind === 'no-verdict') out.push(`${c}: no verdict, ${p.reason}`);
     else if (p.kind === 'undecided') out.push(`${c}: undecided for ${p.a} and ${p.b}, ${p.reason}`);
-    else if (p.kind === 'compatible') {
-      out.push(
-        `${c}: ${p.a} and ${p.b} are compatible over {${p.items.join(', ')}} (${p.states} product state(s), no unspecified reception, no deadlock; ` +
-          'synchronous rendezvous on the shared items, other labels from the environment, untimed)',
-      );
-    } else {
-      out.push(`${c}: ${p.a} and ${p.b} are NOT compatible (${p.findings.length} finding(s) over ${p.states} product state(s))`);
+    else {
+      if (p.kind === 'compatible') {
+        out.push(
+          `${c}: ${p.a} and ${p.b} are compatible over {${p.items.join(', ')}} (${p.states} product state(s): an environment exists that avoids every unspecified reception; ` +
+            'synchronous rendezvous on the shared items, other labels from the environment, untimed)' +
+            (p.findings.length > 0 ? `; ${p.findings.length} finding(s) a helpful environment can still reach:` : ', nothing reachable to report'),
+        );
+      } else {
+        out.push(`${c}: ${p.a} and ${p.b} are NOT compatible: an unspecified reception is forced, no environment avoids it (${p.findings.length} finding(s) over ${p.states} product state(s))`);
+      }
       for (const f of p.findings) {
         out.push(
           f.kind === 'unspecified-reception'
             ? `  unspecified reception: ${f.sender} can send ${f.item} where the other side has no transition accepting it${f.forced ? ' (forced: no environment choice avoids it)' : ' (reachable only when the environment offers the events in the trace)'}`
-            : '  deadlock: no step is enabled and the machines are not both final',
+            : `  deadlock: no step is enabled and the machines are not both final${f.forced ? ' (reached with the environment offering nothing)' : ' (reachable when the environment offers the events in the trace)'}`,
         );
         for (const s of f.witness) out.push(`    ${s.who} ${s.label} -> (${s.a}, ${s.b})`);
       }

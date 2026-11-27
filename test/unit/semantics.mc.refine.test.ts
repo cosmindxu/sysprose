@@ -148,8 +148,10 @@ describe('interface automata — check-behaviour --interfaces', () => {
     exhibit state m { entry; then idle; state idle; state busy;
       transition t1 first idle accept ping then busy; } }
   ${SYS}`);
-    expect(out.kind).toBe('incompatible');
-    if (out.kind !== 'incompatible') return;
+    // Not forced: the environment avoids it by withholding \`go\`, so the pair is compatible (de Alfaro-Henzinger) and the
+    // reception is reported as a finding a helpful environment reaches.
+    expect(out.kind).toBe('compatible');
+    if (out.kind !== 'compatible') return;
     const f = out.findings.find((x) => x.kind === 'unspecified-reception')!;
     expect(f.item).toBe('rq');
     expect(f.sender).toBe('A');
@@ -179,9 +181,11 @@ describe('interface automata — check-behaviour --interfaces', () => {
     exhibit state m { entry; then idle; state idle; state done;
       transition t first idle accept Req via s then done; } }
   ${SYS}`);
-    expect(out.kind).toBe('incompatible');
-    if (out.kind !== 'incompatible') return;
+    // A deadlock is reported, never a verdict of incompatibility.
+    expect(out.kind).toBe('compatible');
+    if (out.kind !== 'compatible') return;
     const d = out.findings.find((x) => x.kind === 'deadlock')!;
+    expect(d.forced).toBe(true);
     expect(d.witness.map((s) => s.label)).toEqual(['open']);
   });
 
