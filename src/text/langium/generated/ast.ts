@@ -460,6 +460,7 @@ export interface BehaviorStmt extends langium.AstNode {
     exhibitState: boolean;
     guard?: Expression;
     isAbstract: boolean;
+    isAction: boolean;
     isEffectAction: boolean;
     isParallel: boolean;
     isSend: boolean;
@@ -1463,6 +1464,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                         { name: 'exhibitState', defaultValue: false },
                         { name: 'guard' },
                         { name: 'isAbstract', defaultValue: false },
+                        { name: 'isAction', defaultValue: false },
                         { name: 'isEffectAction', defaultValue: false },
                         { name: 'isParallel', defaultValue: false },
                         { name: 'isSend', defaultValue: false },

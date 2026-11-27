@@ -82,6 +82,38 @@ describe('runActionFlow — composite action executes its sub-flow', () => {
   });
 });
 
+describe('runActionFlow — `perform x;` runs the performed action (SysML v2 §7.17.6)', () => {
+  function build(referenced: boolean) {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const holder = f.actionDef('Holder');
+    const inner = f.action('inner', holder.id);
+    m.create('AttributeUsage', { ownerId: inner.id, declaredName: 'o', attrs: { direction: 'out' } });
+    const s0 = m.create('InitialNode', { ownerId: inner.id });
+    const c = m.create('AssignmentActionUsage', { ownerId: inner.id, declaredName: 'compute', attrs: { target: 'o', value: '6 * 7' } });
+    const d0 = m.create('DoneNode', { ownerId: inner.id });
+    f.succession(s0.id, c.id, inner.id);
+    f.succession(c.id, d0.id, inner.id);
+    const outer = f.actionDef('Outer');
+    const start = m.create('InitialNode', { ownerId: outer.id });
+    const call = m.create('PerformActionUsage', { ownerId: outer.id, attrs: { actionKind: 'perform' } });
+    if (referenced) m.create('ReferenceSubsetting', { ownerId: call.id, source: [call.id], target: [inner.id] });
+    const done = m.create('DoneNode', { ownerId: outer.id });
+    f.succession(start.id, call.id, outer.id);
+    f.succession(call.id, done.id, outer.id);
+    return { m, outer: outer.id, inner: inner.id };
+  }
+  it('opens the referenced action as a sub-behavior', () => {
+    const { m, outer, inner } = build(true);
+    const trace = runActionFlow(m, outer);
+    expect(trace.steps.find((st) => st.event === 'enter' && st.subBehaviorId === inner)).toBeDefined();
+  });
+  it('a perform with no reference stays a leaf', () => {
+    const { m, outer } = build(false);
+    expect(runActionFlow(m, outer).steps.some((st) => st.event === 'enter')).toBe(false);
+  });
+});
+
 /* ─────────────────── 2. object / item-flow data passing ───────────────── */
 
 describe('runActionFlow — item-flow data passing between pins', () => {

@@ -623,6 +623,16 @@ function callTargetOf(model: Model, node: ElementRecord): ElementRecord | undefi
       if (isActionNode(el) || el.eClass === 'ActionDefinition') return el;
     }
   }
+  // `perform x;` (SysML v2 §7.17.6): the performed action is the usage's reference subsetting target.
+  if (node.eClass === 'PerformActionUsage') {
+    for (const r of model.relationshipsFrom(node.id)) {
+      if (r.eClass !== 'ReferenceSubsetting') continue;
+      for (const t of r.target ?? []) {
+        const el = model.get(t);
+        if (el && (isActionNode(el) || el.eClass === 'ActionDefinition')) return el;
+      }
+    }
+  }
   // Typing / subsetting / redefinition targets that are actions.
   for (const t of model.typesOf(node.id)) {
     if (isActionNode(t) || t.eClass === 'ActionDefinition') return t;
