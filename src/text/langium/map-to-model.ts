@@ -3003,19 +3003,28 @@ class Mapper {
    * declaration follows, with no `;` between. The grammar reads it as two members; `ownedCrossPair` recognises the pair
    * (head = the cross feature, tail = the end `ref e1 : T1`) so the end is read as e1 owning the cross feature e1_cross.
    */
+  private readonly memberIndex = new WeakMap<object, Map<AstNode, number>>();
+
   private ownedCrossPair(node: Definition): { head: Definition; tail: Definition } | undefined {
-    const members = ((node.$container as { members?: AstNode[] } | undefined)?.members ?? []) as AstNode[];
-    const at = members.indexOf(node);
+    const container = node.$container as { members?: AstNode[] } | undefined;
+    const members = (container?.members ?? []) as AstNode[];
+    // One index per container, built once: an indexOf per member is quadratic on a package of many members.
+    let index = container ? this.memberIndex.get(container) : undefined;
+    if (container && index === undefined) {
+      index = new Map(members.map((m, i) => [m, i]));
+      this.memberIndex.set(container, index);
+    }
+    const at = index?.get(node) ?? -1;
+    if (at < 0) return undefined;
     const isHead = (h: AstNode | undefined, t: AstNode | undefined): boolean => {
       const a = h as Definition | undefined;
       const b = t as Definition | undefined;
       if (!a || !b || a.$type !== 'Definition' || b.$type !== 'Definition') return false;
-      const text = a.$cstNode?.text?.trimEnd();
       return (
         a.keyword === undefined && !a.isDef && a.name !== undefined && a.shortName === undefined &&
         (a.prefixes ?? []).length === 1 && a.prefixes[0] === 'end' && a.prefixMeta.length === 0 &&
         a.body === undefined && a.specializations.length === 0 && a.valueOp === undefined && a.preMult.length === 0 &&
-        a.endMult.length === 0 && text !== undefined && !text.endsWith(';') &&
+        a.endMult.length === 0 && a.$cstNode?.text?.trimEnd().endsWith(';') === false &&
         !b.isDef && b.name !== undefined && b.succession === undefined && b.endMult.length === 0 &&
         (b.keyword === 'ref' ? b.prefixes.length === 0 : b.keyword === undefined && b.prefixes.length === 1 && b.prefixes[0] === 'ref')
       );
