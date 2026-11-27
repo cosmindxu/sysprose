@@ -245,6 +245,19 @@ function featuresByKind(model: Model, portId: ElementId, acc: boolean): PortFeat
   return out;
 }
 
+/**
+ * The side a port takes in an exchange: `'in'` when every top-level directed feature it has (after conjugation) is `in`,
+ * `'out'` when every one is `out`, else `undefined` (none, mixed, or `inout`). Used to tell two sinks or two sources of one
+ * n-ary connection (fan-in / fan-out), whose features need not match each other.
+ */
+export function portSide(model: Model, portId: ElementId): 'in' | 'out' | undefined {
+  const d = featuresByKind(model, portId, false).directed.map((f) => f.direction);
+  if (d.length === 0) return undefined;
+  if (d.every((x) => x === 'in')) return 'in';
+  if (d.every((x) => x === 'out')) return 'out';
+  return undefined;
+}
+
 /** A nested port with something to exchange (an empty one has nothing a counterpart could lack). */
 function hasContent(model: Model, portId: ElementId, depth: number): boolean {
   const f = featuresByKind(model, portId, false);

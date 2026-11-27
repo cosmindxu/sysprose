@@ -228,17 +228,17 @@ describe('connection-compatibility', () => {
     });
     it('reports each incompatible pair once, naming both ends', async () => {
       const f = findings(await wrap('interface i connect (a.p, b.p, c.p);'));
-      expect(f).toHaveLength(2); // a-c and b-c; a-b conforms
+      expect(f).toHaveLength(1); // a-c; a-b conforms; b-c are two sinks (same side), not judged against each other
       expect(f.filter((m) => m.includes('S::a::p') && m.includes('S::c::p'))).toHaveLength(1);
-      expect(f.filter((m) => m.includes('S::b::p') && m.includes('S::c::p'))).toHaveLength(1);
     });
     it('reads a conjugated end, and keeps fan-in and fan-out silent', async () => {
       // ~A against B: in x with in x is the legal fan-out shape, not a finding in an n-ary connection.
       expect(findings(await wrap('interface i connect (ca.p, b.p, d.p);'))).toEqual([]);
       expect(findings(await wrap('interface i connect (a.p, ca.p, b.p);'))).toEqual([]);
-      const f = findings(await wrap('interface i connect (ca.p, b.p, c.p);'));
-      expect(f).toHaveLength(2);
-      expect(f.some((m) => m.includes('S::ca::p') && m.includes('S::c::p'))).toBe(true);
+      // ~A, B and C are all sinks (in): no pair is on opposite sides, nothing is judged.
+      expect(findings(await wrap('interface i connect (ca.p, b.p, c.p);'))).toEqual([]);
+      // a source of a type both sinks' types generalise conforms to each; the sinks are not judged against each other.
+      expect(findings(await wrap('interface i connect (a.p, b.p, d.p);'))).toEqual([]);
     });
     it('leaves a pair with an unresolved end unchecked, and the others checked', async () => {
       const f = findings(await wrap('interface i connect (a.p, nope.p, c.p);'));

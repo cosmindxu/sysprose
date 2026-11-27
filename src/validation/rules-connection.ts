@@ -11,7 +11,10 @@
  * ports; a port "may be connected to one or more other port usages"). Every pair
  * whose ends both resolve to ports is checked once; a pair with an unresolved
  * end is skipped, the others still are. Direction mismatches (out/out, in/in)
- * are not findings there: fan-out and fan-in are legal. The binary case is unchanged.
+ * are not findings there: fan-out and fan-in are legal, and only a pair on opposite
+ * sides (`portSide`: one all-in, the other all-out) is judged; two sinks, two
+ * sources, or an end with no directed feature are not judged against each other
+ * (coordinator fence, wave 11). The binary case is unchanged.
  *
  * WHAT THE ENDS ARE. After the feature-chain pass, `source[0]`/`target[0]` of a
  * connector are the IMPLICIT per-usage port copies (`ensureImplicitFeature`),
@@ -46,6 +49,7 @@ import {
   portConjugated,
   portMismatches,
   mismatchFeatureText,
+  portSide,
 } from '../semantics/port-conformance';
 import type { Diagnostic, ValidationRule } from './types';
 
@@ -126,6 +130,15 @@ export const connectionCompatibility: ValidationRule = {
       const b = portFacets(model, ends[1]);
       if (!a || !b) continue; // not port-to-port (or unresolved): this pair is not judged
       if (nary && a.el.id === b.el.id) continue;
+      // n-ary fence: two ends on the same side (two sinks or two sources of the one exchange: fan-in/fan-out) need not
+      // match each other (a source of a type specialising both sinks' types conforms to each), and two ends with no
+      // directed feature give no side to tell; only a pair on opposite sides is judged. May under-report; never flags a
+      // legal fan.
+      if (nary) {
+        const sa = portSide(model, ends[0]);
+        const sb = portSide(model, ends[1]);
+        if (sa === undefined || sb === undefined || sa === sb) continue;
+      }
 
       // (a) Direction — only when BOTH are declared (a missing one is
       //     port-direction's finding), neither is inout, and conjugation is the
