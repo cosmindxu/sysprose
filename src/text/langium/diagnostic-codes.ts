@@ -614,6 +614,13 @@ const CODES = [
     hint: 'Write an end multiplicity within the connected part’s and the definition end’s, or widen the part or the definition end.',
   },
   {
+    code: 'validation/cross-subsetting-crossed-feature',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A cross subsetting (`crosses` or `=>`) on an end of a binary connection or interface, written as a two-segment chain, whose first segment is the end itself or a member that is not an end instead of the other end (SysML v2 §8.4.9.1, validateCrossSubsettingCrossedFeature). A target not written as a chain, an unresolved name and a connection with other than two ends are not judged.',
+    hint: 'Write the target as the other end followed by the cross feature (`end hub : Hub crosses device.connectingHub;`).',
+  },
+  {
     code: 'validation/subset-type-conformance',
     source: 'validation',
     severity: 'warning',

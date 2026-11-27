@@ -729,7 +729,7 @@ guarantee, as a test).
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (52 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (53 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
@@ -5097,6 +5097,10 @@ any of these at the language level:
   binary `connect [m] a to [n] b` form, its list form `connect ([m] a, [n] b, [k] c)` of two or more ends and a body of two or more
   `end [m] part x references a` ends (the multiplicity may stand before the keyword, `end [0..2] part device`),
   with number-literal bounds, are read; a chain end (`a.p`) in any of these forms is read against the feature the chain reaches, counted as the product of the multiplicities along the chain (a many-instance part on the way multiplies it; an unbounded or non-literal factor leaves the end unchecked), and a multiplicity written after the name of a body end (`end part a [9] references x`, the end's own) other than 1..1 is flagged (an end feature must be 1..1, §7.13.2); the same holds for the ends a `connection def` or `interface def` owns (`end part device [0..2] : W` is flagged, the cross multiplicity goes before the keyword: `end [0..2] part device : W`). An end with a cross subsetting (`end [2] part hub : Hub crosses device.connectingHub`, or `=>`) takes the cross feature's multiplicity as its cross multiplicity: a written one outside the cross feature's stated range (`connectingHub [0..1]`) is flagged, and an unresolved target, a non-literal bound or no written multiplicity is left unchecked (§7.13.2). A warning.
+- **`cross-subsetting-crossed-feature`.** On a connection with two ends, `end part hub : Hub crosses hub.connectedDevices`
+  (the target starts with the end itself, or with a member that is not an end) is reported: the target of a cross subsetting
+  is the other end followed by the cross feature, `device.connectingHub` (§8.4.9.1). A target not written as a two-segment
+  chain, an unresolved name and a connection with other than two ends are not judged. A warning.
 - **`subset-type-conformance`.** `part b : B subsets a` over `part a : A`, where
   neither of A and B specialises the other, holds values that are not values of
   `a` (§7.6.1). The types a subsetter declares and those of the features it redefines

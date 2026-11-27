@@ -38,6 +38,7 @@
  * inherited multiplicity, or an unresolved type gives no finding.
  */
 
+import { isRelationship } from '@core/index';
 import type { ElementId, ElementRecord, Model } from '@core/index';
 import { findLibraryType } from '../library/resolve';
 import { conforms } from '../semantics/conformance';
@@ -1052,6 +1053,51 @@ export const unresolvedValueChain: ValidationRule = {
  * A cross subsetting (`crosses` / `=>`, §7.13.2 l.4955-4970, verified by reading) makes the cross feature's own multiplicity the end's cross
  * multiplicity: a written one that does not lie within the cross feature's stated literal range is flagged.
  */
+/**
+ * SysML v2 §8.4.9.1 (Part 1 l.25727, verified by reading): "The validateCrossSubsettingCrossedFeature constraint requires that
+ * the target of a CrossSubsetting be a feature chain consisting of the other connectionEnd and the cross feature." On a binary
+ * connection (exactly two ends), a cross subsetting written as a two-segment chain whose first segment names the end itself, or a
+ * member of the connection that is not an end, is wrong. A target not written as a chain, one of another length, an unresolved
+ * name, an end of a connection with other than two ends, or a first segment that names neither the end nor a plain member is left
+ * unchecked (an inherited or redefined end can go by another name).
+ */
+export const crossSubsettingCrossedFeature: ValidationRule = {
+  id: 'cross-subsetting-crossed-feature',
+  description: 'A cross subsetting on a binary connection whose target chain does not start with the other end.',
+  severity: 'warning',
+  run(model) {
+    let n = 0;
+    const out: Diagnostic[] = [];
+    for (const el of model.all()) {
+      if (el.attrs.isLibrary === true || el.attrs.staleEnd === true) continue;
+      if (!['ConnectionDefinition', 'InterfaceDefinition', 'ConnectionUsage', 'InterfaceUsage', 'Connector'].includes(el.eClass)) continue;
+      const kids = model.children(el.id).filter((c) => !isRelationship(c.eClass) && c.attrs.implicit !== true);
+      const ends = kids.filter((c) => c.attrs.isEnd === true);
+      if (ends.length !== 2 || ends.some((e) => e.declaredName === undefined)) continue;
+      for (const o of ends) {
+        const rel = model.relationshipsFrom(o.id).find((r) => r.eClass === 'CrossSubsetting');
+        const chain = typeof rel?.attrs.chain === 'string' ? rel.attrs.chain.trim() : undefined;
+        if (!rel || !rel.target?.[0] || chain === undefined) continue;
+        const parts = chain.split('.').map((x) => x.trim());
+        if (parts.length !== 2 || parts.some((x) => x === '' || /[^A-Za-z0-9_]/.test(x))) continue;
+        const other = ends.find((e) => e.id !== o.id)!;
+        const first = parts[0]!;
+        if (first === other.declaredName) continue;
+        const member = first === o.declaredName ? o : kids.find((c) => c.id !== o.id && c.declaredName === first);
+        if (member === undefined) continue;
+        out.push({
+          id: `cross-subsetting-crossed-feature#${n++}`,
+          ruleId: 'cross-subsetting-crossed-feature',
+          severity: 'warning',
+          message: `${el.eClass.endsWith('Definition') ? 'Connection definition' : 'Connection'} ${qualifiedLabel(model, el)}: the cross subsetting of the end ${o.declaredName} targets \`${chain}\`, which starts with ${member === o ? 'the end itself' : `${first}, not an end`}; the target of a cross subsetting must be a feature chain of the other end ${other.declaredName} and the cross feature (\`${other.declaredName}.<cross feature>\`, §8.4.9.1, validateCrossSubsettingCrossedFeature).`,
+          elementId: o.id,
+        });
+      }
+    }
+    return out;
+  },
+};
+
 export const connectorEndMultiplicity: ValidationRule = {
   id: 'connector-end-multiplicity',
   description: 'A connection end whose multiplicity lies outside that of the part it connects or of the definition end it redefines.',
@@ -1087,7 +1133,13 @@ export const connectorEndMultiplicity: ValidationRule = {
         // after the name is the end's own. Only the end the definition owns is judged (an inherited one is judged where owned).
         for (const o of model.children(el.id).filter((c) => c.attrs.isEnd === true)) {
           const own = statedRange(o);
-          if (own && !(own.lo === 1 && own.hi === 1)) {
+          // The spec's owned cross feature (`end e1_cross [1..4] ref e1 : T1;`, §8.4.9.1, verified by reading) puts the cross
+          // feature's name and multiplicity first and the end's own declaration after it. It reads here as an end named like the
+          // cross feature followed by a sibling `ref e1`; the multiplicity is the cross feature's, so it is not judged as the end's.
+          const sibs = model.children(el.id);
+          const next = sibs[sibs.findIndex((c) => c.id === o.id) + 1];
+          const ownedCross = next !== undefined && next.attrs.isRef === true && next.attrs.isEnd !== true && next.attrs.implicit !== true && next.declaredName !== undefined;
+          if (!ownedCross && own && !(own.lo === 1 && own.hi === 1)) {
             mk(`Connection definition ${qualifiedLabel(model, el)}: the end ${o.declaredName ?? qualifiedLabel(model, o)} is written ${show(own)} after its name, but an end feature of a connection must have multiplicity 1..1 (§7.13.2); a cross multiplicity goes before the keyword (\`end [m] part x : T\`).`);
           }
         }
