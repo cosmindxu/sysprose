@@ -213,4 +213,42 @@ describe('connection-compatibility', () => {
       for (const c of copies) expect(effectiveDirection(m, c.id)).toBe('in');
     });
   });
+
+  describe('n-ary connections (pairwise)', () => {
+    const defs = 'item def X; item def Y; port def A { out item x : X; } port def B { in item x : X; } port def C { in item y : Y; } port def D { in item x : X; }';
+    const wrap = (body: string) =>
+      bound(
+        `package N { ${defs} part def PA { port p : A; } part def PB { port p : B; } part def PC { port p : C; } part def PD { port p : D; } part def PCA { port p : ~A; }
+         part def S { part a : PA; part b : PB; part c : PC; part d : PD; part ca : PCA; ${body} } }`,
+      );
+
+    it('is silent on a compatible 3-end interface (a source and two sinks)', async () => {
+      expect(findings(await wrap('interface i connect (a.p, b.p, d.p);'))).toEqual([]);
+      expect(findings(await wrap('interface i { end e1 ::> a.p; end e2 ::> b.p; end e3 ::> d.p; }'))).toEqual([]);
+    });
+    it('reports each incompatible pair once, naming both ends', async () => {
+      const f = findings(await wrap('interface i connect (a.p, b.p, c.p);'));
+      expect(f).toHaveLength(2); // a-c and b-c; a-b conforms
+      expect(f.filter((m) => m.includes('S::a::p') && m.includes('S::c::p'))).toHaveLength(1);
+      expect(f.filter((m) => m.includes('S::b::p') && m.includes('S::c::p'))).toHaveLength(1);
+    });
+    it('reads a conjugated end, and keeps fan-in and fan-out silent', async () => {
+      // ~A against B: in x with in x is the legal fan-out shape, not a finding in an n-ary connection.
+      expect(findings(await wrap('interface i connect (ca.p, b.p, d.p);'))).toEqual([]);
+      expect(findings(await wrap('interface i connect (a.p, ca.p, b.p);'))).toEqual([]);
+      const f = findings(await wrap('interface i connect (ca.p, b.p, c.p);'));
+      expect(f).toHaveLength(2);
+      expect(f.some((m) => m.includes('S::ca::p') && m.includes('S::c::p'))).toBe(true);
+    });
+    it('leaves a pair with an unresolved end unchecked, and the others checked', async () => {
+      const f = findings(await wrap('interface i connect (a.p, nope.p, c.p);'));
+      expect(f).toHaveLength(1);
+      expect(f[0]).toContain('S::a::p');
+      expect(f[0]).toContain('S::c::p');
+    });
+    it('keeps the binary case as it was', async () => {
+      expect(findings(await wrap('connection i connect a.p to c.p;'))).toHaveLength(1);
+      expect(findings(await wrap('interface i connect a.p to b.p;'))).toEqual([]);
+    });
+  });
 });
