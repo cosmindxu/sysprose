@@ -45,6 +45,7 @@ import {
   advanceClock,
   afterDuration,
   dwellTicks,
+  regionDwellRefusal,
   applyAssignment,
   applyTransitionEffect,
   EffectNotApplied,
@@ -1456,8 +1457,16 @@ function nestedParallelRefusal(model: Model, container: ElementRecord): string |
     if (entryControlEdges(model, p.id).length > 0) {
       return `its parallel state ${name(p.id)} has an entry action naming a start, but a parallel state enters all its regions, each at its own start`;
     }
-    if (view.transitions.some((t) => t.source?.[0] !== undefined && inside.has(t.source[0]) && afterDuration(t) !== undefined)) {
-      return `a region of its parallel state ${name(p.id)} has a timed (\`after\`) transition, which the interpreter never fires inside a region, so no verdict is given over it`;
+    {
+      const rs = parallelRegions(model, p.id);
+      const rOf = (id: ElementId): ElementId | undefined =>
+        rs.find((r) => r.id === id || machineRegion(model, r.id).descendants.some((e) => e.id === id))?.id;
+      const dwellWhy = regionDwellRefusal(
+        view.transitions.filter((t) => t.source?.[0] !== undefined && inside.has(t.source[0])),
+        (t) => rOf(t.source![0]),
+        name(p.id),
+      );
+      if (dwellWhy !== undefined) return dwellWhy;
     }
     const regions = parallelRegions(model, p.id);
     if (regions.some((r) => entryStartUnreadOf(model, machineRegion(model, r.id), view.directStates(r.id)))) {
@@ -1886,10 +1895,26 @@ function runHierRegion(
       clockRef.clock = cfg.clock;
       // Every `after(n)` whose dwell the advance met, innermost first, bounded
       // by the same budget the chase uses.
+      // In a parallel state the dwells are offered to the regions exactly as an event is: one that leaves the state
+      // (or one holding it) while a region's would fire too is not chosen between (the run stops, `refused`).
       for (let k = 0; k < maxCompletion && refused === undefined; k++) {
         const enabled = enabledTransitions(model, cfg, TIMEOUT);
-        if (enabled.length === 0) break;
-        fire(take(enabled));
+        if (par === null) {
+          if (enabled.length === 0) break;
+          fire(take(enabled));
+        } else if (enabled.length > 0) {
+          if (anyEnabled(par, TIMEOUT)) {
+            const c = enabled[0];
+            refused = { transitionId: c.transition.id, from: c.transition.source![0], to: c.transition.target![0], trigger: c.label };
+          } else {
+            fire(take(enabled));
+            chaseAll();
+          }
+        } else if (anyEnabled(par, TIMEOUT)) {
+          offer(par, TIMEOUT, cfg.stack);
+          if (refused === undefined) for (const rg of par.regs) chaseRegion(rg, cfg.stack);
+          if (refused === undefined && chaseHierCompletion().exhausted) completionBudgetHit = true;
+        } else break;
       }
     } else {
       const input: StepInput = { kind: 'trigger', trigger: step };

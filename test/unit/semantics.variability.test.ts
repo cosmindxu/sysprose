@@ -842,6 +842,33 @@ describe('state machines per configuration (V6)', () => {
     expect(rd.find((r) => r.label.includes('sport'))!.conclusive).toBe(true);
   });
 
+  it('I3b (sm-par-dwell): the variation state entry action is inherited by a variant with none, and walked', () => {
+    const o = rep(VSH('entry action en; variant state eco; variant state sport;'));
+    const t = msgs(o);
+    expect(t).toContain('walked per configuration');
+    expect(t).not.toContain('conflict');
+    expect(o.owners[0].behaviour.machines[0].readings!.every((r) => r.conclusive)).toBe(true);
+  });
+
+  it('I3b: a variant entry action that redefines the inherited one replaces it; one that does not is a conflict reading', () => {
+    const ok = rep(VSH('entry action en; variant state eco { entry action en2 :>> drive::en; } variant state sport;'));
+    expect(msgs(ok)).not.toContain('conflict');
+    expect(ok.owners[0].behaviour.machines[0].readings!.every((r) => r.conclusive)).toBe(true);
+    const bad = rep(VSH('entry action en; variant state eco { entry action en2; } variant state sport;'));
+    expect(msgs(bad)).toContain('conflict');
+    expect(msgs(bad)).toContain('does not redefine the entry action');
+    const rd = bad.owners[0].behaviour.machines[0].readings!;
+    expect(rd.find((r) => r.label.includes('eco'))!.conclusive).toBe(false);
+    expect(rd.find((r) => r.label.includes('sport'))!.conclusive).toBe(true);
+  });
+
+  it('I3b: an exit action clashes the same way, and a kind the variant does not bring stays inherited', () => {
+    const bad = rep(VSH('exit action x1; variant state eco { exit action x2; } variant state sport;'));
+    expect(msgs(bad)).toContain('does not redefine the exit action');
+    const keep = rep(VSH('exit action x1; variant state eco { entry action e2; } variant state sport;'));
+    expect(msgs(keep)).not.toContain('conflict');
+  });
+
   it('I3 (var-sm7): a redefinition outside the variation state stays superset-only', () => {
     const o = rep(`package P {
   part def Car { state mode { entry state off; state fin; state other; variation state drive { variant state eco { state hum :>> mode::other; } variant state sport; }

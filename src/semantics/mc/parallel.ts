@@ -45,7 +45,7 @@ import {
   type UndeterminedGuard,
   type StepCandidates,
   actionsNamed,
-  afterDuration,
+  regionDwellRefusal,
   entryControlEdges,
   entryStartUnreadOf,
   hashConfig,
@@ -289,9 +289,8 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
     }
     // — the explorer's own three —
     const regionTrs = view.transitions.filter((t) => t.source?.[0] !== undefined && inside.has(t.source[0]));
-    if (regionTrs.some((t) => afterDuration(t) !== undefined)) {
-      return out(p.id, `a region of its parallel state ${name(p.id)} has a timed (\`after\`) transition, which the interpreter never fires inside a region, so no verdict is given over it`);
-    }
+    const dwellWhy = regionDwellRefusal(regionTrs, (t) => regionOf(t.source![0]), name(p.id));
+    if (dwellWhy !== undefined) return out(p.id, dwellWhy);
     // The states the machine is in while `p` is: `p` and the states that hold it, up to the machine's root.
     const holders = new Set<ElementId>([p.id]);
     for (let o = view.parentOf(p.id); o !== null && o !== undefined; o = view.parentOf(o)) holders.add(o);
