@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 195
-- **Tests:** 6318 total — 6318 passed, 0 failed, 0 skipped
+- **Tests:** 6326 total — 6326 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -125,7 +125,7 @@
 | test/unit/semantics.icd.test.ts | 4 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
-| test/unit/semantics.mc.after.test.ts | 5 | 0 | 0 |
+| test/unit/semantics.mc.after.test.ts | 7 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.parallel-orders.test.ts | 8 | 0 | 0 |
@@ -164,7 +164,7 @@
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
-| test/unit/semantics.variability.test.ts | 79 | 0 | 0 |
+| test/unit/semantics.variability.test.ts | 83 | 0 | 0 |
 | test/unit/simulate.test.ts | 32 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 42 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
@@ -189,7 +189,7 @@
 | test/unit/text.spec-7-18.test.ts | 18 | 0 | 0 |
 | test/unit/text.state-forms.test.ts | 16 | 0 | 0 |
 | test/unit/text.target-transition.test.ts | 11 | 0 | 0 |
-| test/unit/text.time-trigger.test.ts | 6 | 0 | 0 |
+| test/unit/text.time-trigger.test.ts | 8 | 0 | 0 |
 | test/unit/text.transition-redefinition.test.ts | 5 | 0 | 0 |
 | test/unit/text.variability.test.ts | 13 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
