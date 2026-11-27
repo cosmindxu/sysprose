@@ -5110,14 +5110,15 @@ any of these at the language level:
   nothing is said; every valid configuration does, a warning "in every valid
   configuration"; some do, an info "exceeds only in: ..." naming them. When the
   enumeration is cut at its cap, an exact bounded search over the same
-  constraints decides the selection instead: none valid, nothing is said; none
-  that avoids it, a warning "in every valid configuration"; else an info naming
-  one valid configuration that has it (a search that runs out of budget keeps
-  the old reading). When the family is not read, the info "only when
-  `opt::extra` is selected" stays, never a warning. More than 14 candidate
-  subsetters of one superset are searched too (exact branch and bound with a
-  node budget; past it the superset is not searched). A sum needing none reads "in every
-  configuration".
+  constraints decides it over every exceeding clique together: none valid,
+  nothing is said; none that avoids them, a warning "in every valid
+  configuration"; else an info naming one valid configuration that has one (a
+  search that runs out of budget keeps the old reading). When the family is not
+  read, the info "only when `opt::extra` is selected" stays, never a warning.
+  More than 14 candidate subsetters of one superset are judged per valid
+  configuration too (exact branch and bound with a node budget); a search that
+  runs out of budget is reported as not checked, never as a pass. A sum needing
+  none reads "in every configuration".
 - **`enum-value-not-member`.** `attribute c : Color = Color::blue` where `Color`
   has no `blue`, a literal of another enumeration, or a bare number where the
   enumeration specialises no attribute definition (§7.8.2). A warning.

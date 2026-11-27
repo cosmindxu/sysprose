@@ -45,7 +45,7 @@ import { definitionEndsOf, endPairs } from '../semantics/port-conformance';
 import { resolveQualifiedNameFull } from '../semantics';
 import { childNamed, findTypeFeature, resolveFullName } from '../semantics/bind';
 import { evaluate, parseExpr } from '../semantics/expr';
-import { configurationsSelecting, familyConfigurations, solveCutFamily } from '../semantics/variability';
+import { configurationsSelecting, familyConfigurations, solveCutAny } from '../semantics/variability';
 import type { ExprNode } from '../semantics/expr';
 import { effectiveFeaturesWithLibrary } from '../semantics/featuring';
 import { effectiveNameOf, generalizationsOf } from '../semantics/inheritance';
@@ -352,7 +352,7 @@ const CLIQUE_NODE_BUDGET = 500_000;
  * undecided family keeps the info reading, never a warning. When the enumeration is read, every valid
  * configuration is judged on its own: each disjoint clique among the features it keeps that exceeds is reported once,
  * with the configurations it exceeds in (warning only when every valid configuration has it). Past the V4 cap the exact
- * search `solveCutFamily` decides the heaviest clique's selection (witness configuration; warning when no valid
+ * search `solveCutAny` decides the disjunction of every exceeding clique's selection (witness configuration; warning when no valid
  * configuration avoids it; unknown = old info reading), not per configuration. More than 14 candidates: the heaviest
  * clique is an exact branch and bound (node budget; abandoned = not searched), judged by the family reading above. A sum that needs no variant is the warning
  * and holds "in every configuration".
@@ -443,7 +443,16 @@ export const disjointSumExceeds: ValidationRule = {
         return found.filter((c, i) => !found.some((d, j) => j !== i && c.every((x) => d.includes(x)) && (d.length > c.length || (d.length === c.length && j < i))));
       };
       const top = heaviest(cand);
-      if (top === null) continue;
+      if (top === null) {
+        out.push({
+          id: `disjoint-sum-exceeds#${n++}`,
+          ruleId: 'disjoint-sum-exceeds',
+          severity: 'info',
+          message: `${qualifiedLabel(model, sup)} ${show(hi)}: the search for disjoint subsetters whose lower bounds exceed its upper bound ran out of budget, so it is not checked (§7.6.1, KerML disjoining).`,
+          elementId: supId,
+        });
+        continue;
+      }
       const { best, bestSum } = top;
       if (best.length < 2 || bestSum <= hi.hi) continue;
       const describe = (clique: ElementId[]): string => clique.map((s) => `${featureLabel(model, model.require(s))} ${show({ lo: lowers.get(s)!, hi: statedRange(model.require(s))!.hi })}`).join(', ');
@@ -452,15 +461,51 @@ export const disjointSumExceeds: ValidationRule = {
         for (const g of [...supGuard, ...clique.flatMap((s) => guards.get(s)!)]) m.set(g.id, g);
         return m;
       };
+      /** The variant selections of every minimal exceeding clique (deduplicated); `null` past the search or count budget. */
+      const exceedingSelections = (): string[][] | null => {
+        const groups = new Map<string, string[]>();
+        let nodes = 0;
+        let over = false;
+        const grow = (chosen: ElementId[], rest: ElementId[], sum: number): void => {
+          if (over) return;
+          if (++nodes > CLIQUE_NODE_BUDGET || groups.size > 200) {
+            over = true;
+            return;
+          }
+          if (chosen.length >= 2 && sum > hi.hi) {
+            const ids = [...neededOf(chosen).keys()].sort();
+            groups.set(ids.join('|'), ids);
+            return;
+          }
+          const ext = rest.filter((s) => chosen.every((c) => compat(c, s)) && guardsCompatible(supGuard, guards.get(s)!));
+          if (sum + ext.reduce((t, s) => t + lowers.get(s)!, 0) <= hi.hi) return;
+          ext.forEach((s, i) => grow([...chosen, s], ext.slice(i + 1), sum + lowers.get(s)!));
+        };
+        grow([], cand, 0);
+        return over ? null : [...groups.values()];
+      };
       const allGuardIds = [...new Set([...supGuard, ...cand.flatMap((s) => guards.get(s)!)].map((g) => g.id))];
       const cfgs = allGuardIds.length > 0 ? familyConfigurations(model, allGuardIds) : null;
-      if (cfgs !== null && cfgs.length > 0 && cand.length <= 14) {
+      if (cfgs !== null && cfgs.length > 0) {
         // Per valid configuration: every exceeding clique among the features that configuration keeps.
         const byClique = new Map<string, { clique: ElementId[]; where: string[][] }>();
+        const unchecked: string[][] = [];
         for (const cfg of cfgs) {
           const keeps = (s: ElementId): boolean => guards.get(s)!.every((g) => cfg.kept.has(g.id));
           if (!supGuard.every((g) => cfg.kept.has(g.id))) continue;
-          for (const clique of exceeding(cand.filter(keeps))) {
+          const pool = cand.filter(keeps);
+          let found: ElementId[][];
+          if (cand.length <= 14) found = exceeding(pool);
+          else {
+            // Past 14 candidates: the heaviest clique among the kept features decides whether one exceeds (branch and bound).
+            const top = heaviest(pool);
+            if (top === null) {
+              unchecked.push(cfg.label);
+              continue;
+            }
+            found = top.best.length >= 2 && top.bestSum > hi.hi ? [top.best] : [];
+          }
+          for (const clique of found) {
             const key = [...clique].sort().join('|');
             const e = byClique.get(key) ?? { clique, where: [] };
             e.where.push(cfg.label);
@@ -479,6 +524,15 @@ export const disjointSumExceeds: ValidationRule = {
             elementId: clique[0]!,
           });
         }
+        if (unchecked.length > 0) {
+          out.push({
+            id: `disjoint-sum-exceeds#${n++}`,
+            ruleId: 'disjoint-sum-exceeds',
+            severity: 'info',
+            message: `${qualifiedLabel(model, sup)} ${show(hi)}: the search for disjoint subsetters whose lower bounds exceed its upper bound ran out of budget in ${unchecked.length} of ${cfgs.length} valid configurations, so those are not checked (§7.6.1, KerML disjoining).`,
+            elementId: supId,
+          });
+        }
         continue;
       }
       const names = describe(best);
@@ -490,18 +544,21 @@ export const disjointSumExceeds: ValidationRule = {
         // Cut or unread enumeration, or a family that does not hold every variant: the selection-only reading, never a warning.
         const fam = configurationsSelecting(model, [...needed.keys()]);
         if (fam === null) {
-          // Enumeration cut at the cap: the exact search decides whether the selection is valid / unavoidable.
-          const sol = solveCutFamily(model, [...needed.keys()]);
-          // 'excluded' proves only that THIS (heaviest) clique's selection is invalid; a lighter clique may still exceed
-          // in a valid configuration, so it keeps the selection-only info reading (never silence).
-          if (sol !== null && sol !== 'excluded') {
-            if (sol.every) {
-              severity = 'warning';
-              when = 'in every valid configuration';
-              note = '';
-            } else {
-              when = `exceeds in at least one valid configuration: ${sol.witness.join(', ')}`;
-              note = '';
+          // Enumeration cut at the cap: the exact search decides over EVERY exceeding clique (a disjunction of their
+          // selections), so an excluded heaviest clique does not silence a lighter one that is valid.
+          const groups = exceedingSelections();
+          if (groups !== null) {
+            const sol = groups.some((g) => g.length === 0) ? { witness: [] as string[], every: true } : solveCutAny(model, groups);
+            if (sol === 'excluded') continue;
+            if (sol !== null) {
+              if (sol.every) {
+                severity = 'warning';
+                when = 'in every valid configuration';
+                note = '';
+              } else {
+                when = `exceeds in at least one valid configuration: ${sol.witness.join(', ')}`;
+                note = '';
+              }
             }
           }
         }

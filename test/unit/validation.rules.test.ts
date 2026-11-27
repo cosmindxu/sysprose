@@ -992,23 +992,62 @@ describe('structural fences wave 2 (BD3, BD6-BD9, BD11)', () => {
       const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part extra : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::extra; ${pad(n)} ${c} } }`);
       return runRule(r.model!, 'disjoint-sum-exceeds');
     };
-    // (the excluded selection is not compared: the enumeration judges every clique per configuration and is silent;
-    // past the cap only the heaviest clique is searched, so it keeps the selection-only info, checked below)
     for (const c of ['', 'assert constraint c { opt == opt::extra }', 'assert constraint c { pad0 == pad0::a0 implies opt == opt::extra }']) {
       const small = await run2(c, 2);
       const cut = await run2(c, 20);
       expect(cut.map((d) => d.severity)).toEqual(small.map((d) => d.severity));
     }
-    // forced selection: warning past the cap; avoidable selection: info with a witness; excluded heaviest clique: the selection-only info (a lighter clique may still exceed)
+    // forced selection: warning past the cap; avoidable selection: info with a witness
     const w = await run2('assert constraint c { opt == opt::extra }', 20);
     expect(w[0]!.severity).toBe('warning');
     expect(w[0]!.message).toContain('in every valid configuration');
     const i = await run2('', 20);
     expect(i[0]!.severity).toBe('info');
     expect(i[0]!.message).toContain('exceeds in at least one valid configuration: ');
+    // the only exceeding clique is excluded by the constraints: decided, silent
     const x = await run2('assert constraint c { not (opt == opt::extra) }', 20);
-    expect(x.map((d) => d.severity)).toEqual(['info']);
-    expect(x[0]!.message).toContain('the family constraints are not read here');
+    expect(x).toEqual([]);
+  }, 120000);
+
+  it('BD6 past the V4 cap: an excluded heaviest clique does not silence a lighter exceeding one', async () => {
+    const pad = Array.from({ length: 20 }, (_, k) => `variation part pad${k} { variant part a${k}; variant part b${k}; }`).join(' ');
+    const run2 = async (c: string) => {
+      const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [4]; part front : W [3] subsets wheels; variation part opt { variant part x : W [3] subsets wheels; variant part y : W [2] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::x; disjoint front from opt::y; ${pad} ${c} } }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    const d = await run2('assert constraint c { not (opt == opt::x) }');
+    expect(d).toHaveLength(1);
+    expect(d[0]!.message).toContain('exceeds in at least one valid configuration');
+    expect(await run2('assert constraint c { opt == opt::none }')).toEqual([]);
+  }, 120000);
+
+  it('BD6 with more than 14 candidates: per configuration listing (some, all, none)', async () => {
+    const fill = Array.from({ length: 15 }, (_, k) => `part f${k} : W [0] subsets wheels;`).join(' ') + ' ' + Array.from({ length: 14 }, (_, k) => `disjoint f${k} from f${k + 1};`).join(' ');
+    const mk = async (hiSup: number, c: string) => {
+      const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [${hiSup}]; part front : W [3] subsets wheels; variation part opt { variant part x : W [3] subsets wheels; variant part y : W [3] subsets wheels; variant part none : W [0..1]; } disjoint front from opt::x; disjoint front from opt::y; ${fill} ${c} } }`);
+      return runRule(r.model!, 'disjoint-sum-exceeds');
+    };
+    const some = await mk(4, '');
+    expect(some).toHaveLength(2);
+    expect(some.every((d) => d.severity === 'info')).toBe(true);
+    expect(some.some((d) => d.message.includes('opt = opt::x')) && some.some((d) => d.message.includes('opt = opt::y'))).toBe(true);
+    const all = await mk(4, 'assert constraint c { opt == opt::x }');
+    expect(all).toHaveLength(1);
+    expect(all[0]!.severity).toBe('warning');
+    expect(all[0]!.message).toContain('in every valid configuration');
+    expect(await mk(8, '')).toEqual([]);
+    expect(await mk(4, 'assert constraint c { opt == opt::none }')).toEqual([]);
+  });
+
+  it('BD6 with more than 14 candidates: an exhausted search is reported, never a pass', async () => {
+    const n = 36;
+    const subs = Array.from({ length: n }, (_, k) => `part s${k} : W [1] subsets wheels;`).join(' ');
+    let ds = '';
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if ((i * 7 + j * 13) % 10 !== 0) ds += `disjoint s${i} from s${j}; `;
+    const r = await loadModelText(`package P { part def W; part def Car { part wheels : W [100]; ${subs} ${ds} } }`);
+    const d = runRule(r.model!, 'disjoint-sum-exceeds');
+    expect(d.map((x) => x.severity)).toEqual(['info']);
+    expect(d[0]!.message).toContain('ran out of budget');
   }, 120000);
 
   it('BD6 with more than 14 candidate subsetters: the exact clique search finds the exceeding clique, and stays silent without one', async () => {
