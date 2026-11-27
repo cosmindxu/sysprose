@@ -1879,7 +1879,9 @@ and §21.4–21.11.
       three or more ends is judged pair by pair with the binary logic (feature matching, nested ports, nominal port
       definition), each pair once, and a pair with an unresolved end is skipped. Out/out and in/in pairs are not findings in an
       n-ary connection (one source may feed several sinks, several sources one sink), so the direction check and the
-      direction reason of feature matching are dropped there; the binary case is unchanged.
+      direction reason of feature matching are dropped there; the binary case is unchanged. Coordinator fence (wave 11): only a
+      pair on opposite sides (`portSide`: one end all-in, the other all-out) is judged; two sinks, two sources, or an end with no
+      directed feature are not compared (a source whose type specialises both sinks' types conforms to each; may under-report).
       Still open: a post-name multiplicity on a usage body end (the end's own, not read). [if-compat]
       Done (conn-chains): chain ends (`a.p`) of the list and body forms materialise as in the binary form and, with the binary
       form, are checked when no part on the chain has several instances; a body end's own multiplicity other than 1..1 is flagged.

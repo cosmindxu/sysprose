@@ -5048,9 +5048,11 @@ any of these at the language level:
   features match (`out item m : Msg` against `in item m : Msg`). Where neither
   port has a directed feature, the old question stays: a port definition in
   common, and not `out` to `out` on the usages. A connection or interface of three
-  or more ends is judged pair by pair, each pair once; a same-direction pair is
-  not a finding there (several sources may feed one sink and the reverse), and a
-  pair with an unresolved end is not judged.
+  or more ends is judged pair by pair, each pair once, but only a pair on
+  opposite sides (one end all `in`, the other all `out`): two sinks or two
+  sources are not compared with each other (several sources may feed one sink
+  and the reverse), nor is an end with no directed feature, and a pair with an
+  unresolved end is not judged.
   The comparison goes further than the directed features: an undirected
   feature of one port (an attribute, item, part, reference, occurrence,
   connection, action, calculation, state, constraint, requirement, case or
