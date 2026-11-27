@@ -236,8 +236,10 @@ AcceptClause infers AcceptClause:
 
 // The delay of a time trigger: a number with an optional unit bracket (`5[min]`, `2`). It is NOT a general Expression:
 // that would read the `if` of a following guard as a conditional expression (`accept b if n < 0 then s`).
+// A qualified name (`accept after timeout`, §7.18.3) is read as the duration the attribute it names is bound to.
 DelayExpr infers Expression:
-    {infer NumberLiteral} value=NUMBER ({infer BracketExpr.base=current} '[' arg=Expression ']')?;
+      {infer NumberLiteral} value=NUMBER ({infer BracketExpr.base=current} '[' arg=Expression ']')?
+    | {infer RefExpr} ref=QualifiedName ({infer BracketExpr.base=current} '[' arg=Expression ']')?;
 
 GuardClause infers GuardClause:
       // `[g]` is UML's guard; in SysML v2 a guard is `if g` and `[g]` after the payload is its multiplicity (§7.17.8): parsed so the

@@ -560,7 +560,7 @@ export interface BracketExpr extends langium.AstNode {
     readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'BracketExpr';
     arg: Expression;
-    base: Expression | NumberLiteral;
+    base: Expression | NumberLiteral | RefExpr;
 }
 
 export const BracketExpr = 'BracketExpr';

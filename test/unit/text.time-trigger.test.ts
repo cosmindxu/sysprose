@@ -102,4 +102,20 @@ describe('accept after <delay> (SysML v2 §7.18.3)', () => {
     // It was `unaccounted` (the whole machine refused) while the profile said an `after` trigger is offered as an event.
     expect(row?.account).toBe('walked');
   });
+
+  it('reads and round-trips `accept after timeout` (a name) as a time trigger, keeping a following guard', async () => {
+    for (const acc of ['accept after timeout', 'accept after timeout if 1 > 0']) {
+      const { model, report } = await load(machine(acc));
+      expect(report.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+      expect(find(model, 'P::M::on_off').attrs.timeTrigger).toBe('timeout');
+      expect(find(model, 'P::M::on_off').attrs.trigger).toBeUndefined();
+      const again = await load(serializeElement(model!, find(model, 'P').id));
+      expect(find(again.model, 'P::M::on_off').attrs.timeTrigger).toBe('timeout');
+    }
+  });
+
+  it('still refuses a payload name followed by a name', async () => {
+    const { report } = await load(machine('accept TurnOn timeout'));
+    expect(report.diagnostics.map((d) => d.code)).toContain('mapper/accept-delay-unread');
+  });
 });
