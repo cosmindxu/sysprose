@@ -289,7 +289,7 @@ export function parallelRefusal(model: Model, machineId: ElementId): ParallelRef
     }
     // — the explorer's own three —
     const regionTrs = view.transitions.filter((t) => t.source?.[0] !== undefined && inside.has(t.source[0]));
-    const dwellWhy = regionDwellRefusal(regionTrs, (t) => regionOf(t.source![0]), name(p.id));
+    const dwellWhy = regionDwellRefusal(model, regionTrs, (t) => regionOf(t.source![0]), name(p.id));
     if (dwellWhy !== undefined) return out(p.id, dwellWhy);
     // The states the machine is in while `p` is: `p` and the states that hold it, up to the machine's root.
     const holders = new Set<ElementId>([p.id]);
