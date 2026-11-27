@@ -8,6 +8,7 @@ import { runStateMachine } from '@semantics/index';
 import { behaviourReport, SPECIALISATION_CODE } from '../../src/semantics/mc/patterns';
 import { propertyVerdictLines, textOf } from '../../src/semantics/mc/report-lines';
 import { checkConformance } from '../../src/semantics/mc/conformance';
+import { checkInterfacePair, interfacesLines, interfacesReport } from '../../src/semantics/mc/interfaces';
 import { isKnownCode } from '@text/langium/diagnostic-codes';
 
 const BASE = `
@@ -100,5 +101,122 @@ describe('S5 — what is not claimed', () => {
     const out = checkConformance(model, id('P::S2'));
     expect(out.kind).toBe('inconclusive');
     expect(row(model, id('P::S2'))!.detail).toContain('dwell');
+  });
+});
+
+/**
+ * Interface protocol compatibility (`--interfaces`, `../../src/semantics/mc/interfaces`): the two connected parts'
+ * machines composed on the items their ports carry (de Alfaro & Henzinger 2001).
+ */
+describe('interface automata — check-behaviour --interfaces', () => {
+  const HEAD = `
+  item def Req; item def Resp;
+  port def ClientP { out item rq : Req; in item rs : Resp; }
+  port def ServerP { in item rq : Req; out item rs : Resp; }`;
+  const CLIENT = `
+  part def Client { port c : ClientP;
+    action ask { send Req via c; }
+    exhibit state m { entry; then idle; state idle; state wait;
+      transition t1 first idle accept go do ask then wait;
+      transition t2 first wait accept Resp via c then idle; } }`;
+  const SYS = `part sys { part cl : Client; part sv : Server; connect cl.c to sv.s; }`;
+
+  async function run(body: string) {
+    const r = await loadModelText(`package P {${HEAD}${body}\n}\n`, { fileName: 'i.sysml', library: 'none' });
+    expect(r.report.diagnostics).toEqual([]);
+    const out = interfacesReport(r.model!);
+    expect(out.pairs).toHaveLength(1);
+    return { out: out.pairs[0], text: interfacesLines(r.model!, out).join('\n'), model: r.model! };
+  }
+
+  it('a compatible request/response pair is compatible, and the flag is off by default', async () => {
+    const { out, text } = await run(`${CLIENT}
+  part def Server { port s : ServerP;
+    action reply { send Resp via s; }
+    exhibit state m { entry; then idle; state idle; state busy;
+      transition t1 first idle accept Req via s then busy;
+      transition t2 first busy accept done do reply then idle; } }
+  ${SYS}`);
+    expect(out.kind).toBe('compatible');
+    expect(text).toContain('are compatible over');
+    expect(text).toContain('untimed');
+  });
+
+  it('an unspecified reception: the server has no transition taking the request, with the product trace', async () => {
+    const { out } = await run(`${CLIENT}
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then idle; state idle; state busy;
+      transition t1 first idle accept ping then busy; } }
+  ${SYS}`);
+    expect(out.kind).toBe('incompatible');
+    if (out.kind !== 'incompatible') return;
+    const f = out.findings.find((x) => x.kind === 'unspecified-reception')!;
+    expect(f.item).toBe('rq');
+    expect(f.sender).toBe('A');
+    expect(f.forced).toBe(false); // reachable only when the environment offers `go`
+    expect(f.witness.map((s) => s.label)).toEqual(['open', 'A: go / send rq via c; B: no transition accepting rq']);
+  });
+
+  it('a send nothing triggers is forced: no environment choice avoids the unspecified reception', async () => {
+    const { out } = await run(`
+  part def Client { port c : ClientP;
+    action ask { send Req via c; }
+    exhibit state m { entry; then idle; state idle; state wait;
+      transition t1 first idle do ask then wait; } }
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then idle; state idle; state busy; transition t1 first idle accept ping then busy; } }
+  ${SYS}`);
+    expect(out.kind).toBe('incompatible');
+    if (out.kind === 'incompatible') expect(out.findings[0]).toMatchObject({ kind: 'unspecified-reception', forced: true });
+  });
+
+  it('a deadlock: both machines wait for the other and nothing is enabled', async () => {
+    const { out } = await run(`
+  part def Client { port c : ClientP;
+    exhibit state m { entry; then idle; state idle; state done;
+      transition t first idle accept Resp via c then done; } }
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then idle; state idle; state done;
+      transition t first idle accept Req via s then done; } }
+  ${SYS}`);
+    expect(out.kind).toBe('incompatible');
+    if (out.kind !== 'incompatible') return;
+    const d = out.findings.find((x) => x.kind === 'deadlock')!;
+    expect(d.witness.map((s) => s.label)).toEqual(['open']);
+  });
+
+  it('a send the walk cannot attribute to a port gives no verdict, with the reason', async () => {
+    const { out } = await run(`
+  part def Client { port c : ClientP;
+    action ask { send Req; }
+    exhibit state m { entry; then idle; state idle; state wait;
+      transition t1 first idle accept go do ask then wait; } }
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then idle; state idle; state busy;
+      transition t1 first idle accept Req via s then busy; } }
+  ${SYS}`);
+    expect(out.kind).toBe('no-verdict');
+    if (out.kind === 'no-verdict') expect(out.reason).toContain('without a port');
+  });
+
+  it('a guard gives no verdict; a cut walk is undecided, never compatible', async () => {
+    const guarded = await run(`
+  part def Client { port c : ClientP; attribute n : Integer = 0;
+    exhibit state m { entry; then idle; state idle; state wait;
+      transition t1 first idle accept go if n > 1 then wait; } }
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then idle; state idle; state busy; transition t1 first idle accept ping then busy; } }
+  ${SYS}`);
+    expect(guarded.out.kind).toBe('no-verdict');
+    const r = await loadModelText(`package P {${HEAD}${CLIENT}
+  part def Server { port s : ServerP;
+    action reply { send Resp via s; }
+    exhibit state m { entry; then idle; state idle; state busy;
+      transition t1 first idle accept Req via s then busy;
+      transition t2 first busy accept done do reply then idle; } }
+  ${SYS}
+}`, { fileName: 'i.sysml', library: 'none' });
+    const conn = r.model!.all().find((e) => e.eClass === 'ConnectionUsage')!;
+    expect(checkInterfacePair(r.model!, conn.id, { maxStates: 1 }).kind).toBe('undecided');
   });
 });

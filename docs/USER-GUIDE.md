@@ -4910,6 +4910,29 @@ guard, a dwell or a parallel state, or a machine the walk refuses gives
 `inconclusive` and says why (`no conformance claimed`). Without the flag nothing
 changes.
 
+**Connected parts' protocols are checked against each other, on request.**
+`check-behaviour --interfaces` adds the interface compatibility of each binary
+port-to-port connection that touches the machine's part, after de Alfaro and
+Henzinger, "Interface Automata" (ESEC/FSE 2001). The two parts' machines (each
+part must hold exactly one flat machine) are composed on the items the connected
+ports carry: `accept X via p` is an input, a `send X via p` in the effect action
+of a transition (`do ask`) is an output, an output of one side fires together
+with an input of the other (synchronous rendezvous), and every other label (an
+event no port item carries, a completion step, an item of another port)
+interleaves, as if the environment offered it whenever asked. The product is
+walked exhaustively and two things are reported, each with the product trace that
+reaches it: an **unspecified reception** (one side can send `X` where the other
+has, in its current state, no transition accepting `X`; marked `forced` when the
+components alone drive the run there, otherwise reachable only when the
+environment offers the events in the trace) and a **deadlock** (no step enabled
+and the machines not both final). Assumptions: untimed, no guards, no queues
+(a send is received at once), two parts. A pair with a send or accept this
+reading cannot attribute to one port and one item, a guard, a dwell, a nested or
+parallel state, an `inout` item, ports that do not conform or more than one
+machine on a part gets `no verdict` with the reason; a walk cut by its bound is
+`undecided`, never compatible. There is no default row and no validation rule:
+without the flag nothing changes.
+
 **Time.** A discrete `after(n)` label and a SysML v2 §7.18.3 time trigger
 (`accept after 5`, `accept after 5[min]`, offered as `after 5`, `after 5[min]`)
 are both offered as a named event at any time, with no clock in the walk; every report of

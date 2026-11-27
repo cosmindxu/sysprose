@@ -966,6 +966,11 @@ export const COMMANDS: readonly CommandSpec[] = [
         doc: 'Where the machine specialises another (`state def X :> Y`), add one row saying whether it preserves the traces of its general: every run of Y over the events Y names is a run X can follow, read off both exhaustive walks (a failure carries the trace of Y X cannot follow, under verification/specialisation-not-preserved; a cut, undecided, timed or parallel walk is inconclusive, naming why). Never a claim that X refines Y',
       },
       {
+        name: 'interfaces',
+        kind: 'boolean',
+        doc: 'Add the interface protocol compatibility of each binary port-to-port connection that touches the machine\'s part (de Alfaro and Henzinger, Interface Automata, 2001): the two parts\' machines are composed synchronously on the items the connected ports carry (`accept X via p` is an input, a `send X via p` in a transition\'s effect action an output; every other label comes from the environment) and walked exhaustively, reporting an unspecified reception (one side can send X, the other has no transition accepting it) or a deadlock, each with the product trace. A pair with a send or accept it cannot attribute to one port and item, a guard, a dwell, a nested or parallel state, or more than one machine gets no verdict and the reason; a cut walk is undecided, never compatible. Off by default: it adds no default row and changes no exit code',
+      },
+      {
         name: 'cover-required',
         kind: 'boolean',
         doc: 'Exit 1 on a `cover` property that came back not covered, adding verification/cover-required (an error) beside the verification/not-covered line. It raises the exit code and NEVER the claim: the row still says `not covered`, never `fail`, because a missing behaviour is not a violated requirement. Not applied where the row is inconclusive under verification/guard-undetermined — the run says so beside the row, counting how many of the cover\'s unreached states sit behind a guard over an attribute with no declared value, and stays at exit 2',
