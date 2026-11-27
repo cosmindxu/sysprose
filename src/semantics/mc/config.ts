@@ -994,7 +994,8 @@ export function isCompletion(tr: ElementRecord): boolean {
  * `after 5`, `after 5[min]` — the text as written, so two different delays or units are two different events.
  * `undefined` for a transition that carries none. The walk has no clock, so it offers this label as a named
  * event at any time (a clock-free over-approximation, see the `time` field of the semantic profile); the
- * interpreter, which has no clock for the unit either, still refuses such a machine.
+ * interpreter runs such a machine on an abstract discrete clock where the duration is a literal positive integer
+ * ({@link dwellTicks}), and refuses it otherwise.
  */
 export function timeTriggerLabel(tr: ElementRecord): string | undefined {
   const t = tr.attrs.timeTrigger;
@@ -1027,6 +1028,24 @@ export function afterDuration(tr: ElementRecord): number | undefined {
     return Number.isFinite(n) ? n : 0;
   }
   return undefined;
+}
+
+/**
+ * The number of ticks of the abstract discrete clock a dwell waits (SysML v2 §7.18.3 `accept after n`), where the
+ * duration is a literal positive integer — `5`, or `5[min]` / `5 [s]` with a unit the abstract tick ignores — and
+ * `undefined` for everything else (an expression, zero, a fraction, a transition that is no dwell). The interpreter
+ * runs, and a witness replays through, only a dwell this reads: no real time is modelled, a tick is one abstract step.
+ */
+export function dwellTicks(tr: ElementRecord): number | undefined {
+  const tt = tr.attrs.timeTrigger;
+  let n: number | undefined;
+  if (typeof tt === 'string' && tt.trim() !== '') {
+    const m = /^([0-9]+)\s*(\[[^\]]*\])?$/.exec(tt.trim());
+    n = m ? Number(m[1]) : undefined;
+  } else {
+    n = afterDuration(tr);
+  }
+  return n !== undefined && Number.isInteger(n) && n >= 1 ? n : undefined;
 }
 
 /**

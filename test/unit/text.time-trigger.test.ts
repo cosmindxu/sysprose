@@ -60,11 +60,40 @@ describe('accept after <delay> (SysML v2 §7.18.3)', () => {
     expect(find(again.model, 'P::M::on_off').attrs.timeTrigger).toBe('5[min]');
   });
 
-  it('does not run a machine with a time trigger: the interpreter has no clock', async () => {
-    const { model } = await load(machine('accept after 5[min]'));
-    const res = runStateMachine(model!, find(model, 'P::M').id, ['TurnOn']);
-    expect(res.complete).toBe(false);
-    expect(res.unopened).toContain('time trigger');
+  it('runs a machine with a literal time trigger on an abstract tick: fires once n ticks have passed in its state', async () => {
+    const { model } = await load(machine('accept after 3[min]'));
+    const id = find(model, 'P::M').id;
+    const tick = { advance: 1 };
+    const after = (steps: any[]) => runStateMachine(model!, id, steps).finalState;
+    const on = find(model, 'P::M::on').id;
+    const off = find(model, 'P::M::off').id;
+    expect(after(['TurnOn'])).toBe(on);
+    expect(after(['TurnOn', tick, tick])).toBe(on);
+    expect(after(['TurnOn', tick, tick, tick])).toBe(off);
+    // the counter counts from entry: the ticks spent in `off` do not count towards `on`'s dwell
+    expect(after([tick, tick, tick, 'TurnOn', tick, tick])).toBe(on);
+  });
+
+  it('a self-transition re-enters its state and resets the counter', async () => {
+    const text = machine('accept after 3').replace('transition on_off', 'transition on_on first on accept Again then on;\n    transition on_off');
+    const { model } = await load(text.replace('item def TurnOn;', 'item def TurnOn; item def Again;'));
+    const id = find(model, 'P::M').id;
+    const tick = { advance: 1 };
+    const on = find(model, 'P::M::on').id;
+    const off = find(model, 'P::M::off').id;
+    const fin = (steps: any[]) => runStateMachine(model!, id, steps).finalState;
+    expect(fin(['TurnOn', tick, tick, tick])).toBe(off);
+    expect(fin(['TurnOn', tick, tick, 'Again', tick, tick])).toBe(on);
+    expect(fin(['TurnOn', tick, tick, 'Again', tick, tick, tick])).toBe(off);
+  });
+
+  it('refuses a duration that is not a literal positive integer, saying so', async () => {
+    for (const d of ['0', '1.5']) {
+      const { model } = await load(machine(`accept after ${d}`));
+      const res = runStateMachine(model!, find(model, 'P::M').id, ['TurnOn']);
+      expect(res.complete).toBe(false);
+      expect(res.unopened).toContain('literal positive');
+    }
   });
 
   it('walks the time-triggered edge as a named event, never a guessed clock (S6: the profile text and the walk now agree)', async () => {

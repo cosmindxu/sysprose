@@ -117,9 +117,11 @@ export const SEMANTIC_PROFILE: readonly ProfileField[] = [
       'SysML v2 §7.18.3 time trigger (`accept after 5`, `accept after 5[min]`, offered as `after 5`, ' +
       '`after 5[min]`), as a named event at any time, which over-approximates time — a state reachable only ' +
       'after a dwell is treated as reachable, so the unreachable and dead lists stay lower bounds, and every ' +
-      'report of such a machine carries a `timing` line saying so. A safety pass holds under every timing; a ' +
-      'liveness verdict, a cover and a witness through a dwell are not made (the interpreter has no clock ' +
-      'for the unit either, and still refuses to run such a machine).',
+      'report of such a machine carries a `timing` line saying so. A safety pass holds under every timing. ' +
+      'The interpreter runs a literal positive-integer dwell on an abstract tick (a state\u2019s counter resets on ' +
+      'every entry, `after n` fires once n ticks have passed in it), and a cover, a refutation or a liveness ' +
+      'witness through such a dwell is published only where it replays on that clock, ticks inserted; a dwell ' +
+      'of any other duration is not run and no liveness verdict is made over it. No durations or real time are claimed.',
     provenance: 'src/semantics/mc/config.ts — afterDuration, advanceClock',
   },
 ];

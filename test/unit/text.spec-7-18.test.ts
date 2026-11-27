@@ -322,7 +322,7 @@ describe('§7.18.3 transition usages', () => {
     expect(r.walk.exhaustive).toBe(true);
   });
 
-  it('OnOff2: two transitions; off_on trigger TurnOn via commPort; on_off timeTrigger 5[min]; the run refuses the time trigger, the walk offers it as an event', async () => {
+  it('OnOff2: two transitions; off_on trigger TurnOn via commPort; on_off timeTrigger 5[min]; the run takes the time trigger on an abstract tick, the walk offers it as an event', async () => {
     const r = await run(EX.OnOff2, 'Spec::OnOff2');
     expect(stray(r.l.report)).toEqual([]);
     const m = r.l.model;
@@ -335,7 +335,7 @@ describe('§7.18.3 transition usages', () => {
       [['Spec::OnOff2::off'], ['Spec::OnOff2::on']],
       [['Spec::OnOff2::on'], ['Spec::OnOff2::off']],
     ]);
-    expect(r.run.unopened).toMatch(/time trigger/);
+    expect(r.run.unopened).toBeUndefined(); // sm-clock: a literal dwell runs on the abstract tick
     // S6: the walk offers the time trigger as a named event (clock-free over-approximation); only the run refuses.
     expect(r.walk.exhaustive).toBe(true);
     expect(constructs(r.walk)).toEqual([]);
@@ -447,7 +447,7 @@ describe('§7.18.3 transition usages', () => {
     expect(constructs(r.walk)).toContain('edge-not-walked');
   });
 
-  it('OnOff6: accept/then shorthands read; `then stop` targets the terminate action `action stop terminate;`; `then done` binds to the containing state\'s final (done) node; the run still refuses the time trigger, the walk offers it as an event', async () => {
+  it('OnOff6: accept/then shorthands read; `then stop` targets the terminate action `action stop terminate;`; `then done` binds to the containing state\'s final (done) node; the run takes the time trigger on an abstract tick, the walk offers it as an event', async () => {
     const r = await run(EX.OnOff6, 'Spec::OnOff6');
     expect(stray(r.l.report)).toEqual([]);
     const m = r.l.model;
@@ -460,7 +460,7 @@ describe('§7.18.3 transition usages', () => {
       ['5[min]', undefined, 'Spec::OnOff6::on', 'Spec::OnOff6::«DoneNode»'],
     ]);
     expect(all[2].attrs.targetRef).toBeUndefined();
-    expect(r.run.unopened).toMatch(/time trigger/);
+    expect(r.run.unopened).toBeUndefined(); // sm-clock: a literal dwell runs on the abstract tick
     // S6: only the run refuses the time trigger now; the walk offers it as a named event.
     expect(r.walk.exhaustive).toBe(true);
     expect(constructs(r.walk)).not.toContain('transition-without-endpoints');

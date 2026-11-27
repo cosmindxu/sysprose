@@ -4912,12 +4912,24 @@ changes.
 
 **Time.** A discrete `after(n)` label and a SysML v2 §7.18.3 time trigger
 (`accept after 5`, `accept after 5[min]`, offered as `after 5`, `after 5[min]`)
-are both offered as a named event at any time, with no clock; every report of
+are both offered as a named event at any time, with no clock in the walk; every report of
 such a machine carries a `timing  over-approximated: … is offered as an event at
-any time` line. A safety pass holds under every timing; `existence` and
-`response` are `inconclusive` (nothing here says when time passes), a cover or a
-witness through the dwell is withheld because the interpreter, which has no clock
-for the unit either, does not run such a machine.
+any time` line. The interpreter has an abstract discrete clock: a tick advances
+every active state's counter by one, a state's counter starts at 0 on every
+entry (a self-transition re-enters its state and resets it), and a dwell `after n`
+(a literal positive whole number; the unit of `5[min]` is ignored) fires once n
+ticks have passed in its source state, under the usual priority and tie-break
+rules. A duration that is not a literal positive integer (`after 0`, `after 1.5`)
+is not run, and the machine keeps its old readings. A safety pass and an
+unreachable-state result keep the untimed over-approximation (the clocked runs
+are a subset of it), so they do not change. A witness through a dwell (a cover,
+a refutation, a lasso, a violating prefix) is published only where it replays on
+that clock, the n ticks inserted before the dwell step and no other transition
+firing first; one that does not (a shorter competing dwell, a completion that
+fires before) stays `inconclusive` under `verification/witness-not-replayed`.
+`existence` and `response` over a machine whose dwells are all such literals
+are decided on the same graph. Nothing is claimed about durations or real time:
+the tick is abstract and `5[min]` means five ticks.
 
 **Source of truth:** `src/semantics/mc/patterns.ts` (the catalogue, the monitor
 and the bad-prefix search), `src/semantics/mc/atoms.ts` (the five atom
