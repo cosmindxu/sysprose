@@ -2256,35 +2256,18 @@ describe('`cover` — a positive reachability intent gets a claim word of its ow
     return { model: m, machineId: sm.id };
   }
 
-  it('the two-dwell machine: the claim survives, the warrant is re-worded, and the bare wording is the wrong answer', () => {
-    // No `.sysml` spelling exists — `accept after(n)` is a parse error — so
-    // this machine is factory-built and driven in-process. The walk offers
-    // `after(10)` as a named event with no dwell test and finds a one-step
-    // witness into `B`, a state the interpreter enters on NO run: it fires
-    // `enabled[0]` at every advance. `reach` reporting `B` reachable only
-    // shrinks an absence list; `cover` republishing the same trace as "a run
-    // this semantics admits" would flip the direction, and that sentence is
-    // banned verbatim. The claim is kept — a bound can hide a witness and can
-    // never invent one — and the warrant names the mechanism.
+  it('the two-dwell machine (sm-clock): the witness into B does not replay on the abstract clock, so no cover is published; A replays', () => {
+    // The walk offers `after(10)` as an event and finds a one-step witness into `B`; on the interpreter's tick
+    // clock `after(5)` fires first, so B is entered on NO run. The cover used to be published with a re-worded
+    // warrant; it is now withheld (never a claim about a run the clocked interpreter does not take).
     const { model, machineId } = twoDwell();
-    const walk = exploreMachine(model, machineId);
-    expect(walk.timedTransitions.size).toBeGreaterThan(0);
+    expect(exploreMachine(model, machineId).timedTransitions.size).toBeGreaterThan(0);
     const row = checkProperty(model, machineId, prop({ pattern: 'cover', scope: 'globally', p: 'state B' }));
-    expect(row.claim).toBe('covered');
-    expect(row.code).toBeNull();
-    expect(row.witness.map((w) => w.leaf!.name)).toEqual(['idle', 'B']);
-    expect(row.detail).toContain(WALK_ADMITS);
-    expect(row.detail).toContain('step 1 fires `after(10)`');
-    expect(row.detail).toContain('so the interpreter may never take this trace');
-    expect(row.detail).toContain(DWELL_SENTENCE);
-    expect(row.detail, 'the bare wording on a dwell-crossing witness').not.toContain(SEMANTICS_ADMITS);
-    // The step consumed `after(10)`, a dwell label the walk offers as a named
-    // event — NOT a trigger an environment sent (plan §2.3: a run of no
-    // environment). This machine names no environment trigger at all, so the
-    // environment sentence would be a sentence about nothing.
-    expect(row.detail, 'the environment sentence on a machine naming no environment trigger').not.toContain('the environment offered every trigger');
-    // Never `inconclusive`: that is the A6–A8 / W3 / W4 shape, not W1's.
-    expect(row.claim).not.toBe('inconclusive');
+    expect(row.claim).toBe('inconclusive');
+    expect(row.code).toBe('verification/witness-not-replayed');
+    expect(row.witness).toEqual([]);
+    const ok = checkProperty(model, machineId, prop({ pattern: 'cover', scope: 'globally', p: 'state A' }));
+    expect(ok.claim).toBe('covered');
   });
 
   it('the row-1 disjunction: a timed machine whose witness fired no dwell keeps the bare wording, with the environment sentence beside it', () => {
