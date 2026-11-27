@@ -83,6 +83,7 @@
  * See docs/DIAGNOSTIC-CODES.md for what a diagnostic `code` means.
  */
 
+import { interfacesLines, interfacesReport } from '../src/semantics/mc/interfaces';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -3623,7 +3624,12 @@ function reportCheckBehaviour(model: Model, name: string, args: ParsedArgs): Rep
     coverRequired: flagGiven(args, 'cover-required'),
     conformance: flagGiven(args, 'conformance'),
   });
-  const text = textOf(behaviourLines(r, { name, machineName: qname(model, machine.id) }));
+  let text = textOf(behaviourLines(r, { name, machineName: qname(model, machine.id) }));
+  if (flagGiven(args, 'interfaces')) {
+    const ir = interfacesReport(model, { machineId: machine.id });
+    text += '\n' + ['Interface compatibility (opt-in, --interfaces):', ...interfacesLines(model, ir).map((l) => `  ${l}`)].join('\n');
+    return { json: { ...r, interfaces: ir }, text, behaviour: r };
+  }
   return { json: r, text, behaviour: r };
 }
 
