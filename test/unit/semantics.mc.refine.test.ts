@@ -223,4 +223,102 @@ describe('interface automata — check-behaviour --interfaces', () => {
     const conn = r.model!.all().find((e) => e.eClass === 'ConnectionUsage')!;
     expect(checkInterfacePair(r.model!, conn.id, { maxStates: 1 }).kind).toBe('undecided');
   });
+
+  // if-automata2: composite states flattened to their leaves, and sends in entry/exit actions and several sends in one step.
+  const TWO = `
+  item def Ack;
+  port def CP2 { out item rq : Req; in item rs : Resp; in item ak : Ack; }
+  port def SP2 { in item rq : Req; out item rs : Resp; out item ak : Ack; }`;
+
+  it('hierarchy: a transition of a composite state applies in every substate (compatible), and a substate without one is a forced reception', async () => {
+    const eager = `
+  part def Client { port c : ClientP;
+    action ask { send Req via c; }
+    exhibit state m { entry; then s0; state s0; state s1; state s2;
+      transition t1 first s0 do ask then s1; transition t2 first s1 do ask then s2; } }`;
+    const ok = await run(`${eager}
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then up; state up { entry; then a; state a; state b; transition t first a accept ping then b; }
+      transition outer first up accept Req via s then up; } }
+  ${SYS}`);
+    expect(ok.out.kind).toBe('compatible');
+    const bad = await run(`${eager}
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then up; state up { entry; then a; state a; state b;
+      transition t first a accept Req via s then b; } } }
+  ${SYS}`);
+    expect(bad.out.kind).toBe('incompatible');
+    if (bad.out.kind !== 'incompatible') return;
+    expect(bad.out.findings[0]).toMatchObject({ kind: 'unspecified-reception', sender: 'A', forced: true });
+    expect(bad.out.findings[0].witness.at(-1)!.b).toBe('b'); // the leaf the composite's step left the server in
+  });
+
+  it('hierarchy: a completion of a composite and clashing priorities stay no-verdict', async () => {
+    const server = (body: string) => `
+  part def Server { port s : ServerP; exhibit state m { entry; then up; ${body} } }
+  ${SYS}`;
+    const nested = await run(`${CLIENT} ${server(`state up { entry; then a; state a; state b; transition t first a accept Req via s then b; }
+      transition done first up then up;`)}`);
+    expect(nested.out.kind).toBe('no-verdict');
+    if (nested.out.kind === 'no-verdict') expect(nested.out.reason).toContain('completion transition of a composite');
+    const clash = await run(`${CLIENT} ${server(`state up { entry; then a; state a; state b; transition t first a accept Req via s then b; }
+      transition o first up accept Req via s then up;`)}`);
+    expect(clash.out.kind).toBe('no-verdict');
+    if (clash.out.kind === 'no-verdict') expect(clash.out.reason).toContain('priority');
+  });
+
+  it('an entry action that sends: the receiver must be ready in the state the sender then is in (compatible / forced reception)', async () => {
+    const server = `
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then idle; state idle; state busy { entry action r { send Resp via s; } }
+      transition t1 first idle accept Req via s then busy; transition t2 first busy accept done then idle; } }
+  ${SYS}`;
+    const ok = await run(`${CLIENT} ${server}`);
+    expect(ok.out.kind).toBe('compatible');
+    const eager = `
+  part def Client { port c : ClientP;
+    action ask { send Req via c; }
+    exhibit state m { entry; then idle; state idle; state wait;
+      transition t1 first idle do ask then wait; transition t2 first wait accept other then idle; } }`;
+    const bad = await run(`${eager} ${server}`);
+    expect(bad.out.kind).toBe('incompatible');
+    if (bad.out.kind !== 'incompatible') return;
+    const f = bad.out.findings.find((x) => x.kind === 'unspecified-reception')!;
+    expect(f).toMatchObject({ item: 'rs', sender: 'B', forced: true });
+    expect(f.witness.at(-1)!.label).toContain('B: send rs via s; A: no transition accepting rs');
+  });
+
+  it('an exit action and an effect that send, in order: the first output meets a receiver that cannot take it', async () => {
+    const server = (body: string) => `${TWO}
+  part def Server { port s : SP2;
+    action reply { send Ack via s; send Resp via s; }
+    exhibit state m { entry; then idle; state idle { exit action bye { send Ack via s; } } state busy;
+      transition t1 first idle accept Req via s do reply then busy; ${body} } }`;
+    const client = (acc: string) => `
+  part def Client { port c : CP2;
+    action ask { send Req via c; }
+    exhibit state m { entry; then idle; state idle; state w1; state w2; state w3; state fin;
+      transition t1 first idle do ask then w1; ${acc} } }`;
+    const sys = `part sys { part cl : Client; part sv : Server; connect cl.c to sv.s; }`;
+    // exit Ack, effect Ack, effect Resp: three outputs in order
+    const ok = await run(`${client('transition a1 first w1 accept Ack via c then w2; transition a2 first w2 accept Ack via c then w3; transition a3 first w3 accept Resp via c then fin;')}
+  ${server('')} ${sys}`);
+    expect(ok.out.kind).toBe('compatible');
+    const bad = await run(`${client('transition a1 first w1 accept Ack via c then w2; transition a3 first w2 accept Resp via c then fin;')}
+  ${server('')} ${sys}`);
+    expect(bad.out.kind).toBe('incompatible');
+    if (bad.out.kind === 'incompatible') {
+      expect(bad.out.findings.some((f) => f.kind === 'unspecified-reception' && f.item === 'ak' && f.sender === 'B' && f.forced === true)).toBe(true);
+    }
+  });
+
+  it('a send in a do action stays no-verdict', async () => {
+    const { out } = await run(`${CLIENT}
+  part def Server { port s : ServerP;
+    exhibit state m { entry; then idle; state idle; state busy { do action r { send Resp via s; } }
+      transition t1 first idle accept Req via s then busy; } }
+  ${SYS}`);
+    expect(out.kind).toBe('no-verdict');
+    if (out.kind === 'no-verdict') expect(out.reason).toContain('do action');
+  });
 });
