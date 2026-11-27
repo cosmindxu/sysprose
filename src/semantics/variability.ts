@@ -1821,6 +1821,29 @@ function behaviourOf(model: Model, owner: ElementRecord, f: Formula, ownerName: 
         if (rd.length === 1) replaced.set(m.id, rd[0].id);
         else if (m.declaredName && own.some((c) => c.declaredName === m.declaredName)) return `the chosen variant has a member named ${m.declaredName} that does not redefine the member of its variation state with that name`;
       }
+      // The variation state's own entry/do/exit actions (user ruling 2026-11-26: own members are shared by every variant)
+      // are inherited too. The variant's action of the same kind replaces one only when it redefines it (the successions
+      // leaving the replaced action go with it); an action of the kind that does not redefine is a conflict reading,
+      // the same rule as an action a variant brings to a state that has one (var-sm5).
+      const acts = cp.children(pointId).filter((c) => c.eClass === 'ActionUsage' && c.attrs.stateSubaction !== undefined);
+      const actMoves: Array<{ a: ElementRecord; drop: ElementRecord | null }> = [];
+      for (const a of acts) {
+        const kind = String(a.attrs.stateSubaction);
+        const rival = own.filter((c) => c.eClass === 'ActionUsage' && c.attrs.stateSubaction === kind);
+        if (rival.length === 0) { actMoves.push({ a, drop: null }); continue; }
+        const rd = rival.filter((c) => targets(cp, c.id, 'Redefinition').some((t) => t.id === a.id));
+        if (rival.length === 1 && rd.length === 1) actMoves.push({ a, drop: rd[0] });
+        else return `the chosen variant brings ${/^[aeiou]/.test(kind) ? 'an' : 'a'} ${kind} action that does not redefine the ${kind} action of its variation state`;
+      }
+      for (const { a, drop } of actMoves) {
+        if (drop === null) {
+          cp.reparent(a.id, variantId);
+          for (const e of cp.edgesFrom(a.id)) if (e.ownerId === pointId) cp.reparent(e.id, variantId);
+        } else {
+          for (const e of cp.edgesFrom(a.id)) cp.remove(e.id);
+          cp.remove(a.id);
+        }
+      }
       for (const m of shared) {
         const to = replaced.get(m.id);
         if (to === undefined) { cp.reparent(m.id, variantId); continue; }

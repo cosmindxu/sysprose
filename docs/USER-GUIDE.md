@@ -4928,7 +4928,11 @@ that clock, the n ticks inserted before the dwell step and no other transition
 firing first; one that does not (a shorter competing dwell, a completion that
 fires before) stays `inconclusive` under `verification/witness-not-replayed`.
 `existence` and `response` over a machine whose dwells are all such literals
-are decided on the same graph. Nothing is claimed about durations or real time:
+are decided on the same graph. Inside a parallel state a tick advances every
+region at once and the dwells then enabled fire as an event offered to the regions
+does (declaration order); a witness through one replays with the ticks inserted. Two
+regions carrying the same dwell label, and a region dwell that is no literal whole
+number, stay refused with the reason. Nothing is claimed about durations or real time:
 the tick is abstract and `5[min]` means five ticks.
 
 **Source of truth:** `src/semantics/mc/patterns.ts` (the catalogue, the monitor
