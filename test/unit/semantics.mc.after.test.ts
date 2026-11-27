@@ -48,16 +48,38 @@ describe('`accept after N` is offered as a named event', () => {
     expect(checkProperty(model, id, prop({ pattern: 'absence', scope: 'globally', p: 'state c' })).claim).toBe('pass');
   });
 
-  it('a result that needs the dwell to elapse is not made: no cover, no witness through the dwell', async () => {
+  it('a cover through the dwell is published only because it replays on the abstract clock', async () => {
     const { model, id } = await load(TIMED);
     const cover = checkProperty(model, id, prop({ pattern: 'cover', scope: 'globally', p: 'state b' }));
-    expect(cover.claim).not.toBe('covered');
-    expect(cover.claim).not.toBe('pass');
+    expect(cover.claim).toBe('covered');
+    expect(cover.witness.some((w) => w.event === 'after 5')).toBe(true);
+    // safety results keep the untimed over-approximation: b is reachable, so absence of b is a real refutation
     const abs = checkProperty(model, id, prop({ pattern: 'absence', scope: 'globally', p: 'state b' }));
-    // reachable only through the dwell: never a plain refutation published as a replayed witness
-    expect(abs.claim).not.toBe('pass');
+    expect(abs.claim).toBe('fail');
+    expect(checkProperty(model, id, prop({ pattern: 'absence', scope: 'globally', p: 'state c' })).claim).toBe('pass');
+    // "eventually b": the dwell is taken once its ticks have passed, so nothing keeps the run in a
     const ex = checkProperty(model, id, prop({ pattern: 'existence', scope: 'globally', p: 'state b' }));
-    // "eventually b" needs the dwell to elapse: withheld in both directions, never a pass
+    expect(ex.claim).toBe('pass');
+  });
+
+  it('a response across a dwell passes; a competing shorter dwell makes the witness through the longer one not replay', async () => {
+    const one = await load(TIMED);
+    const resp = checkProperty(one.model, one.id, prop({ pattern: 'response', scope: 'globally', p: 'state a', s: 'state b' }));
+    expect(resp.claim).toBe('pass');
+    const two = TIMED.replace('state c;', 'state c;\n    transition t2 first a accept after 2 then c;');
+    const { model, id } = await load(two);
+    // b is reachable in the untimed walk only by waiting out 5 ticks, but the 2-tick dwell fires first: no replay
+    const cover = checkProperty(model, id, prop({ pattern: 'cover', scope: 'globally', p: 'state b' }));
+    expect(cover.claim).toBe('inconclusive');
+    expect(cover.code).toBe('verification/witness-not-replayed');
+    // and the shorter one replays
+    expect(checkProperty(model, id, prop({ pattern: 'cover', scope: 'globally', p: 'state c' })).claim).toBe('covered');
+  });
+
+  it('a duration that is not a positive whole number keeps the old reading: no liveness verdict, interpreter refuses', async () => {
+    const expr = TIMED.replace('after 5', 'after 0');
+    const { model, id } = await load(expr);
+    const ex = checkProperty(model, id, prop({ pattern: 'existence', scope: 'globally', p: 'state b' }));
     expect(ex.claim).toBe('inconclusive');
     expect(ex.detail).toContain('Timing is over-approximated');
   });

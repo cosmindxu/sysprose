@@ -95,6 +95,7 @@ import {
 import {
   MAX_COMPLETION,
   afterDuration,
+  dwellTicks,
   hashConfig,
   leafOf,
   activeLeavesOf,
@@ -153,7 +154,7 @@ import { carriersOn } from '../keywords';
 // second reading of when a chase runs and when it stops — the gap a witness
 // fell through when this search read the chase budget one way and the
 // interpreter another.
-import { runStateMachine } from '../execute';
+import { runStateMachine, type StateStep } from '../execute';
 // One definition of "may this absence be stated", shared with `reachOne` — and
 // the one gate the modality reads for BOTH of its values (`walkIsExact`) and
 // the exactness gate's relation half, which is what the `covered` witness
@@ -1884,12 +1885,22 @@ export function replayWitness(
       }\``,
     };
   }
-  const run = runStateMachine(
-    model,
-    machineId,
-    steps.filter((s) => s.event !== '').map((s) => s.event),
-    { maxCompletion, follow: steps.map((s) => s.transition?.id ?? '') },
-  );
+  // A step across a dwell is replayed on the interpreter's abstract discrete clock: its n ticks are inserted just
+  // before it, one at a time, and no event of that name is sent — the run must then fire exactly the transitions the
+  // witness fires, so a competing transition that a tick enables first (or a completion that fires before the
+  // dwell) makes the witness not replay and the row stays inconclusive.
+  const driver: StateStep[] = [];
+  for (const s of steps) {
+    const rec = s.transition === null ? undefined : model.get(s.transition.id);
+    const ticks = rec === undefined ? undefined : dwellTicks(rec);
+    if (ticks !== undefined) {
+      for (let k = 0; k < ticks; k++) driver.push({ advance: 1 });
+    } else if (s.event !== '') driver.push(s.event);
+  }
+  const run = runStateMachine(model, machineId, driver, {
+    maxCompletion,
+    follow: steps.map((s) => s.transition?.id ?? ''),
+  });
   const rests = restingLeaves(model, machineId, run.visited, run.fired);
   const qn = (id: ElementId | null | undefined): string =>
     id == null ? 'no state' : model.qualifiedName(id) || id;
@@ -2634,9 +2645,16 @@ function livenessRow(
   const refuse = (why: string): PropertyVerdict =>
     livenessRefusal(row, name, why, walk.boundHit, walk.unsupported);
   if (!gate.decreasingOk) return refuse(`${gate.sentence[0].toUpperCase()}${gate.sentence.slice(1)}.`);
-  // A dwell the walk offers as an event at any time (a clock-free over-approximation): "eventually" over it is a
-  // claim about when time passes, which nothing here models, so no liveness verdict is made in either direction.
-  if (walk.timedTransitions.size > 0) return refuse(`Timing is over-approximated here: ${DWELL_SENTENCE}`);
+  // A dwell the walk offers as an event at any time (a clock-free over-approximation): every run of the clocked
+  // machine is a run of this graph (a dwell is taken only once its ticks have passed, which the graph allows), so a
+  // pass here holds there, and a violating run is published only where it replays on the interpreter's abstract
+  // discrete clock (`replayWitness`, ticks inserted). A dwell whose duration is not a literal positive integer has
+  // no clocked reading, so no liveness verdict is made in either direction over it.
+  const unclocked = [...walk.timedTransitions].some((id) => {
+    const tr = model.get(id);
+    return tr === undefined || dwellTicks(tr) === undefined;
+  });
+  if (unclocked) return refuse(`Timing is over-approximated here: ${DWELL_SENTENCE}`);
   const budgetEndsRun = bounds.alphabet.length === 0 && walk.timedTransitions.size === 0;
   const graph: LiveGraph = { nodes: new Map(), order: [], edges: [], budgetCut: false };
   const found = search(model, machineId, property, bounds, walk.chaseKeyed, budgetEndsRun, graph);

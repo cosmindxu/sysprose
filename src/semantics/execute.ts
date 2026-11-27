@@ -44,6 +44,7 @@ import {
   SUCCESSION_KINDS,
   advanceClock,
   afterDuration,
+  dwellTicks,
   applyAssignment,
   applyTransitionEffect,
   EffectNotApplied,
@@ -1045,14 +1046,16 @@ function runStateMachineChecked(
       'interpreter reads — so the run would rest at that state with no substate; no run is started and no start is guessed.';
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
+  // A time trigger (`accept after n`, SysML v2 §7.18.3) is run on an abstract discrete clock: a literal positive
+  // integer n only. Any other duration has no reading here, so that machine is not run.
   const timeTriggered = machineRegion(model, container.id).descendants.find(
-    (e) => typeof e.attrs.timeTrigger === 'string' && e.attrs.timeTrigger,
+    (e) => typeof e.attrs.timeTrigger === 'string' && e.attrs.timeTrigger && dwellTicks(e) === undefined,
   );
   if (timeTriggered) {
     const unopened =
       `${model.qualifiedName(container.id) || container.id} is not run: \`${model.qualifiedName(timeTriggered.id) || timeTriggered.id}\` ` +
-      `is triggered by \`accept after ${timeTriggered.attrs.timeTrigger}\` (SysML v2 §7.18.3), a time trigger this ` +
-      'interpreter has no clock for, so no run is started and no step is guessed.';
+      `is triggered by \`accept after ${timeTriggered.attrs.timeTrigger}\` (SysML v2 §7.18.3), whose duration is not a literal positive ` +
+      'integer — the interpreter\u2019s abstract clock counts whole ticks only, so no run is started and no step is guessed.';
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
   // A parallel state nested below the machine (SysML v2 §7.18.2): its substates are performed concurrently, which
@@ -1088,7 +1091,8 @@ function runStateMachineChecked(
   // carries timed steps. Otherwise use the (unchanged) flat path so existing
   // behavior is preserved exactly.
   const timed = triggers.some(isTimedStep);
-  if (rootParallel || timed || needsHierarchical(model, container)) {
+  const timeTriggers = machineRegion(model, container.id).descendants.some((e) => typeof e.attrs.timeTrigger === 'string' && e.attrs.timeTrigger);
+  if (rootParallel || timed || timeTriggers || needsHierarchical(model, container)) {
     return runHierMachine(model, container, triggers, valueStore, performed, maxCompletion, rootParallel, tie);
   }
 
