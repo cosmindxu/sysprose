@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 195
-- **Tests:** 6304 total — 6304 passed, 0 failed, 0 skipped
+- **Tests:** 6318 total — 6318 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -184,7 +184,7 @@
 | test/unit/text.recovery-honesty.test.ts | 37 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 244 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 248 | 0 | 0 |
 | test/unit/text.save-end-names.test.ts | 14 | 0 | 0 |
 | test/unit/text.spec-7-18.test.ts | 18 | 0 | 0 |
 | test/unit/text.state-forms.test.ts | 16 | 0 | 0 |
@@ -199,8 +199,8 @@
 | test/unit/ui.requirements-table.test.ts | 29 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 9 | 0 | 0 |
 | test/unit/user-guide.test.ts | 33 | 0 | 0 |
-| test/unit/validation.connection.test.ts | 20 | 0 | 0 |
+| test/unit/validation.connection.test.ts | 25 | 0 | 0 |
 | test/unit/validation.exchange-allocation.test.ts | 21 | 0 | 0 |
 | test/unit/validation.interfaces.test.ts | 16 | 0 | 0 |
-| test/unit/validation.rules.test.ts | 132 | 0 | 0 |
+| test/unit/validation.rules.test.ts | 137 | 0 | 0 |
 | test/unit/validation.variability.test.ts | 19 | 0 | 0 |
