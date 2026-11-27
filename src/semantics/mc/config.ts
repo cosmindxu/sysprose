@@ -38,6 +38,7 @@ import { type ElementId, type ElementRecord, type Model, isUsage, unquoteName } 
 import { parseExpr, evaluate, readQuotedName, type ExprNode } from '../expr';
 import { namesReadIn } from '../relations';
 import { scopeFor, type Scope } from '../evaluate-model';
+import { dim, dimEqual, unitByName, unitBySymbol } from '../units';
 // The ONE reader of an edge's payload in this codebase: `itemFlowsOf` uses it to
 // decide that a `Succession` with an item is a succession flow, and the step
 // relation uses it to decide that such an edge is not a step it can model. Two
@@ -349,13 +350,15 @@ interface RegionCache {
   inherited: Map<ElementId, MachineRegion>;
   /** A redefining state → the state it redefines, when that holds members the redefining state inherits ({@link mergedFrom}). */
   merged: Map<ElementId, ElementRecord | null>;
+  /** A machine's dwell reading ({@link dwellReading}), by its outermost state. */
+  dwells: Map<ElementId, Map<ElementId, number | string>>;
 }
 const REGION_CACHE = new WeakMap<Model, RegionCache>();
 
 function cacheFor(model: Model): RegionCache {
   const hit = REGION_CACHE.get(model);
   if (hit && hit.rev === model.rev) return hit;
-  const fresh: RegionCache = { rev: model.rev, scopes: new Map(), regions: new Map(), inherited: new Map(), merged: new Map() };
+  const fresh: RegionCache = { rev: model.rev, scopes: new Map(), regions: new Map(), inherited: new Map(), merged: new Map(), dwells: new Map() };
   REGION_CACHE.set(model, fresh);
   return fresh;
 }
@@ -1030,22 +1033,129 @@ export function afterDuration(tr: ElementRecord): number | undefined {
   return undefined;
 }
 
+/** The outermost state (usage or definition) that holds an element: the machine its dwells are counted in. */
+function machineRootOf(model: Model, el: ElementRecord): ElementId {
+  let root = el.id;
+  for (let o = el.ownerId; o != null; ) {
+    const e = model.get(o);
+    if (e === undefined || (e.eClass !== 'StateUsage' && e.eClass !== 'StateDefinition' && e.eClass !== 'ExhibitStateUsage')) break;
+    root = e.id;
+    o = e.ownerId;
+  }
+  return root;
+}
+
+/**
+ * The text of a dwell's duration, or a refusal. A name (`accept after timeout`) is read as the literal the
+ * attribute it names is bound to by `=` — never one given by `default` or `:=`, which stand against every assertion
+ * and may be overridden; anything but a literal positive integer behind the name stays refused.
+ */
+function dwellText(model: Model, tr: ElementRecord): { text?: string; why?: string } {
+  const raw = tr.attrs.timeTrigger;
+  if (typeof raw !== 'string' || raw.trim() === '') return {};
+  const t = raw.trim();
+  const named = /^([A-Za-z_][A-Za-z0-9_]*)\s*(\[[^\]]*\])?$/.exec(t);
+  if (named === null) return { text: t };
+  const hits: ElementRecord[] = [];
+  for (let o = tr.ownerId; o != null && hits.length === 0; ) {
+    for (const c of model.children(o)) if (c.eClass === 'AttributeUsage' && c.declaredName === named[1]) hits.push(c);
+    o = model.get(o)?.ownerId ?? null;
+  }
+  if (hits.length !== 1) return { why: `\`${named[1]}\` does not name exactly one attribute` };
+  const a = hits[0];
+  if (a.attrs.value === undefined || a.attrs.initialValue === true || a.attrs.defaultValue === true) {
+    return { why: `\`${named[1]}\` is not bound by \`=\` (a default or \`:=\` value may be overridden)` };
+  }
+  const v = String(a.attrs.value).trim();
+  if (!/^[0-9]+$/.test(v)) return { why: `\`${named[1]}\` is bound to ${v}, not a literal whole number` };
+  const unit = typeof a.attrs.unit === 'string' && a.attrs.unit !== '' ? a.attrs.unit : named[2]?.slice(1, -1);
+  return { text: unit ? `${v}[${unit}]` : v };
+}
+
+const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+
+/**
+ * The dwell counts of one machine (SysML v2 §7.18.3), each a tick count or the reason it has none. Unitless dwells
+ * keep the abstract reading (`after 5` is 5 ticks). Where they carry units, every dwell of the machine must carry a
+ * time unit; each is scaled to the finest unit used and the counts divided by their gcd, so `1 [s]` against
+ * `500 [ms]` is 2 ticks against 1. A mix of unitless and united dwells, a non-time or unknown unit, or a count that
+ * is no whole number in the finest unit is refused with the reason, for the whole machine.
+ */
+function dwellReading(model: Model, rootId: ElementId): Map<ElementId, number | string> {
+  const cache = cacheFor(model);
+  const hit = cache.dwells.get(rootId);
+  if (hit) return hit;
+  const out = new Map<ElementId, number | string>();
+  cache.dwells.set(rootId, out);
+  const trs = model.descendants(rootId).filter((e) => afterDuration(e) !== undefined);
+  const items = trs.map((tr) => {
+    const dt = dwellText(model, tr);
+    const tt = typeof tr.attrs.timeTrigger === 'string' && tr.attrs.timeTrigger.trim() !== '';
+    if (dt.why !== undefined) return { tr, why: dt.why };
+    if (!tt) {
+      const n = afterDuration(tr);
+      return n !== undefined && Number.isInteger(n) && n >= 1 ? { tr, n, unit: undefined as string | undefined } : { tr, why: 'its duration is not a literal positive integer' };
+    }
+    const m = /^([0-9]+)\s*(?:\[([^\]]*)\])?$/.exec(dt.text!);
+    if (m === null) return { tr, why: 'its duration is not a literal positive integer' };
+    const n = Number(m[1]);
+    if (!Number.isInteger(n) || n < 1) return { tr, why: 'its duration is not a literal positive integer' };
+    return { tr, n, unit: m[2]?.trim() };
+  });
+  for (const i of items) if ('why' in i && i.why !== undefined) out.set(i.tr.id, i.why);
+  const ok = items.filter((i): i is { tr: ElementRecord; n: number; unit: string | undefined } => 'n' in i);
+  const united = ok.filter((i) => i.unit !== undefined && i.unit !== '');
+  const refuseAll = (why: string): void => {
+    for (const i of ok) out.set(i.tr.id, why);
+  };
+  if (united.length === 0) {
+    for (const i of ok) out.set(i.tr.id, i.n);
+    return out;
+  }
+  if (united.length !== ok.length) {
+    refuseAll('the dwells of this machine mix unitless and united durations, which share no unit to count in');
+    return out;
+  }
+  const scaled: { tr: ElementRecord; si: number; unit: string }[] = [];
+  for (const i of united) {
+    const u = unitBySymbol(i.unit!) ?? unitByName(i.unit!);
+    if (u === undefined) return refuseAll(`the duration unit \`${i.unit}\` is unknown`), out;
+    if (!dimEqual(u.dimension, dim({ T: 1 }))) return refuseAll(`the duration unit \`${i.unit}\` is not a unit of time`), out;
+    scaled.push({ tr: i.tr, si: i.n * u.factorToSI, unit: i.unit! });
+  }
+  if (new Set(united.map((i) => i.unit)).size === 1) {
+    for (const i of united) out.set(i.tr.id, i.n);
+    return out;
+  }
+  const finest = Math.min(...united.map((i) => unitBySymbol(i.unit!)?.factorToSI ?? unitByName(i.unit!)!.factorToSI));
+  const counts = scaled.map((s) => s.si / finest);
+  if (counts.some((c) => Math.abs(c - Math.round(c)) > 1e-9)) {
+    refuseAll('the dwell durations are no whole numbers of the finest unit used');
+    return out;
+  }
+  const ints = counts.map(Math.round);
+  const g = ints.reduce(gcd);
+  scaled.forEach((s, k) => out.set(s.tr.id, ints[k] / g));
+  return out;
+}
+
 /**
  * The number of ticks of the abstract discrete clock a dwell waits (SysML v2 §7.18.3 `accept after n`), where the
- * duration is a literal positive integer — `5`, or `5[min]` / `5 [s]` with a unit the abstract tick ignores — and
- * `undefined` for everything else (an expression, zero, a fraction, a transition that is no dwell). The interpreter
- * runs, and a witness replays through, only a dwell this reads: no real time is modelled, a tick is one abstract step.
+ * duration is a literal positive integer, or a name bound by `=` to one, and `undefined` for everything else (an
+ * expression, zero, a fraction, a transition that is no dwell, units that cannot be compared — see
+ * {@link dwellReading}). The interpreter runs, and a witness replays through, only a dwell this reads: no real time
+ * is modelled, a tick is one abstract step.
  */
-export function dwellTicks(tr: ElementRecord): number | undefined {
-  const tt = tr.attrs.timeTrigger;
-  let n: number | undefined;
-  if (typeof tt === 'string' && tt.trim() !== '') {
-    const m = /^([0-9]+)\s*(\[[^\]]*\])?$/.exec(tt.trim());
-    n = m ? Number(m[1]) : undefined;
-  } else {
-    n = afterDuration(tr);
-  }
-  return n !== undefined && Number.isInteger(n) && n >= 1 ? n : undefined;
+export function dwellTicks(tr: ElementRecord, model: Model): number | undefined {
+  if (afterDuration(tr) === undefined) return undefined;
+  const r = dwellReading(model, machineRootOf(model, tr)).get(tr.id);
+  return typeof r === 'number' ? r : undefined;
+}
+
+/** Why a dwell has no tick count, when the reason is one {@link dwellReading} names (units, a name), else `undefined`. */
+export function dwellWhyNot(tr: ElementRecord, model: Model): string | undefined {
+  const r = dwellReading(model, machineRootOf(model, tr)).get(tr.id);
+  return typeof r === 'string' ? r : undefined;
 }
 
 /**
@@ -1075,14 +1185,17 @@ export function isDwellLabel(label: string): boolean {
  * names the region (of `p`) holding a transition's source.
  */
 export function regionDwellRefusal(
+  model: Model,
   regionTrs: readonly ElementRecord[],
   regionOf: (tr: ElementRecord) => ElementId | undefined,
   pName: string,
 ): string | undefined {
   const dwells = regionTrs.filter((t) => afterDuration(t) !== undefined);
   if (dwells.length === 0) return undefined;
-  if (dwells.some((t) => dwellTicks(t) === undefined)) {
-    return `a region of its parallel state ${pName} has a timed (\`after\`) transition whose duration is not a literal positive integer, which the interpreter's abstract clock does not count, so no verdict is given over it`;
+  const bad = dwells.find((t) => dwellTicks(t, model) === undefined);
+  if (bad !== undefined) {
+    const why = dwellWhyNot(bad, model);
+    return `a region of its parallel state ${pName} has a timed (\`after\`) transition whose duration is not a literal positive integer, which the interpreter's abstract clock does not count${why ? ` (${why})` : ''}, so no verdict is given over it`;
   }
   const seen = new Map<string, ElementId | undefined>();
   for (const t of dwells) {
@@ -1966,7 +2079,9 @@ function matches(
   } else if (input.kind === 'completion') {
     if (!isCompletion(tr)) return 'disabled';
   } else {
-    const n = afterDuration(tr);
+    // A time trigger counts the ticks its machine's dwell reading gives it (units scaled to one grain, dwellReading);
+    // the after(n) spelling and a time trigger no reading counts keep their written number.
+    const n = (tr.attrs.timeTrigger !== undefined ? dwellTicks(tr, model) : undefined) ?? afterDuration(tr);
     if (n === undefined) return 'disabled';
     if (cfg.clock - (cfg.entryTime.get(sid) ?? 0) < n) return 'disabled';
   }

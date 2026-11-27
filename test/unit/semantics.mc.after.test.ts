@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { loadModelText } from '@text/load';
 import { checkProperty, type PropertyText } from '../../src/semantics/mc/patterns';
 import { runStateMachine } from '../../src/semantics/execute';
+import { dwellTicks } from '../../src/semantics/mc/config';
 import { exploreMachine, reachReport, stateMachinesIn } from '../../src/semantics/mc/explore';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
 import { reachMachineLines, textOf } from '../../src/semantics/mc/report-lines';
@@ -157,5 +158,66 @@ describe('a dwell inside the regions of a parallel state (sm-par-dwell)', () => 
     const m = await load(par(R1, R2, 'transition leave first p accept after 2 then q;'));
     const run = runStateMachine(m.model, m.id, [{ advance: 2 }]);
     expect(run.refused ?? run.unopened).toBeDefined();
+  });
+});
+
+// sm-dwell-units: the unit of a dwell is read (a 1 [s] against a 500 [ms] race is no 1 tick against 500).
+const race = (a: string, b: string, pre = ''): string =>
+  [
+    'package P {', pre, '  state def M {', '    entry; then s;', '    state s; state fast; state slow;',
+    `    transition tf first s accept after ${b} then fast;`,
+    `    transition ts first s accept after ${a} then slow;`,
+    '  }', '}', '',
+  ].join('\n');
+const ticksOf = (model: any, name: string): number | undefined => {
+  const t = model.all().find((e: any) => model.qualifiedName(e.id) === name);
+  return dwellTicks(t, model);
+};
+
+describe('dwell units (SysML v2 §7.18.3)', () => {
+  it('1 [s] against 500 [ms]: 2 ticks against 1, so the millisecond dwell is the one that wins the race', async () => {
+    const { model, id } = await load(race('1[s]', '500[ms]'));
+    expect(ticksOf(model, 'P::M::ts')).toBe(2);
+    expect(ticksOf(model, 'P::M::tf')).toBe(1);
+    const tick = { advance: 1 } as const;
+    const fast = model.all().find((e: any) => model.qualifiedName(e.id) === 'P::M::fast')!.id;
+    const r = runStateMachine(model, id, [tick]);
+    expect(r.finalState).toBe(fast);
+  });
+  it('a same-unit machine keeps its counts', async () => {
+    const { model } = await load(race('5[s]', '3[s]'));
+    expect(ticksOf(model, 'P::M::ts')).toBe(5);
+    expect(ticksOf(model, 'P::M::tf')).toBe(3);
+  });
+  it('a unitless machine keeps its counts', async () => {
+    const { model } = await load(race('5', '3'));
+    expect(ticksOf(model, 'P::M::ts')).toBe(5);
+  });
+  it('a mix of unitless and united dwells, a non-time unit and an unknown unit are refused, with the reason', async () => {
+    for (const [a, b, re] of [['5', '3[s]', /mix unitless/], ['5[kg]', '3[s]', /not a unit of time/], ['5[zz]', '3[s]', /unknown/]] as const) {
+      const { model, id } = await load(race(a, b));
+      expect(ticksOf(model, 'P::M::ts')).toBeUndefined();
+      expect(runStateMachine(model, id, []).unopened ?? '').toMatch(re);
+    }
+  });
+});
+
+describe('named dwell durations (the grammar writes a number; a name arrives through the API)', () => {
+  const named = async (decl: string) => {
+    const l = await load(['package P {', '  state def M {', `    ${decl}`, '    entry; then s;', '    state s; state d;', '    transition t first s accept after 4 then d;', '  }', '}', ''].join('\n'));
+    const t = l.model.all().find((e: any) => l.model.qualifiedName(e.id) === 'P::M::t')!;
+    l.model.setAttrs(t.id, { timeTrigger: 'timeout' });
+    return l;
+  };
+  it('a name bound by = to a literal is that literal', async () => {
+    const { model } = await named('attribute timeout : Integer = 4;');
+    expect(ticksOf(model, 'P::M::t')).toBe(4);
+  });
+  it('a default, a := value, an expression and an unresolved name stay refused', async () => {
+    for (const decl of ['attribute timeout : Integer default = 4;', 'attribute timeout : Integer := 4;', 'attribute timeout : Integer = 2 + 2;', 'attribute other : Integer = 4;']) {
+      const { model, id } = await named(decl);
+      expect(ticksOf(model, 'P::M::t')).toBeUndefined();
+      expect(runStateMachine(model, id, []).unopened ?? '').not.toBe('');
+    }
   });
 });

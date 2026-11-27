@@ -45,6 +45,7 @@ import {
   advanceClock,
   afterDuration,
   dwellTicks,
+  dwellWhyNot,
   regionDwellRefusal,
   applyAssignment,
   applyTransitionEffect,
@@ -1050,13 +1051,13 @@ function runStateMachineChecked(
   // A time trigger (`accept after n`, SysML v2 §7.18.3) is run on an abstract discrete clock: a literal positive
   // integer n only. Any other duration has no reading here, so that machine is not run.
   const timeTriggered = machineRegion(model, container.id).descendants.find(
-    (e) => typeof e.attrs.timeTrigger === 'string' && e.attrs.timeTrigger && dwellTicks(e) === undefined,
+    (e) => typeof e.attrs.timeTrigger === 'string' && e.attrs.timeTrigger && dwellTicks(e, model) === undefined,
   );
   if (timeTriggered) {
     const unopened =
       `${model.qualifiedName(container.id) || container.id} is not run: \`${model.qualifiedName(timeTriggered.id) || timeTriggered.id}\` ` +
       `is triggered by \`accept after ${timeTriggered.attrs.timeTrigger}\` (SysML v2 §7.18.3), whose duration is not a literal positive ` +
-      'integer — the interpreter\u2019s abstract clock counts whole ticks only, so no run is started and no step is guessed.';
+      `integer${dwellWhyNot(timeTriggered, model) ? ` (${dwellWhyNot(timeTriggered, model)})` : ''} — the interpreter\u2019s abstract clock counts whole ticks only, so no run is started and no step is guessed.`;
     return { visited: [], fired: [], performed: [], valueStore, activeStates: [], finalState: null, complete: false, unopened };
   }
   // A parallel state nested below the machine (SysML v2 §7.18.2): its substates are performed concurrently, which
@@ -1462,6 +1463,7 @@ function nestedParallelRefusal(model: Model, container: ElementRecord): string |
       const rOf = (id: ElementId): ElementId | undefined =>
         rs.find((r) => r.id === id || machineRegion(model, r.id).descendants.some((e) => e.id === id))?.id;
       const dwellWhy = regionDwellRefusal(
+        model,
         view.transitions.filter((t) => t.source?.[0] !== undefined && inside.has(t.source[0])),
         (t) => rOf(t.source![0]),
         name(p.id),

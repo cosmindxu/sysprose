@@ -1892,7 +1892,7 @@ export function replayWitness(
   const driver: StateStep[] = [];
   for (const s of steps) {
     const rec = s.transition === null ? undefined : model.get(s.transition.id);
-    const ticks = rec === undefined ? undefined : dwellTicks(rec);
+    const ticks = rec === undefined ? undefined : dwellTicks(rec, model);
     if (ticks !== undefined) {
       for (let k = 0; k < ticks; k++) driver.push({ advance: 1 });
     } else if (s.event !== '') driver.push(s.event);
@@ -1999,7 +1999,7 @@ function replayParallelWitness(
     if (s.event !== '') {
       const ticks = Math.max(0, ...(s.fires ?? (s.transition === null ? [] : [s.transition.id])).map((id) => {
         const rec = model.get(id);
-        return rec === undefined ? 0 : dwellTicks(rec) ?? 0;
+        return rec === undefined ? 0 : dwellTicks(rec, model) ?? 0;
       }));
       if (ticks > 0) for (let k = 0; k < ticks; k++) driver.push({ advance: 1 });
       else driver.push(s.event);
@@ -2665,7 +2665,7 @@ function livenessRow(
   // no clocked reading, so no liveness verdict is made in either direction over it.
   const unclocked = [...walk.timedTransitions].some((id) => {
     const tr = model.get(id);
-    return tr === undefined || dwellTicks(tr) === undefined;
+    return tr === undefined || dwellTicks(tr, model) === undefined;
   });
   if (unclocked) return refuse(`Timing is over-approximated here: ${DWELL_SENTENCE}`);
   const budgetEndsRun = bounds.alphabet.length === 0 && walk.timedTransitions.size === 0;
