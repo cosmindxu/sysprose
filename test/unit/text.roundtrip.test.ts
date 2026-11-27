@@ -2996,3 +2996,39 @@ describe('cross subsetting (`crosses` / `=>`, SysML v2 §7.13.2)', () => {
     expect(serializeModel(again.model)).toBe(serializeModel(parseModel(SRC).model));
   });
 });
+
+describe('owned cross feature of an end (SysML v2 §8.4.9.1)', () => {
+  const SRC = `package P {
+    item def T1; item def T2; item def A;
+    connection def B2 {
+      end e1_cross [1..4] nonunique ordered ref e1 : T1;
+      end e2_cross [0..1] ref e2 : T2;
+    }
+    connection def Ternary {
+      end a_cross[1] ref a[1] : A;
+      end b_cross ref b : A;
+    }
+  }`;
+  it('reads the end e1 owning the cross feature e1_cross, and writes the same form back', () => {
+    const { model, diagnostics } = parseModel(SRC);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const e1 = model.all().find((e) => e.declaredName === 'e1')!;
+    expect(e1.attrs.isEnd).toBe(true);
+    const cross = model.children(e1.id).find((c) => c.declaredName === 'e1_cross')!;
+    expect(cross.attrs.multiplicity).toBe('1..4');
+    expect(cross.attrs.modifiers).toEqual(['nonunique', 'ordered']);
+    expect(model.all().some((e) => e.declaredName === 'e1_cross' && e.attrs.isEnd === true)).toBe(false);
+    const text = serializeModel(model);
+    expect(text).toContain('end e1_cross [1..4] nonunique ordered ref e1 : T1;');
+    expect(text).toContain('end e2_cross [0..1] ref e2 : T2;');
+    expect(text).toContain('end b_cross ref b : A;');
+    expect(serializeModel(parseModel(text).model)).toBe(text);
+  });
+  it('keeps an end and a ref written with a terminator as two members', () => {
+    const { model } = parseModel('package P { item def T; connection def C { end x [1]; ref r : T; end y : T; } }');
+    const x = model.all().find((e) => e.declaredName === 'x')!;
+    expect(model.children(x.id)).toEqual([]);
+    expect(x.attrs.isEnd).toBe(true);
+    expect(model.all().find((e) => e.declaredName === 'r')!.attrs.isEnd).toBeUndefined();
+  });
+});

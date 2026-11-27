@@ -2997,7 +2997,37 @@ class Mapper {
 
   /* ─────────────────────── definitions / usages ────────────────────────── */
 
+  /**
+   * The spec's owned cross feature form (SysML v2 §8.4.9.1, `end e1_cross [1..4] nonunique ordered ref e1 : T1;`, the B2 and
+   * Ternary examples, verified by reading): the cross feature's name, multiplicity and modifiers stand first and the end's own
+   * declaration follows, with no `;` between. The grammar reads it as two members; `ownedCrossPair` recognises the pair
+   * (head = the cross feature, tail = the end `ref e1 : T1`) so the end is read as e1 owning the cross feature e1_cross.
+   */
+  private ownedCrossPair(node: Definition): { head: Definition; tail: Definition } | undefined {
+    const members = ((node.$container as { members?: AstNode[] } | undefined)?.members ?? []) as AstNode[];
+    const at = members.indexOf(node);
+    const isHead = (h: AstNode | undefined, t: AstNode | undefined): boolean => {
+      const a = h as Definition | undefined;
+      const b = t as Definition | undefined;
+      if (!a || !b || a.$type !== 'Definition' || b.$type !== 'Definition') return false;
+      const text = a.$cstNode?.text?.trimEnd();
+      return (
+        a.keyword === undefined && !a.isDef && a.name !== undefined && a.shortName === undefined &&
+        (a.prefixes ?? []).length === 1 && a.prefixes[0] === 'end' && a.prefixMeta.length === 0 &&
+        a.body === undefined && a.specializations.length === 0 && a.valueOp === undefined && a.preMult.length === 0 &&
+        a.endMult.length === 0 && text !== undefined && !text.endsWith(';') &&
+        !b.isDef && b.name !== undefined && b.succession === undefined && b.endMult.length === 0 &&
+        (b.keyword === 'ref' ? b.prefixes.length === 0 : b.keyword === undefined && b.prefixes.length === 1 && b.prefixes[0] === 'ref')
+      );
+    };
+    if (isHead(node, members[at + 1])) return { head: node, tail: members[at + 1] as Definition };
+    if (isHead(members[at - 1], node)) return { head: members[at - 1] as Definition, tail: node };
+    return undefined;
+  }
+
   private mapDefinition(node: Definition, ownerId: ElementId | null): void {
+    const pair = this.ownedCrossPair(node);
+    if (pair && pair.head === node) return;
     // A bare `parallel { … }` with no keyword of its own: `parallel` is valid only on a state (SysML v2 §7.18.2), so it is
     // the tail of the statement before it (`exhibit action ea parallel { … }`, `part p parallel { … }`), not an element.
     if (node.keyword === undefined && node.name === 'parallel' && node.body !== undefined) {
@@ -3208,6 +3238,17 @@ class Mapper {
       node.specializations.length === 0 && !node.multiplicity?.length && !node.valueOp && this.faultErrors.length > 0
     ) {
       this.faultPrefixes.push(el.id);
+    }
+
+    // The end `e1` of an owned cross feature form: the preceding member `end e1_cross [1..4] …` is its cross feature.
+    if (pair && pair.tail === node) {
+      this.model.setAttrs(el.id, { isEnd: true });
+      const head = pair.head;
+      const crossAttrs: Record<string, AttrValue> = { ownedCross: true };
+      const cm = readableMultiplicities(head.multiplicity);
+      if (cm.length) crossAttrs.multiplicity = cm[cm.length - 1]!;
+      if (head.modifiers.length) crossAttrs.modifiers = [...head.modifiers];
+      this.create('ReferenceUsage', { ownerId: el.id, declaredName: unquoteName(head.name), attrs: crossAttrs });
     }
 
     // Specializations (resolved against the model built so far).
