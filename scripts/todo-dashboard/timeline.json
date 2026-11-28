@@ -5416,6 +5416,102 @@
   "open_raw": 77,
   "open": 77,
   "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 170,
+  "sha": "1eb0bfd",
+  "when": "2026-11-27T22:09:14+01:00",
+  "day": "2026-11-27",
+  "subject": "Merge branch 'sm-dwell-units' into combine-w14",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 171,
+  "sha": "c79c9a7",
+  "when": "2026-11-27T22:09:14+01:00",
+  "day": "2026-11-27",
+  "subject": "Merge branch 'if-automata' into combine-w14",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 172,
+  "sha": "9357973",
+  "when": "2026-11-27T22:09:14+01:00",
+  "day": "2026-11-27",
+  "subject": "Merge branch 'owned-cross' into combine-w14",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
    "FALSE": 0,
    "WEAKER": 41,
    "POLISH": 34,
