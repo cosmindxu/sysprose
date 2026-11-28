@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 195
-- **Tests:** 6341 total — 6341 passed, 0 failed, 0 skipped
+- **Tests:** 6357 total — 6357 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -125,7 +125,7 @@
 | test/unit/semantics.icd.test.ts | 4 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
-| test/unit/semantics.mc.after.test.ts | 13 | 0 | 0 |
+| test/unit/semantics.mc.after.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.parallel-orders.test.ts | 8 | 0 | 0 |
@@ -138,7 +138,7 @@
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.redefinition-merge.test.ts | 2 | 0 | 0 |
 | test/unit/semantics.mc.redefinition.test.ts | 10 | 0 | 0 |
-| test/unit/semantics.mc.refine.test.ts | 7 | 0 | 0 |
+| test/unit/semantics.mc.refine.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 40 | 0 | 0 |
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
@@ -184,7 +184,7 @@
 | test/unit/text.recovery-honesty.test.ts | 37 | 0 | 0 |
 | test/unit/text.rehome.test.ts | 17 | 0 | 0 |
 | test/unit/text.resolution.test.ts | 26 | 0 | 0 |
-| test/unit/text.roundtrip.test.ts | 249 | 0 | 0 |
+| test/unit/text.roundtrip.test.ts | 251 | 0 | 0 |
 | test/unit/text.save-end-names.test.ts | 14 | 0 | 0 |
 | test/unit/text.spec-7-18.test.ts | 18 | 0 | 0 |
 | test/unit/text.state-forms.test.ts | 16 | 0 | 0 |
@@ -202,5 +202,5 @@
 | test/unit/validation.connection.test.ts | 25 | 0 | 0 |
 | test/unit/validation.exchange-allocation.test.ts | 21 | 0 | 0 |
 | test/unit/validation.interfaces.test.ts | 16 | 0 | 0 |
-| test/unit/validation.rules.test.ts | 142 | 0 | 0 |
+| test/unit/validation.rules.test.ts | 144 | 0 | 0 |
 | test/unit/validation.variability.test.ts | 19 | 0 | 0 |
