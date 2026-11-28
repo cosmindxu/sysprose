@@ -202,7 +202,7 @@ describe('dwell units (SysML v2 §7.18.3)', () => {
   });
 });
 
-describe('named dwell durations (the grammar writes a number; a name arrives through the API)', () => {
+describe('named dwell durations (`accept after timeout` parses; a name is read by `=` binding)', () => {
   const named = async (decl: string) => {
     const l = await load(['package P {', '  state def M {', `    ${decl}`, '    entry; then s;', '    state s; state d;', '    transition t first s accept after 4 then d;', '  }', '}', ''].join('\n'));
     const t = l.model.all().find((e: any) => l.model.qualifiedName(e.id) === 'P::M::t')!;
@@ -218,6 +218,21 @@ describe('named dwell durations (the grammar writes a number; a name arrives thr
       const { model, id } = await named(decl);
       expect(ticksOf(model, 'P::M::t')).toBeUndefined();
       expect(runStateMachine(model, id, []).unopened ?? '').not.toBe('');
+    }
+  });
+});
+
+describe('named dwell written in text', () => {
+  const text = (decl: string, dur: string) =>
+    ['package P {', '  state def M {', `    ${decl}`, '    entry; then s;', '    state s; state d;', `    transition t first s accept after ${dur} then d;`, '  }', '}', ''].join('\n');
+  it('`accept after timeout` is the literal the name is bound to by =', async () => {
+    const { model } = await load(text('attribute timeout : Integer = 4;', 'timeout'));
+    expect(ticksOf(model, 'P::M::t')).toBe(4);
+  });
+  it('a default, := or unresolved name written in text stays refused', async () => {
+    for (const decl of ['attribute timeout : Integer default = 4;', 'attribute timeout : Integer := 4;', 'attribute other : Integer = 4;']) {
+      const { model } = await load(text(decl, 'timeout'));
+      expect(ticksOf(model, 'P::M::t')).toBeUndefined();
     }
   });
 });

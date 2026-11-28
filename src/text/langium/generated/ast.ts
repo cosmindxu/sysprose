@@ -245,6 +245,12 @@ export function isBaseKeyword(item: unknown): item is BaseKeyword {
     return typeof item === 'string';
 }
 
+export type DelayName = string;
+
+export function isDelayName(item: unknown): item is DelayName {
+    return typeof item === 'string';
+}
+
 export type Direction = 'in' | 'inout' | 'out';
 
 export function isDirection(item: unknown): item is Direction {
@@ -560,7 +566,7 @@ export interface BracketExpr extends langium.AstNode {
     readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'BracketExpr';
     arg: Expression;
-    base: Expression | NumberLiteral;
+    base: Expression | NumberLiteral | RefExpr;
 }
 
 export const BracketExpr = 'BracketExpr';
@@ -991,7 +997,7 @@ export function isPrefixMetadata(item: unknown): item is PrefixMetadata {
 export interface RefExpr extends langium.AstNode {
     readonly $container: AcceptClause | Argument | BehaviorStmt | BinaryExpr | Body | BracketExpr | CollectExpr | ConditionalExpr | Definition | EffectClause | FeatureChainExpr | GuardClause | IfStmt | Import | IndexExpr | InvocationExpr | LoopStmt | NavExpr | RequirementClause | ReturnStmt | SelectExpr | SequenceExpr | StateBehavior | UnaryExpr;
     readonly $type: 'RefExpr';
-    ref: InitialRef | QualifiedName;
+    ref: DelayName | InitialRef | QualifiedName;
 }
 
 export const RefExpr = 'RefExpr';
