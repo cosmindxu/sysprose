@@ -4337,7 +4337,7 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                         "terminal": {
                           "$type": "RuleCall",
                           "rule": {
-                            "$ref": "#/rules@84"
+                            "$ref": "#/rules@85"
                           },
                           "arguments": []
                         }
@@ -4359,7 +4359,7 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                         "terminal": {
                           "$type": "RuleCall",
                           "rule": {
-                            "$ref": "#/rules@84"
+                            "$ref": "#/rules@85"
                           },
                           "arguments": []
                         }
@@ -4387,7 +4387,7 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                             "terminal": {
                               "$type": "RuleCall",
                               "rule": {
-                                "$ref": "#/rules@79"
+                                "$ref": "#/rules@80"
                               },
                               "arguments": []
                             }
@@ -4401,7 +4401,7 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                   {
                     "$type": "RuleCall",
                     "rule": {
-                      "$ref": "#/rules@33"
+                      "$ref": "#/rules@34"
                     },
                     "arguments": []
                   },
@@ -4415,7 +4415,7 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                         "terminal": {
                           "$type": "RuleCall",
                           "rule": {
-                            "$ref": "#/rules@49"
+                            "$ref": "#/rules@50"
                           },
                           "arguments": []
                         }
