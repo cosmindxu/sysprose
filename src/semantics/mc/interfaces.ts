@@ -57,6 +57,10 @@ interface Side {
   start: ElementId;
   moves: Map<ElementId, Move[]>;
   items: readonly string[];
+  /** Names of the synthetic states between the consecutive outputs of one step. */
+  names: ReadonlyMap<ElementId, string>;
+  /** Those states: a step is running there, so the other side's output waits rather than being unspecified. */
+  transient: ReadonlySet<ElementId>;
 }
 
 /** One product step of a witness. */
@@ -142,6 +146,29 @@ function itemOf(model: Model, port: ElementRecord, payload: string, what: string
   return pick[0];
 }
 
+/** The sends a state's entry or exit behaviour performs (its own body, or the action it names), or a reason they cannot be read. */
+function subactionSends(model: Model, sub: ElementRecord, name: string): ElementRecord[] {
+  let body: ElementRecord = sub;
+  const spec = model.children(sub.id).filter((c) => ['FeatureTyping', 'Subsetting', 'Redefinition', 'Subclassification'].includes(c.eClass));
+  if (sub.attrs.stateSubactionRef === true) {
+    const t = spec.length === 1 ? (spec[0].target ?? [])[0] : undefined;
+    const x = t === undefined ? undefined : model.get(t);
+    if (x === undefined) return refuse(`${name} names an action this reading cannot resolve`);
+    if (model.relationshipsFrom(x.id).some((r) => ['FeatureTyping', 'Subsetting', 'Redefinition', 'Subclassification'].includes(r.eClass))) {
+      return refuse(`${name} names an action defined elsewhere, whose sends this reading does not follow`);
+    }
+    body = x;
+  } else if (spec.length > 0) {
+    return refuse(`${name} is typed by an action this reading does not open`);
+  }
+  const out: ElementRecord[] = [];
+  for (const d of model.descendants(body.id)) {
+    if (d.eClass === 'SendActionUsage') out.push(d);
+    else if (['AcceptActionUsage', 'PerformActionUsage', 'ActionUsage'].includes(d.eClass)) return refuse(`${name} holds a further action this reading does not follow`);
+  }
+  return out;
+}
+
 function readSide(model: Model, port: ElementRecord): Side {
   const owner = port.ownerId === null ? undefined : model.get(port.ownerId);
   if (owner === undefined) return refuse('a connected port has no owner');
@@ -152,29 +179,98 @@ function readSide(model: Model, port: ElementRecord): Side {
   if (isParallelState(model, machine)) return refuse(`${label} is a parallel state`);
   const states = directStates(model, machine);
   for (const d of view.descendants) {
-    if (d.id === machine) continue;
-    if (d.eClass === 'SendActionUsage') return refuse(`${label} has a send in a state or its entry/do/exit action, which this reading does not attribute`);
-    if (d.eClass === 'AcceptActionUsage') return refuse(`${label} has an accept action this reading does not read`);
-    if (d.eClass === 'StateUsage' && !states.some((s) => s.id === d.id)) return refuse(`${label} has a nested state (\`${d.declaredName ?? d.id}\`)`);
+    if (d.id !== machine && d.eClass === 'AcceptActionUsage') return refuse(`${label} has an accept action this reading does not read`);
   }
-  for (const s of states) {
-    if (isParallelState(model, s.id) || isHistoryComposite(model, s.id)) return refuse(`${label} has a parallel or history state`);
-  }
+  // The state tree: composite (nested) states are flattened to their leaves, as the walk's configurations are (§7.18.2).
+  const kids = new Map<ElementId, ElementRecord[]>();
+  const parent = new Map<ElementId, ElementId | null>();
+  const stateIds = new Set<ElementId>();
+  const grow = (list: readonly ElementRecord[], par: ElementId | null): void => {
+    for (const st of list) {
+      if (stateIds.has(st.id)) return refuse(`${label} reaches state \`${st.declaredName ?? st.id}\` twice`);
+      stateIds.add(st.id);
+      parent.set(st.id, par);
+      if (isParallelState(model, st.id) || isHistoryComposite(model, st.id)) return refuse(`${label} has a parallel or history state`);
+      const sub = view.directStates(st.id).filter((c) => c.eClass === 'StateUsage');
+      kids.set(st.id, sub);
+      grow(sub, st.id);
+    }
+  };
+  grow(states, null);
   if (entryStartUnreadOf(model, view, states)) return refuse(`${label} opens in a state its entry action does not name plainly`);
-  const start = initialStateOf(model, view, states);
-  if (start === null) return refuse(`${label} has no opening state`);
-  const stateIds = new Set(states.map((s) => s.id));
-  const moves = new Map<ElementId, Move[]>(states.map((s) => [s.id, []]));
+  const start0 = initialStateOf(model, view, states);
+  if (start0 === null) return refuse(`${label} has no opening state`);
+  const kidsOf = (id: ElementId): ElementRecord[] => kids.get(id) ?? [];
+  const nm = (id: ElementId): string => model.get(id)?.declaredName ?? id;
+  /** The chain a state is entered through down to a leaf, the state first. */
+  const descend = (id: ElementId): ElementId[] => {
+    const chain = [id];
+    for (let c = id; kidsOf(c).length > 0; ) {
+      const r = machineRegion(model, c);
+      if (entryStartUnreadOf(model, r, kidsOf(c))) return refuse(`${label}: composite state \`${nm(c)}\` opens in a state its entry action does not name plainly`);
+      const i = initialStateOf(model, r, kidsOf(c));
+      if (i === null) return refuse(`${label}: composite state \`${nm(c)}\` has no opening state`);
+      chain.push(i);
+      c = i;
+    }
+    return chain;
+  };
+  const pathTo = (id: ElementId): ElementId[] => {
+    const out: ElementId[] = [];
+    for (let c: ElementId | null | undefined = id; c != null; c = parent.get(c)) out.push(c);
+    return out.reverse();
+  };
+  const leavesUnder = (id: ElementId): ElementId[] => (kidsOf(id).length === 0 ? [id] : kidsOf(id).flatMap((k) => leavesUnder(k.id)));
+
+  // Sends of every state's entry, do and exit behaviour; each send of the machine must be accounted for here.
+  const seen = new Set<ElementId>();
+  const mineOf = (sd: ElementRecord, name: string): string | undefined => {
+    seen.add(sd.id);
+    const sv = typeof sd.attrs.via === 'string' && sd.attrs.via !== '' ? sd.attrs.via : undefined;
+    if (sv === undefined) return refuse(`${name} sends \`${sd.declaredName}\` without a port`);
+    const p = resolvePort(model, owner, sv, name);
+    const f = itemOf(model, p, sd.declaredName ?? '', name);
+    if (f.direction === 'inout') return refuse(`${name}: item \`${f.name}\` is inout`);
+    if (f.direction !== 'out') return refuse(`${name} sends \`${sd.declaredName}\` via \`${sv}\`, where it is an in item`);
+    return samePort(model, p, port) ? f.name : undefined;
+  };
+  const phase = new Map<string, string[]>();
+  for (const id of stateIds) {
+    for (const ph of ['entry', 'do', 'exit'] as const) {
+      const items: string[] = [];
+      for (const sub of model.children(id).filter((c) => c.attrs.stateSubaction === ph)) {
+        const name = `${ph} action of state \`${nm(id)}\` in ${label}`;
+        for (const sd of subactionSends(model, sub, name)) {
+          if (ph === 'do') return refuse(`${label} has a send in the do action of \`${nm(id)}\`, which may run any number of times`);
+          const it = mineOf(sd, name);
+          if (it !== undefined) items.push(it);
+        }
+      }
+      phase.set(`${ph}|${id}`, items);
+    }
+  }
+  for (const d of view.descendants) {
+    if (d.eClass === 'SendActionUsage' && !seen.has(d.id)) return refuse(`${label} has a send outside a state's entry/exit action, which this reading does not attribute`);
+  }
+  const startChain = descend(start0);
+  if (startChain.some((id) => (phase.get(`entry|${id}`) ?? []).length > 0)) return refuse(`${label} sends from an entry action while opening, which this reading does not order`);
+  const start = startChain[startChain.length - 1];
+
+  const moves = new Map<ElementId, Move[]>();
+  const names = new Map<ElementId, string>();
+  const transient = new Set<ElementId>();
+  for (const id of stateIds) if (kidsOf(id).length === 0) moves.set(id, []);
+  const levelOf = new Map<string, number>(); // leaf|key -> depth of the source that offered it
   for (const tr of view.transitions.filter((t) => t.eClass === 'TransitionUsage')) {
     const name = `transition \`${tr.declaredName ?? tr.id}\` of ${label}`;
     const from = tr.source?.[0];
     const to = tr.target?.[0];
-    if (from === undefined || to === undefined || !stateIds.has(from) || !stateIds.has(to)) return refuse(`${name} does not join two direct states`);
+    if (from === undefined || to === undefined || !stateIds.has(from) || !stateIds.has(to)) return refuse(`${name} does not join two states`);
     if (guardTextOf(tr) !== undefined) return refuse(`${name} has a guard, which this untimed, store-free reading does not decide`);
     if (timeTriggerLabel(tr) !== undefined) return refuse(`${name} is a dwell; this reading is untimed`);
     const trigger = typeof tr.attrs.trigger === 'string' && tr.attrs.trigger !== '' ? tr.attrs.trigger : undefined;
     const via = typeof tr.attrs.via === 'string' && tr.attrs.via !== '' ? tr.attrs.via : undefined;
-    const sends = sendsOf(model, tr, name);
+    const effectSends = sendsOf(model, tr, name);
     let inItem: string | undefined;
     let inLabel = trigger ?? '';
     if (trigger !== undefined) {
@@ -192,29 +288,54 @@ function readSide(model: Model, port: ElementRecord): Side {
         if (carried) return refuse(`${name} accepts \`${trigger}\`, an item a port carries, without saying which port`);
       }
     }
-    if (sends.length > 1) return refuse(`${name} sends more than once in its effect`);
-    if (sends.length === 1) {
-      const s = sends[0];
-      const sv = typeof s.attrs.via === 'string' && s.attrs.via !== '' ? s.attrs.via : undefined;
-      if (sv === undefined) return refuse(`${name} sends \`${s.declaredName}\` without a port`);
-      const p = resolvePort(model, owner, sv, name);
-      const f = itemOf(model, p, s.declaredName ?? '', name);
-      if (f.direction === 'inout') return refuse(`${name}: item \`${f.name}\` is inout`);
-      if (f.direction !== 'out') return refuse(`${name} sends \`${s.declaredName}\` via \`${sv}\`, where it is an in item`);
-      if (inItem !== undefined) return refuse(`${name} accepts a connected item and sends in one transition`);
-      const lab = `${trigger === undefined ? '' : `${inLabel} / `}send ${f.name} via ${sv}`;
-      if (samePort(model, p, port)) moves.get(from)!.push({ kind: 'out', item: f.name, label: lab, to, triggered: trigger !== undefined });
-      else moves.get(from)!.push({ kind: 'env', label: lab, to });
-      continue;
+    if (trigger === undefined && kidsOf(from).length > 0) return refuse(`${name} is a completion transition of a composite state, which this reading does not decide`);
+    const effItems: string[] = [];
+    for (const sd of effectSends) {
+      const it = mineOf(sd, name);
+      if (it !== undefined) effItems.push(it);
     }
-    if (inItem !== undefined) moves.get(from)!.push({ kind: 'in', item: inItem, label: `accept ${inLabel}`, to });
-    else moves.get(from)!.push({ kind: trigger === undefined ? 'internal' : 'env', label: trigger === undefined ? 'completion' : inLabel, to });
+    const pathS = pathTo(from);
+    const pathT = pathTo(to);
+    let k = 0;
+    while (k < pathS.length - 1 && k < pathT.length - 1 && pathS[k] === pathT[k]) k++;
+    const enters = [...pathT.slice(k), ...descend(to).slice(1)];
+    const target = enters[enters.length - 1];
+    const key = `${trigger ?? ''}@${via ?? ''}`;
+    for (const leaf of leavesUnder(from)) {
+      const prior = levelOf.get(`${leaf}|${key}`);
+      if (prior !== undefined && prior !== pathS.length) return refuse(`${name} and a transition of an enclosing or enclosed state answer the same trigger, so which one fires is a priority this reading does not apply`);
+      levelOf.set(`${leaf}|${key}`, pathS.length);
+      const exits = pathTo(leaf).slice(k).reverse();
+      const seq = [...exits.flatMap((x) => phase.get(`exit|${x}`) ?? []), ...effItems, ...enters.flatMap((x) => phase.get(`entry|${x}`) ?? [])];
+      if (seq.length === 0) {
+        if (inItem !== undefined) moves.get(leaf)!.push({ kind: 'in', item: inItem, label: `accept ${inLabel}`, to: target });
+        else moves.get(leaf)!.push({ kind: trigger === undefined ? 'internal' : 'env', label: trigger === undefined ? 'completion' : inLabel, to: target });
+        continue;
+      }
+      const mids = seq.slice(1).map((_, i) => `${tr.id}@${leaf}#${i}`);
+      for (const m of mids) (transient.add(m), moves.set(m, []), names.set(m, `in ${tr.declaredName ?? 'transition'}`));
+      let source = leaf;
+      if (inItem !== undefined) {
+        const m0 = `${tr.id}@${leaf}#in`;
+        transient.add(m0);
+        moves.set(m0, []);
+        names.set(m0, `in ${tr.declaredName ?? 'transition'}`);
+        moves.get(leaf)!.push({ kind: 'in', item: inItem, label: `accept ${inLabel}`, to: m0 });
+        source = m0;
+      }
+      for (let i = 0; i < seq.length; i++) {
+        const dest = i === seq.length - 1 ? target : mids[i];
+        const lab = `${inItem === undefined && i === 0 && trigger !== undefined ? `${inLabel} / ` : ''}send ${seq[i]} via ${port.declaredName}`;
+        moves.get(source)!.push({ kind: 'out', item: seq[i], label: lab, to: dest, triggered: inItem === undefined && i === 0 && trigger !== undefined });
+        source = dest;
+      }
+    }
   }
   const items = directedFeaturesOf(model, port.id).map((f) => {
     if (f.direction === 'inout') return refuse(`port \`${port.declaredName}\` carries inout item \`${f.name}\``);
     return f.name;
   });
-  return { owner, start, moves, items };
+  return { owner, start, moves, items, names, transient };
 }
 
 /** The sends of the action a transition's effect performs; refuses an effect whose sends it cannot read. */
@@ -276,7 +397,7 @@ export function checkInterfacePair(model: Model, connectionId: ElementId, opts: 
   }
   const an = nameOf(model, A.owner.id);
   const bn = nameOf(model, B.owner.id);
-  const sn = (id: ElementId): string => model.get(id)?.declaredName ?? id;
+  const sn = (id: ElementId): string => model.get(id)?.declaredName ?? A.names.get(id) ?? B.names.get(id) ?? id;
 
   const nodes: Node[] = [{ a: A.start, b: B.start, parent: -1, step: { who: '-', label: 'open', a: sn(A.start), b: sn(B.start) }, uncontrolled: [] }];
   const index = new Map<string, number>([[`${A.start}|${B.start}`, 0]]);
@@ -304,6 +425,7 @@ export function checkInterfacePair(model: Model, connectionId: ElementId, opts: 
         if (m.kind === 'out') {
           const takers = other.moves.get(theirs)!.filter((o) => o.kind === 'in' && o.item === m.item);
           if (takers.length === 0) {
+            if (other.transient.has(theirs)) continue; // the other side is mid-step; the output waits for it
             bad.push({ item: m.item, sender: who, label: `${who}: ${m.label}; ${peer}: no transition accepting ${m.item}`, target: m.to, triggered: m.triggered === true });
             continue;
           }
@@ -323,7 +445,7 @@ export function checkInterfacePair(model: Model, connectionId: ElementId, opts: 
     side(A, B, n.a, n.b, 'A');
     side(B, A, n.b, n.a, 'B');
     if (bad.length > 0) illegal.set(head, bad);
-    if (enabled === 0 && bad.length === 0 && !(isFinalState(model, n.a) && isFinalState(model, n.b))) noStep.push(head);
+    if (enabled === 0 && bad.length === 0 && !((A.transient.has(n.a) ? false : isFinalState(model, n.a)) && (B.transient.has(n.b) ? false : isFinalState(model, n.b)))) noStep.push(head);
   }
 
   const witness = (at: number): InterfaceStep[] => {

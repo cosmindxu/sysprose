@@ -4914,9 +4914,9 @@ changes.
 `check-behaviour --interfaces` adds the interface compatibility of each binary
 port-to-port connection that touches the machine's part, after de Alfaro and
 Henzinger, "Interface Automata" (ESEC/FSE 2001). The two parts' machines (each
-part must hold exactly one flat machine) are composed on the items the connected
+part must hold exactly one machine; composite states are read through their leaves, with a step exiting to the least common ancestor and entering down to the target's initial leaf, §7.18.2) are composed on the items the connected
 ports carry: `accept X via p` is an input, a `send X via p` in the effect action
-of a transition (`do ask`) is an output, an output of one side fires together
+of a transition (`do ask`) or in a state's `entry`/`exit` action is an output (the sends of one step are taken in order, exit, effect, entry; the sender is then in an intermediate state where the other side's output waits and its own next output must find the receiver ready), an output of one side fires together
 with an input of the other (synchronous rendezvous), and every other label (an
 event no port item carries, a completion step, an item of another port)
 interleaves, as if the environment offered it whenever asked. The product is
@@ -4932,8 +4932,9 @@ withhold its own events, so a reception reached only through them leaves the pai
 compatible and is listed as a finding a helpful environment reaches. A deadlock is
 listed, never a verdict. Assumptions: untimed, no guards, no queues
 (a send is received at once), two parts. A pair with a send or accept this
-reading cannot attribute to one port and one item, a guard, a dwell, a nested or
-parallel state, an `inout` item, ports that do not conform or more than one
+reading cannot attribute to one port and one item, a guard, a dwell, a send in a `do` action, a parallel or history
+state, a completion transition of a composite state, an enclosing and an enclosed
+state answering one trigger, an `inout` item, ports that do not conform or more than one
 machine on a part gets `no verdict` with the reason; a walk cut by its bound is
 `undecided`, never compatible. There is no default row and no validation rule:
 without the flag nothing changes.
