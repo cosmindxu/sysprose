@@ -307,7 +307,15 @@ BehaviorStmt infers BehaviorStmt:
             | isSend?='send' sendPayload=NewPayload ('via' sendVia=QualifiedName)? ('to' sendTo=QualifiedName)?
             | (isEffectAction?='action')? effect=QualifiedName (':' effectType=QualifiedName)? ))?
       (body=Body | ';')?
-    | kind=('send' | 'assign' | 'perform' | 'include' | 'terminate')
+    // `perform x;` / `perform a.b;` (SysML v2 §7.17.6): no `action` keyword, the name is the performed action's
+    // qualified name or feature chain, so it reaches the mapper as `name` plus `chain`.
+    | kind='perform'
+      (isAction?='action' | 'state' | 'use' 'case')?
+      ('<' shortName=Name '>')?
+      (name=Name (('::' | '.') chain+=RefName)*)?
+      BehaviorStmtRest
+      (body=Body | ';')?
+    | kind=('send' | 'assign' | 'include' | 'terminate')
       ('action' | 'state' | 'use' 'case')?
       ('<' shortName=Name '>')?
       (name=Name)?

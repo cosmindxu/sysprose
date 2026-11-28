@@ -165,7 +165,33 @@ describe('grammar2 — calc return, loops, if & behavioural actions', () => {
 
     const perform = ofClass(model, 'PerformActionUsage')[0];
     expect(perform.attrs.actionKind).toBe('perform');
+    // `proc` resolves to nothing here: the usage keeps the name it had before the performed action became a relationship.
     expect(perform.declaredName).toBe('proc');
+    expect(perform.attrs.performByName).toBe(true);
+  });
+
+  it('maps `perform x;` / `perform a.b;` to a reference subsetting of the performed action (§7.17.6), `perform action` to a declaration', () => {
+    const src = `package P { action def Cmd; action act { action sub; } part s { action inner; }
+      part ops { perform act; perform s.inner; perform action own : Cmd; perform ghost; } }`;
+    const { model, diagnostics } = parseModel(src);
+    noErrors(diagnostics);
+    const [a, b, c, d] = ofClass(model, 'PerformActionUsage');
+    const refTarget = (e: ElementRecord) => model.relationshipsFrom(e.id).filter((r) => r.eClass === 'ReferenceSubsetting').map((r) => model.get(r.target![0])!.declaredName);
+    expect(a.declaredName).toBeUndefined();
+    expect(refTarget(a)).toEqual(['act']);
+    expect(b.declaredName).toBeUndefined();
+    expect(refTarget(b)).toEqual(['inner']);
+    expect(c.declaredName).toBe('own');
+    expect(refTarget(c)).toEqual([]);
+    expect(d.declaredName).toBe('ghost');
+    expect(refTarget(d)).toEqual([]);
+    const out = serializeModel(model);
+    expect(out).toContain('perform act;');
+    expect(out).toContain('perform action own : Cmd;');
+    expect(out).toContain('perform ghost;');
+    const again = parseModel(out);
+    noErrors(again.diagnostics);
+    expect(serializeModel(again.model)).toBe(out);
   });
 
   it('maps `if c { … } else { … }` to an IfActionUsage owning both branches', () => {

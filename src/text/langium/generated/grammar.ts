@@ -4287,6 +4287,156 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                     "feature": "kind",
                     "operator": "=",
                     "terminal": {
+                      "$type": "Keyword",
+                      "value": "perform"
+                    }
+                  },
+                  {
+                    "$type": "Alternatives",
+                    "elements": [
+                      {
+                        "$type": "Assignment",
+                        "feature": "isAction",
+                        "operator": "?=",
+                        "terminal": {
+                          "$type": "Keyword",
+                          "value": "action"
+                        }
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": "state"
+                      },
+                      {
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Keyword",
+                            "value": "use"
+                          },
+                          {
+                            "$type": "Keyword",
+                            "value": "case"
+                          }
+                        ]
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Keyword",
+                        "value": "<"
+                      },
+                      {
+                        "$type": "Assignment",
+                        "feature": "shortName",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@84"
+                          },
+                          "arguments": []
+                        }
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": ">"
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "Group",
+                    "elements": [
+                      {
+                        "$type": "Assignment",
+                        "feature": "name",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@84"
+                          },
+                          "arguments": []
+                        }
+                      },
+                      {
+                        "$type": "Group",
+                        "elements": [
+                          {
+                            "$type": "Alternatives",
+                            "elements": [
+                              {
+                                "$type": "Keyword",
+                                "value": "::"
+                              },
+                              {
+                                "$type": "Keyword",
+                                "value": "."
+                              }
+                            ]
+                          },
+                          {
+                            "$type": "Assignment",
+                            "feature": "chain",
+                            "operator": "+=",
+                            "terminal": {
+                              "$type": "RuleCall",
+                              "rule": {
+                                "$ref": "#/rules@79"
+                              },
+                              "arguments": []
+                            }
+                          }
+                        ],
+                        "cardinality": "*"
+                      }
+                    ],
+                    "cardinality": "?"
+                  },
+                  {
+                    "$type": "RuleCall",
+                    "rule": {
+                      "$ref": "#/rules@33"
+                    },
+                    "arguments": []
+                  },
+                  {
+                    "$type": "Alternatives",
+                    "elements": [
+                      {
+                        "$type": "Assignment",
+                        "feature": "body",
+                        "operator": "=",
+                        "terminal": {
+                          "$type": "RuleCall",
+                          "rule": {
+                            "$ref": "#/rules@49"
+                          },
+                          "arguments": []
+                        }
+                      },
+                      {
+                        "$type": "Keyword",
+                        "value": ";"
+                      }
+                    ],
+                    "cardinality": "?"
+                  }
+                ]
+              },
+              {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Assignment",
+                    "feature": "kind",
+                    "operator": "=",
+                    "terminal": {
                       "$type": "Alternatives",
                       "elements": [
                         {
@@ -4296,10 +4446,6 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                         {
                           "$type": "Keyword",
                           "value": "assign"
-                        },
-                        {
-                          "$type": "Keyword",
-                          "value": "perform"
                         },
                         {
                           "$type": "Keyword",

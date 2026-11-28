@@ -884,6 +884,8 @@ class Mapper {
    * the mapper walked the AST is what made declaration order decide the answer.
    */
   private readonly deferredSpecs: DeferredSpec[] = [];
+  /** `perform x;` usages (§7.17.6) by the written name, kept as the usage's name when `x` resolves to nothing. */
+  private readonly performByName = new Map<ElementId, string>();
 
   /**
    * Warnings that are only TRUE if the reference is still unresolved once
@@ -1648,6 +1650,13 @@ class Mapper {
       if (req.relId !== undefined) continue;
       const el = this.model.get(req.elementId);
       if (!el) continue;
+      // An unresolved `perform x;` keeps the reading it had before the performed action was a relationship: a usage named x.
+      const performName = this.performByName.get(el.id);
+      if (performName !== undefined && req.op === '::>' && !req.ref.includes('::')) {
+        this.model.update(el.id, { declaredName: performName });
+        this.model.setAttrs(el.id, { performByName: true });
+        continue;
+      }
       if (req.op === ':') {
         if (el.eClass === 'AttributeUsage' || el.eClass === 'AttributeDefinition') {
           this.model.setAttrs(el.id, { type: req.ref });
@@ -2396,6 +2405,11 @@ class Mapper {
     // `exhibit A::B :> C;` (SysML v2 §7.18.4): an exhibit state usage with no name; the qualified name after `exhibit` is its
     // exhibited state, read as the reference subsetting `::> A::B` (as `exhibit state x references A::B;`), then the written ones.
     const exhibitedChain = node.kind === 'exhibit' && node.chain && node.chain.length > 0 ? [node.name, ...node.chain].join('::') : undefined;
+    // `perform x;` / `perform a.b;` (SysML v2 §7.17.6): no `action` keyword and no short name, so the written name is the
+    // PERFORMED action, related to the usage by a reference subsetting (§7.17.6: "the performed action is related to the perform
+    // action usage by a reference subsetting"); the usage itself carries no name, as `exhibit A::B;` above.
+    const performedRef = node.kind === 'perform' && !node.isAction && node.shortName === undefined && node.name !== undefined
+      ? [node.name, ...node.chain].join('::') : undefined;
     const eClass = BEHAVIOR_ECLASS[node.kind] ?? 'ActionUsage';
     const attrs: Record<string, AttrValue> = { actionKind: node.kind };
     if (node.isAbstract) attrs.isAbstract = true;
@@ -2408,11 +2422,15 @@ class Mapper {
     if (node.isParallel || shortParallel) attrs.isParallel = true;
     const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
-      declaredName: shortParallel || exhibitedChain !== undefined ? undefined : unquoteName(node.name),
+      declaredName: shortParallel || exhibitedChain !== undefined || performedRef !== undefined ? undefined : unquoteName(node.name),
       declaredShortName: unquoteName(node.shortName),
       attrs,
     });
     if (exhibitedChain !== undefined) this.deferredSpecs.push({ elementId: el.id, op: '::>', ref: exhibitedChain, node });
+    if (performedRef !== undefined) {
+      this.deferredSpecs.push({ elementId: el.id, op: '::>', ref: performedRef, node });
+      this.performByName.set(el.id, unquoteName(node.name) ?? node.name!);
+    }
     for (const spec of node.specializations) this.applySpecialization(el, spec);
     const mults = readableMultiplicities(node.multiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });

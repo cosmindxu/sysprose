@@ -1852,11 +1852,14 @@ and §21.4–21.11.
       marks it `keywordless` so that port-typing skips it and a port definition's `out x : T;` counts as
       a directed feature; the metaclass itself is still the departure. Changing it reaches the flow
       ends, connectivity, the diagrams and the FMI import, which all read `PortUsage`. [if-param]
-- [ ] **Map `perform x;` with a reference to the performed action.** `part ops { perform command; }`
-      reaches the model as a `PerformActionUsage` named `command` with no relationship to the action
-      (SysML v2 §7.17: the performed action is the usage's referenced feature, a ReferenceSubsetting).
-      `exchange-allocation` resolves the name from the performer's scope until it is mapped; every
-      other reader of `perform` sees a fresh action. [xalloc]
+- [x] **Map `perform x;` with a reference to the performed action.** Done (spec-perform): `perform x;` and
+      `perform a.b;` (no `action` keyword, no short name) map to an unnamed `PerformActionUsage` with a
+      ReferenceSubsetting to the performed action (SysML v2 §7.17.6), written back as `perform x;`; `perform action x
+      : T;` stays a declared action (written back with `action`). An unresolved name keeps the old reading (a usage named
+      `x`, `attrs.performByName`, no warning). Readers: `exchange-allocation` follows the relationship (the name stopgap is
+      gone) and `runActionFlow` opens a performed action usage that owns a flow; the diagram labels an unnamed perform
+      with its metaclass name as every unnamed usage. Still open: the action view could label the usage with the performed
+      action's name. [xalloc]
 - [ ] **Exchange allocation — the views.** `exchange-allocation` judges the allocations a model
       writes (Arcadia §19.10–19.11, §20.4, §21.9); `exchange-unallocated` flags a flow between
       functions on two components that no connection carries, in a scope that allocates flows (§20.4);
@@ -1911,17 +1914,17 @@ and §21.4–21.11.
       ports by item definitions (`in port taskingIn : TaskingOrder;`); the mbse-workflow authoring
       steps should write a port definition with directed items and type ports by it (and `~` on
       the other side). Kept a warning until then. [if-compat]
-- [ ] **Allocate exchanges across layers, and check the allocations.** `allocate <flow> to
-      <interface or connection>` and `allocate <interface> to <connection>`, with Arcadia's
-      consistency rules: a flow between functions allocated to two different parts is carried by
-      exactly one exchange between those parts (Voirin §20.4) or a path of them (§20.5) with
-      conforming items (§21.9); each logical exchange is carried by a physical link or path
-      between the nodes hosting its ends (§19.11–19.12); nothing carried twice or by nothing. v9
-      writes the carrying only in doc comments ("the radio path that carries the peer link").
-- [ ] **An interface table (ICD) and the Interconnection view.** Per pair of parts: the
-      interface, its ends, the items each way, and the functional, logical and physical exchange
-      it belongs to; a `sysprose interfaces` command; interface type, end names and `~` on the
-      Interconnection view's edges, with mismatched edges marked by the rules above.
+- [ ] **Allocate exchanges across layers — what is left.** Done (xalloc): `allocate <flow> to <connection>` and
+      `allocate <interface/connection> to <link>` are judged by `exchange-allocation` (Arcadia §20.4, §21.9,
+      §19.10–19.11), `exchange-unallocated` flags a flow carried by no connection, `function-port-allocation` judges
+      `allocate fn.p to comp.q`. Open: an exchange carried by a PATH of exchanges (§20.5, §19.12) is not read, only a
+      single exchange between the two components; v9 writes its carrying only in doc comments.
+- [ ] **An interface table (ICD) and the Interconnection view — what is left.** Done: `sysprose icd` gives one row per
+      connection with the ends, the port definition and `~`, the items each way and the status
+      (src/semantics/icd.ts); the Interconnection overlay colours edges by that status and shows the flows on hover
+      (src/ui/icd-overlay.ts, test/unit/ui.icd-overlay.test.ts). Open: interface type, end names and `~` as edge LABELS on
+      the view (the overlay colours and hovers only); the functional/logical/physical exchange an interface belongs to is
+      not a column.
 - [ ] **Formal methods per kind of exchange.** Logical: interface protocol compatibility as
       interface automata (de Alfaro & Henzinger 2001) over the two parts' state machines and the
       items their shared port carries (no unspecified reception, no deadlock), and assume–guarantee

@@ -995,9 +995,17 @@ function behaviorLine(model: Model, el: ElementRecord, indent: number): string {
   // name, and `exhibit state` is the spec's spelling of the usage that carries one (SysML v2 §7.18.4).
   const parallel = el.attrs.actionKind === 'exhibit' ? parallelSuffix(el) : [];
   if (parallel.length) parts.push('state');
+  // `perform action x;` declares the performed action; `perform x;` names an existing one (SysML v2 §7.17.6), so a named
+  // perform usage keeps `action` unless it is the unresolved `perform x;` reading (attrs.performByName).
+  if (el.attrs.actionKind === 'perform' && el.declaredName !== undefined && el.attrs.performByName !== true) parts.push('action');
   if (el.declaredShortName !== undefined) parts.push(`<${quoteName(el.declaredShortName)}>`);
   if (el.declaredName !== undefined) parts.push(stateDeclName(el, el.declaredShortName));
-  parts.push(...specializationFragments(model, el), ...multFragment(el));
+  const frags = [...specializationFragments(model, el), ...multFragment(el)];
+  // An unnamed `perform` whose only fragment is the reference subsetting reads back as `perform x;`.
+  if (el.attrs.actionKind === 'perform' && el.declaredName === undefined && el.declaredShortName === undefined && frags.length === 1 && frags[0].startsWith('::> ') && !frags[0].includes(',')) {
+    frags[0] = frags[0].slice(4);
+    parts.push(...frags);
+  } else parts.push(...frags);
   if (typeof el.attrs.via === 'string') parts.push('via', el.attrs.via);
   if (typeof el.attrs.actionTarget === 'string') parts.push('to', el.attrs.actionTarget);
   parts.push(...valueClause(el), ...parallel);

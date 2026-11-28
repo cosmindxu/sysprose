@@ -36,7 +36,6 @@ import type { ElementId, ElementRecord, Model } from '@core/index';
 import { payloadOf } from '../semantics/connectors';
 import { generalizationsOf } from '../semantics/inheritance';
 import { declaredDefinitions, declaredDirection, directedFeaturesOf, payloadDefinition } from '../semantics/port-conformance';
-import { resolveName } from '../semantics/resolve-names';
 import type { Diagnostic, ValidationRule } from './types';
 
 export const FLOW_KINDS = new Set(['Flow', 'FlowUsage', 'SuccessionFlowUsage', 'ItemFlow', 'SuccessionFlow']);
@@ -125,21 +124,12 @@ export function buildIndex(model: Model): Index {
       const t = el.target?.[0];
       if (s !== undefined && t !== undefined && !isExchange(model.get(s))) push(allocatedTo, s, t);
     } else if (el.eClass === 'PerformActionUsage' && el.ownerId) {
-      let found = false;
+      // `perform x;` carries the performed action as a ReferenceSubsetting (SysML v2 §7.17.6).
       for (const r of model.relationshipsFrom(el.id)) {
         if (r.eClass !== 'ReferenceSubsetting' && r.eClass !== 'Subsetting') continue;
         for (const t of r.target ?? []) {
           push(performedBy, t, el.ownerId);
-          found = true;
         }
-      }
-      // `perform x;` is mapped today as a usage NAMED x with no reference to
-      // the performed action (TODO: map it as §7.17's ReferenceSubsetting).
-      // Resolve the name from the performer's scope until it is.
-      const performer = model.get(el.ownerId);
-      if (!found && el.declaredName && performer?.ownerId) {
-        const hit = resolveName(model, performer.ownerId, el.declaredName);
-        if (hit && hit.id !== el.id && /Action/.test(hit.eClass)) push(performedBy, hit.id, el.ownerId);
       }
     }
   }
