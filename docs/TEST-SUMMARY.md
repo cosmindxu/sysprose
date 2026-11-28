@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 195
-- **Tests:** 6357 total — 6357 passed, 0 failed, 0 skipped
+- **Tests:** 6369 total — 6369 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -119,13 +119,13 @@
 | test/unit/semantics.evaluate-model.test.ts | 382 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 36 | 0 | 0 |
-| test/unit/semantics.execution-full.test.ts | 20 | 0 | 0 |
+| test/unit/semantics.execution-full.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.expr.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.featuring.test.ts | 11 | 0 | 0 |
 | test/unit/semantics.icd.test.ts | 4 | 0 | 0 |
 | test/unit/semantics.inheritance.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.keywords.test.ts | 48 | 0 | 0 |
-| test/unit/semantics.mc.after.test.ts | 19 | 0 | 0 |
+| test/unit/semantics.mc.after.test.ts | 21 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 50 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.mc.parallel-orders.test.ts | 8 | 0 | 0 |
@@ -138,7 +138,7 @@
 | test/unit/semantics.mc.recovery.test.ts | 27 | 0 | 0 |
 | test/unit/semantics.mc.redefinition-merge.test.ts | 2 | 0 | 0 |
 | test/unit/semantics.mc.redefinition.test.ts | 10 | 0 | 0 |
-| test/unit/semantics.mc.refine.test.ts | 13 | 0 | 0 |
+| test/unit/semantics.mc.refine.test.ts | 18 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 40 | 0 | 0 |
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
@@ -175,7 +175,7 @@
 | test/unit/text.entry-ref.test.ts | 15 | 0 | 0 |
 | test/unit/text.export-fidelity.test.ts | 3 | 0 | 0 |
 | test/unit/text.forms-7-18-rest.test.ts | 6 | 0 | 0 |
-| test/unit/text.grammar2.test.ts | 14 | 0 | 0 |
+| test/unit/text.grammar2.test.ts | 15 | 0 | 0 |
 | test/unit/text.lexer.test.ts | 6 | 0 | 0 |
 | test/unit/text.literal-form.test.ts | 24 | 0 | 0 |
 | test/unit/text.load.test.ts | 14 | 0 | 0 |
@@ -189,7 +189,7 @@
 | test/unit/text.spec-7-18.test.ts | 18 | 0 | 0 |
 | test/unit/text.state-forms.test.ts | 16 | 0 | 0 |
 | test/unit/text.target-transition.test.ts | 11 | 0 | 0 |
-| test/unit/text.time-trigger.test.ts | 8 | 0 | 0 |
+| test/unit/text.time-trigger.test.ts | 10 | 0 | 0 |
 | test/unit/text.transition-redefinition.test.ts | 5 | 0 | 0 |
 | test/unit/text.variability.test.ts | 13 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 12 | 0 | 0 |
