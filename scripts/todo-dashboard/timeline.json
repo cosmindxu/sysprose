@@ -5512,9 +5512,9 @@
   "open_raw": 77,
   "open": 77,
   "open_by": {
-   "FALSE": 0,
-   "WEAKER": 41,
-   "POLISH": 34,
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
    "HELD": 2
   },
   "new": 0,
@@ -5534,5 +5534,101 @@
   },
   "cum_new": 347,
   "cum_closed": 268
+ },
+ {
+  "idx": 173,
+  "sha": "a876ec8",
+  "when": "2026-11-28T04:19:53+01:00",
+  "day": "2026-11-28",
+  "subject": "Merge branch 'sm-dwell2' into combine-w15",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 174,
+  "sha": "d0dd2bd",
+  "when": "2026-11-28T04:19:54+01:00",
+  "day": "2026-11-28",
+  "subject": "Merge branch 'if-automata2' into combine-w15",
+  "open_raw": 77,
+  "open": 77,
+  "open_by": {
+   "FALSE": 5,
+   "WEAKER": 39,
+   "POLISH": 31,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 0,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 268
+ },
+ {
+  "idx": 175,
+  "sha": "75d2f19",
+  "when": "2026-11-28T04:19:54+01:00",
+  "day": "2026-11-28",
+  "subject": "Merge branch 'spec-perform' into combine-w15",
+  "open_raw": 76,
+  "open": 76,
+  "open_by": {
+   "FALSE": 0,
+   "WEAKER": 41,
+   "POLISH": 33,
+   "HELD": 2
+  },
+  "new": 0,
+  "closed": 1,
+  "narrowed": 0,
+  "new_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 0,
+   "HELD": 0
+  },
+  "closed_by": {
+   "FALSE": 0,
+   "WEAKER": 0,
+   "POLISH": 1,
+   "HELD": 0
+  },
+  "cum_new": 347,
+  "cum_closed": 269
  }
 ]

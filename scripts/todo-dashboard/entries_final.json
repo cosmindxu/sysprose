@@ -5551,7 +5551,7 @@
  },
  {
   "id": 371,
-  "title": "Allocate exchanges across layers, and check the allocations",
+  "title": "Allocate exchanges across layers \u2014 what is left",
   "first_title": "Allocate exchanges across layers, and check the allocations",
   "first": "2026-11-22",
   "first_idx": 131,
@@ -5566,7 +5566,7 @@
  },
  {
   "id": 372,
-  "title": "An interface table (ICD) and the Interconnection view",
+  "title": "An interface table (ICD) and the Interconnection view \u2014 what is left",
   "first_title": "An interface table (ICD) and the Interconnection view",
   "first": "2026-11-22",
   "first_idx": 131,
@@ -5615,8 +5615,8 @@
   "first_title": "Map perform x; with a reference to the performed action",
   "first": "2026-11-23",
   "first_idx": 133,
-  "closed": "",
-  "closed_idx": null,
+  "closed": "2026-11-28",
+  "closed_idx": 175,
   "tag": "xalloc",
   "cls_first": "POLISH",
   "cls_last": "POLISH",
